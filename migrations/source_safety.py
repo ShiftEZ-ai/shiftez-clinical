@@ -5,8 +5,10 @@ from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 
-from migrations.sql_safety import (CURRENT_SCHEMA, analyze_sql, clear_execution_proofs, schema_template,
-                                   sqlite_nullable_update_guard)
+from migrations.sql_safety import (
+    CURRENT_SCHEMA, analyze_sql, check_definition, check_replacement, clear_execution_proofs,
+    forget_checks, schema_template, sqlite_nullable_update_guard,
+)
 
 
 CLASSES = ('additive', 'fill_only', 'destructive')
@@ -51,14 +53,18 @@ def parse(source):
     return ast.parse(source)
 
 
-def assigned(tree, name):
+def assigned(tree, name, *, default=None):
+    assignment = None
     for node in tree.body:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
-            try:
-                return ast.literal_eval(node.value)
-            except (ValueError, TypeError):
-                return None
-    return None
+        targets = node.targets if isinstance(node, ast.Assign) else (node.target,) if isinstance(node, ast.AnnAssign) else ()
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            if assignment is not None or not isinstance(node, ast.Assign):
+                return default
+            assignment = node
+    try:
+        return ast.literal_eval(assignment.value) if assignment is not None else default
+    except (ValueError, TypeError):
+        return default
 
 
 class Analyzer(ast.NodeVisitor):
@@ -101,6 +107,7 @@ class Analyzer(ast.NodeVisitor):
     def invalidate(self):
         for fact in self.schema['tables'].values():
             fact.update(columns=[], primary_key=[], added_columns=[], new=False)
+        self.schema.pop('checks', None)
         clear_execution_proofs(self.schema)
         self.schema.pop('retained_publication_guard', None)
 
@@ -269,7 +276,7 @@ class Analyzer(ast.NodeVisitor):
 
     def sql_expression(self, node):
         value = self.value(node)
-        return isinstance(value, str) and analyze_sql('SELECT ' + value)['class'] == 'additive'
+        return isinstance(value, str) and analyze_sql('SELECT ' + value, replace_checks=False)['class'] == 'additive'
 
     def connection(self, node):
         node = self.resolve(node)
@@ -315,8 +322,7 @@ class Analyzer(ast.NodeVisitor):
             for table in self.schema['tables'].values():
                 table['new'] = False
         self.env, self.function = self.globals.copy(), node.name
-        for statement in node.body:
-            self.visit(statement)
+        self.visit_block(node.body)
         self.env, self.function = before, previous
         if node.name != 'upgrade':
             self.schema.clear()
@@ -325,6 +331,26 @@ class Analyzer(ast.NodeVisitor):
 
     def visit_Expr(self, node):
         self.visit(node.value)
+
+    def visit_block(self, statements):
+        index, checks_only = 0, bool(statements)
+        while index < len(statements):
+            node = statements[index]
+            if self.function == 'upgrade' and self.dialect == 'postgresql':
+                sql = self.check_sql(node)
+                if sql and 'DROP' in sql.upper() and 'CONSTRAINT' in sql.upper():
+                    self.needs_schema = True
+                    if check_replacement(self.schema, sql):
+                        index += 1
+                        continue
+                    following = self.check_sql(statements[index + 1]) if index + 1 < len(statements) else None
+                    if following and check_replacement(self.schema, sql, following):
+                        index += 2
+                        continue
+            self.visit(node)
+            checks_only = False
+            index += 1
+        return checks_only
 
     def visit_Constant(self, node):
         pass
@@ -394,8 +420,7 @@ class Analyzer(ast.NodeVisitor):
         baseline_rank, baseline_unproved = self.rank, self.unproved
         self.dialect = dialect_name
         self.rank, self.unproved = 0, False
-        for statement in node.body:
-            self.visit(statement)
+        first_checks_only = self.visit_block(node.body)
         first = deepcopy(self.schema)
         first_rank, first_unproved = self.rank, self.unproved
         self.env, self.dollar_free = environment.copy(), dollar_free.copy()
@@ -403,14 +428,16 @@ class Analyzer(ast.NodeVisitor):
         self.schema.update(deepcopy(before))
         self.dialect = 'postgresql' if self.dialect == 'sqlite' else 'sqlite'
         self.rank, self.unproved = 0, False
-        for statement in node.orelse:
-            self.visit(statement)
+        self.visit_block(node.orelse)
         second_rank, second_unproved = self.rank, self.unproved
         self.rank = max(baseline_rank, first_rank, second_rank)
         self.unproved = baseline_unproved or first_unproved or second_unproved
         self.env, self.dialect, self.dollar_free = environment, dialect, dollar_free
         if self.schema['tables'] != first['tables']:
             self.issue(node, 'dialect branches have different schema proofs')
+        for table, checks in self.schema.get('checks', {}).items():
+            other = first.get('checks', {}).get(table, {})
+            self.schema['checks'][table] = {name: fact for name, fact in checks.items() if other.get(name) == fact}
         if self.schema.get('retained_publication_guard') != first.get('retained_publication_guard'):
             self.schema.pop('retained_publication_guard', None)
         appends = self.schema.get('append_targets', set())
@@ -420,7 +447,8 @@ class Analyzer(ast.NodeVisitor):
             guards, first_guards = ({item for item in group if item[2]} for group in (guards, first_guards))
         pure_fill_branches = (not baseline_unproved and not first_unproved and not second_unproved
                               and first_rank == second_rank == CLASSES.index('fill_only'))
-        if ((not (appends or guards) and not pure_fill_branches)
+        postgres_check_only = first_checks_only and dialect_name == 'postgresql' and not node.orelse
+        if ((not (appends or guards) and not (pure_fill_branches or postgres_check_only))
                 or appends != first.get('append_targets') or guards != first_guards):
             self.issue(node, 'dialect branches lack matching new-table observer or guard proofs')
         clear_execution_proofs(self.schema)
@@ -526,6 +554,7 @@ class Analyzer(ast.NodeVisitor):
                 self.schema['tables'][table] = {'columns': [], 'primary_key': [], 'new': False}
             return
         if method == 'create_table':
+            forget_checks(self.schema, table)
             self.schema['tables'][table] = {'columns': [], 'primary_key': [], 'new': False}
             if any(key.arg == 'if_not_exists' and self.value(key.value) is not False for key in node.keywords):
                 return
@@ -579,30 +608,68 @@ class Analyzer(ast.NodeVisitor):
                 names = [self.value(arg) for arg in column.args]
                 if all(isinstance(item, str) for item in names):
                     fact['unique_keys'].append(names)
+            elif method == 'create_table' and kind == 'CheckConstraint':
+                name = next((self.value(key.value) for key in column.keywords if key.arg == 'name'), None)
+                self.record_check(table, name, column.args[0])
 
+    def record_check(self, table, name, expression):
+        if table and isinstance(name, str) and name:
+            self.schema.setdefault('checks', {}).setdefault(table, {})[name] = check_definition(self.value(expression))
+
+    def check_sql(self, statement):
+        if not isinstance(statement, ast.Expr) or not isinstance(node := statement.value, ast.Call):
+            return None
+        name = self.name(node.func)
+        if name == 'alembic.op.execute' or (isinstance(node.func, ast.Attribute)
+                and node.func.attr in {'execute', 'exec_driver_sql'} and self.connection(node.func.value)):
+            if len(node.args) == 1 and not node.keywords:
+                value = self.value(self.unwrap_sql(node.args[0]))
+                return value if isinstance(value, str) else None
+            return None
+        if name not in {'alembic.op.drop_constraint', 'alembic.op.create_check_constraint'}:
+            return None
+        drop = name == 'alembic.op.drop_constraint'
+        options = {key.arg: self.value(key.value) for key in node.keywords}
+        if (len(options) != len(node.keywords) or len(node.args) != (2 if drop else 3)
+                or options.keys() - ({'schema', 'type_'} if drop else {'schema'})
+                or drop and options.get('type_') not in (None, 'check')):
+            return None
+        table, constraint = self.table_name(node, 1), self.value(node.args[0])
+        if not table or not isinstance(constraint, str) or not constraint or '.' in constraint:
+            return None
+        owner = '.'.join('"' + part.replace('"', '""') + '"' for part in table.split('.'))
+        label = '"' + constraint.replace('"', '""') + '"'
+        if drop:
+            return f'ALTER TABLE {owner} DROP CONSTRAINT {label}'
+        expression = self.value(node.args[2])
+        return f'ALTER TABLE {owner} ADD CONSTRAINT {label} CHECK ({expression})' if isinstance(expression, str) else None
 
     def independent(self, node):
         return isinstance(self.value(node), (str, int, float, bool)) or isinstance(self.resolve(node), ast.Call) \
             and self.constructor(self.resolve(node)) == 'bindparam' and self.expression(node)
 
-    def statement(self, node):
+    def unwrap_sql(self, node):
         node = self.resolve(node)
         if isinstance(node, ast.Call) and self.name(node.func) == 'sqlalchemy.text' \
                 and len(node.args) == 1 and not node.keywords:
-            node = self.resolve(node.args[0])
+            return self.resolve(node.args[0])
+        return node
+
+    def statement(self, node):
+        node = self.unwrap_sql(node)
         value = self.value(node)
         template = self.template(node)
         if template is not None:
             self.needs_schema = True
             self.schema['current_schema'] = CURRENT_SCHEMA
             try:
-                result = analyze_sql(template, schema=self.schema)
+                result = analyze_sql(template, schema=self.schema, replace_checks=False)
             finally:
                 self.schema.pop('current_schema', None)
             return result['class'], '; '.join(result['findings'])
         if isinstance(value, str):
             self.needs_schema = True
-            result = analyze_sql(value, schema=self.schema)
+            result = analyze_sql(value, schema=self.schema, replace_checks=False)
             return result['class'], '; '.join(result['findings'])
         if not self.expression(node):
             return 'destructive', 'unproved SQL expression or execution construct'
@@ -666,6 +733,9 @@ class Analyzer(ast.NodeVisitor):
             if method == 'create_check_constraint' and (len(node.args) < 3 or not self.sql_expression(node.args[2])):
                 self.issue(node, 'unproved check constraint expression')
                 return
+            if (method == 'create_check_constraint' and self.function == 'upgrade' and len(node.args) == 3
+                    and isinstance(self.parents[node], ast.Expr)):
+                self.record_check(self.table_name(node, 1), self.value(node.args[0]), node.args[2])
             if method == 'add_column':
                 column = node.args[1] if len(node.args) == 2 else None
                 keys = {key.arg: self.value(key.value) for key in column.keywords} if isinstance(column, ast.Call) else {}
@@ -711,17 +781,20 @@ def schema_at(ancestors, retained_at=0):
     return schema
 
 
-def _revision_schema(ancestors, retained_at):
+def _revision_schema(ancestors, retained_at, *, branched=False):
     schema = deepcopy(schema_at(ancestors, retained_at))
+    if branched:
+        # A sibling branch may have replaced a CHECK this chain cannot see, so no recorded definition is proof.
+        schema.pop('checks', None)
     for table in schema['tables'].values():
         table['new'] = False
     return schema
 
 
 @lru_cache(maxsize=512)
-def analyze_sources(source, ancestors, retained_at=0):
+def analyze_sources(source, ancestors, retained_at=0, *, branched=False):
     # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
-    return Analyzer(source, _revision_schema(ancestors, retained_at)).run()
+    return Analyzer(source, _revision_schema(ancestors, retained_at, branched=branched)).run()
 
 
 def _published_guard_history(sources):
@@ -752,45 +825,93 @@ def _linear_guard_descendant(source):
                and any(isinstance(target, ast.Name) and target.id == 'depends_on' for target in node.targets))
 
 
+def _revision_parents(tree):
+    parents = assigned(tree, 'down_revision', default=False)
+    if parents is None:
+        return ()
+    if isinstance(parents, str) and parents:
+        return (parents,)
+    if isinstance(parents, (tuple, list)) and parents and all(isinstance(parent, str) and parent for parent in parents):
+        return tuple(parents)
+    return None
+
+
+def _reachable(revision, links):
+    pending, seen = [revision], set()
+    while pending:
+        item = pending.pop()
+        if item not in seen:
+            seen.add(item)
+            pending.extend(links.get(item, ()))
+    return seen
+
+
+def _parallel_revisions(revision, parents):
+    if not isinstance(revision, str) or revision not in parents:
+        return True
+    children = {}
+    for child, predecessors in parents.items():
+        for parent in predecessors:
+            if parent not in parents:
+                return True
+            children.setdefault(parent, []).append(child)
+    # Follow merge parents here even though CHECK facts are read only from the linear prefix.
+    ancestors, descendants = _reachable(revision, parents), _reachable(revision, children)
+    return ancestors & descendants != {revision} or not parents.keys() <= ancestors | descendants
+
+
 def _revision_sources(path):
     path = Path(path)
     source = path.read_text(encoding='utf-8')
     if not analyze_sources(source, (), 0)['needs_schema']:
-        return source, (), 0
+        return source, (), 0, False
     previous = assigned(parse(source), 'down_revision')
     ancestors, seen = [], set()
     sources, ambiguous = {}, False
+    parents, unreadable = {}, False
     if previous:
         for item in path.parent.glob('*.py'):
             if item.name == '__init__.py':
                 continue
             text = item.read_text(encoding='utf-8')
-            rev = assigned(parse(text), 'revision')
-            ambiguous |= isinstance(rev, str) and rev in sources
+            tree = parse(text)
+            rev = assigned(tree, 'revision')
+            if not isinstance(rev, str) or not rev:
+                unreadable = True
+                continue
+            ambiguous |= rev in sources
             sources[rev] = text
+            predecessors = _revision_parents(tree)
+            if predecessors is None:
+                unreadable = True
+            else:
+                parents[rev] = predecessors
         while isinstance(previous, str) and previous not in seen and previous in sources:
             seen.add(previous)
             ancestors.append(previous)
             previous = assigned(parse(sources[previous]), 'down_revision')
     ancestors.reverse()
     history = tuple(sources[rev] for rev in ancestors)
+    revision = assigned(parse(source), 'revision')
+    branched = bool(history) and (ambiguous or unreadable or _parallel_revisions(revision, parents))
     if (ambiguous or PUBLICATION_GUARD_CHECKPOINT not in seen
             or not any(finding.endswith(MISSING_RETAINED_GUARD)
-                       for finding in analyze_sources(source, history, 0)['findings'])):
-        return source, history, 0
+                       for finding in analyze_sources(source, history, branched=branched)['findings'])):
+        return source, history, 0, branched
     retained_at = ancestors.index(PUBLICATION_GUARD_CHECKPOINT) + 1
     if (not _linear_guard_descendant(source) or not all(map(_linear_guard_descendant, history[retained_at:]))
             or not _published_guard_history(sources)):
-        return source, history, 0
-    return source, history, retained_at
+        return source, history, 0, branched
+    return source, history, retained_at, branched
 
 
 def analyze(path):
-    return analyze_sources(*_revision_sources(path))
+    source, ancestors, retained_at, branched = _revision_sources(path)
+    return analyze_sources(source, ancestors, retained_at, branched=branched)
 
 
 def preflight_analyzer(path, *, record_fill, record_duplicate_precheck):
-    source, ancestors, retained_at = _revision_sources(path)
-    schema = _revision_schema(ancestors, retained_at)
+    source, ancestors, retained_at, branched = _revision_sources(path)
+    schema = _revision_schema(ancestors, retained_at, branched=branched)
     schema.update(record_fill=record_fill, record_duplicate_precheck=record_duplicate_precheck)
     return Analyzer(source, schema)
