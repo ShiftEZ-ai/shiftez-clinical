@@ -357,9 +357,11 @@ def test_every_bar_that_opens_something_is_a_24px_target_in_both_densities(depar
     pop = view_settings(page)
     pop.get_by_role("radiogroup", name="Row density").get_by_role("radio", name="Compact").click()
     close_popover(page)
-    board = page.get_by_role("region", name="Rotation timeline")
-    expect(page.locator(".tl.tl-compact")).to_have_count(1)
-    assert board.locator("button.tl-bar").evaluate_all(small) == [True, 0, 0]
+    compact = page.locator(".tl.tl-compact")
+    expect(compact).to_have_count(1)
+    bars = board.and_(compact).locator("button.tl-bar")
+    expect(bars.first).to_be_visible()  # The virtual rows are drawn after their container mounts.
+    assert bars.evaluate_all(small) == [True, 0, 0]
 
 
 def test_a_conflicting_duty_day_has_an_alert_and_words_not_colour_alone(browser, live_server, all_roles):
