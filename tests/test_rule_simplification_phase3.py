@@ -311,3 +311,20 @@ def test_baseline_runs_every_round_opens_permissions_and_undoes_it_all(h, monkey
         assert sorted(p.id for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))) == active_before
         assert db.get(m.Policy, gone['id']).status == 'active'
         assert all(r.ends_on == date(2026, 10, 1) for r in db.scalars(select(m.Eligibility).where(m.Eligibility.service_id == clinic)))
+
+
+def test_grouping_undo_records_one_vote_for_a_pending_retirement(monkeypatch):
+    from scripts import group_rules
+
+    active = SimpleNamespace(id="synthetic-policy")
+    monkeypatch.setattr(group_rules, "made_rules", lambda *_: [active])
+    monkeypatch.setattr(group_rules, "active_count", lambda *_: 1)
+    votes = []
+
+    def retire(row):
+        votes.append(row.id)
+        return {"approval": {"complete": False}}
+
+    db = SimpleNamespace(flush=lambda: None)
+    assert group_rules.undo_all(db, "synthetic-department", None, retire) == (0, 1, 1)
+    assert votes == [active.id]
