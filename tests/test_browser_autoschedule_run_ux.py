@@ -45,7 +45,8 @@ def test_run_shows_its_progress_at_once_and_a_second_press_starts_no_second_run(
         # panel and the footer, never "No auto-schedule runs" (issue 1793). Back on the tab, the open panel reads at once.
         with page.expect_response(lambda r: '/api/jobs?workspace_id=' in r.url) as listed:
             page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
-        listed.value.finished()
+        # Not Response.finished(): this read is often a 304 answered from the cache, which never reports finishing.
+        assert listed.value.status in (200, 304), listed.value.status
         page.evaluate("() => new Promise(r => requestAnimationFrame(() => setTimeout(r, 100)))")
         expect(panel.get_by_text('No auto-schedule runs for this rota yet.', exact=True)).to_have_count(0)
         expect(panel.get_by_text('Waiting for the scheduler to start', exact=True)).to_be_visible()
