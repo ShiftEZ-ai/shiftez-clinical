@@ -13,6 +13,7 @@ from apps.api.db import transaction
 from apps.api.errors import Problem
 from apps.api.services import departments
 from packages.contracts import schemas as s
+from packages.domain.leave_types import DEFAULT_LEAVE_TYPES
 from tests.conftest import TEST_PASSWORD
 
 
@@ -233,6 +234,11 @@ def test_creation_is_audited_atomic_idempotent_and_does_not_grant_the_creator_ac
         assert response.status_code == 200, response.text
         me = client.get('/api/me').json()
         assert me['department']['id'] == department['id'] and 'admin' in me['roles']
+        leave_types = client.get('/api/leave-types')
+        assert leave_types.status_code == 200, leave_types.text
+        choices = leave_types.json()['leave_types']
+        assert [(row['name'], row['short_code'], row['colour']) for row in choices] == list(DEFAULT_LEAVE_TYPES)
+        assert all(row['department_id'] == department['id'] for row in choices)
         response = client.post('/auth/login', json={'username': 'operator', 'password': TEST_PASSWORD,
                                                    'department_id': department['id']})
         assert response.status_code == 403 and response.json()['error']['code'] == 'FORBIDDEN', response.text

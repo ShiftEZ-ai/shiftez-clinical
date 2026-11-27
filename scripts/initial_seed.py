@@ -22,6 +22,7 @@ from apps.api import models as m
 from apps.api import settings as deployment_settings
 from apps.api.db import make_engine, transaction
 from apps.api.schema import MIGRATIONS, require_current_schema
+from apps.api.services.leave_types import seed as seed_leave_types
 from apps.api.settings import Settings, refuse_test_flags, secret_from_env
 from apps.api.serialization import record
 from packages.contracts import schemas as s
@@ -88,6 +89,7 @@ def load(engine, settings, version, reason):
                                   weekend_days=institution.weekend_days, display_settings=display, **defaults)
         db.add(department)
         db.flush()
+        seed_leave_types(db, department.id)
         try:
             from apps.api.services.event_defaults import seed_department
         except ImportError:

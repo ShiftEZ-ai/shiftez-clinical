@@ -13,6 +13,7 @@ from packages.contracts import schemas as s
 from .access import live_role_holder, organisation_settings_holders, require_sign_in, sign_in_identities
 from .common import history_many
 from .independence import person_key, today
+from .leave_types import seed as seed_leave_types
 
 
 def require_test_deployment(settings):
@@ -91,6 +92,7 @@ def create(db, actor, command, settings):
         **new_department_session_limits())
     db.add(department)
     db.flush()
+    seed_leave_types(db, department.id)
     binding = m.RoleBinding(department_id=department.id, identity_id=identity.id, role='admin',
                             starts_on=today(db, department.id))
     db.add(binding)
