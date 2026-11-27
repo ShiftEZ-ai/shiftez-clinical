@@ -18,6 +18,7 @@ from .test_browser_rule_catalogue import flag, rule_action, rules_action
 from .test_browser_rule_filter_builder import pick, rota_this_week
 from .test_browser_shared_controls import panel_has_handle
 from .test_browser_cp_sat import cp_server  # noqa: F401
+from .test_browser_kept_reads import live_pulse, rebuild
 from .test_rule_catalogue_api import propose as propose_rule
 from .test_scheduling_facts_api import decide, workload
 
@@ -655,7 +656,18 @@ def test_person_target_keeps_approved_goal_scope_period_and_strength(browser, li
         reason(page, 'Personal share this term', 'Propose')
         expect(panel.locator('.ph-section').filter(has_text='Waiting for approval')).to_contain_text('(personal target)')
         rpanel = facts_panel(review, person)
+        # A live update lands while Approve reads the rotas, before its dialog opens: it rebuilds the panel, and the
+        # approval must still show on the panel on screen, not only on the one it replaced.
+        held, moved, facts = [], [0], []
+        live_pulse(review, 'people', moved)
+        review.on('requestfinished', lambda r: facts.append(r) if r.url.endswith('/scheduling-facts') else None)
+        review.route('**/api/workspaces?limit=100&current_only=true', lambda route: held.append(route), times=1)
         rpanel.get_by_role('button', name=re.compile('^Approve')).click()
+        wait_held(review, held)
+        rebuild(review, facts, moved, 1)
+        moved[0] = 0
+        expect(rpanel.get_by_role('button', name=re.compile('^Approve'))).to_be_visible()
+        held.pop().continue_()
         reason(review, 'Independent target review', 'Approve')
         expect(rpanel.locator('.ph-section').filter(has_text='Quotas & targets')).to_contain_text('(personal target)')
         [target] = h.get('auditor', f'/api/people/{person}/scheduling-facts')['active']
