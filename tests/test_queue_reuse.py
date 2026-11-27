@@ -190,6 +190,23 @@ def test_gate_log_with_terminal_escapes_can_still_bind_the_artifact(monkeypatch,
     ("queue_plan", "inventory_sha256", "b" * 64, "Queue plan seal or planner inputs differ"),
     ("queue_plan", "suites", {"unit": {"shards": [{"files": [FILES[0]]}]},
                               "browser": {"shards": [{"files": FILES[2:]}]}}, "Candidate plan omits"),
+], ids=[
+    "failed-merge-group-run",
+    "wrong-run-head",
+    "wrong-queue-branch",
+    "wrong-workflow",
+    "cancelled-gate",
+    "skipped-gate",
+    "wrong-gate-attempt",
+    "stale-gate",
+    "nonpassing-verdict",
+    "wrong-proof-tree",
+    "wrong-plan-seal",
+    "wrong-plan-tree",
+    "wrong-plan-base",
+    "partial-plan-selection",
+    "wrong-inventory-seal",
+    "missing-suite-files",
 ])
 def test_unbound_evidence_runs_full_suites(monkeypatch, tmp_path, packet, capsys, member, key, value, reason):
     packet[member][key] = value
@@ -205,6 +222,12 @@ def test_unbound_evidence_runs_full_suites(monkeypatch, tmp_path, packet, capsys
     ("unreadable", "gh (timed out after 60s, stderr: empty)"),
     ("untrusted_controls", "control files changed: .github/workflows/ci.yml, .github/scripts/queue_reuse.py"),
     ("replaced_artifact", "Qualification artifact differs from the trusted gate upload"),
+], ids=[
+    "missing-run",
+    "missing-proof",
+    "merge-group-lookup-timeout",
+    "changed-control-files",
+    "replaced-artifact",
 ])
 def test_absent_or_unavailable_proof_enables_full_suites(monkeypatch, tmp_path, packet, capsys, defect, reason):
     if defect == "missing_run":
@@ -237,7 +260,7 @@ def test_log_read_failure_names_the_command_and_exit(monkeypatch, tmp_path, pack
 @pytest.mark.parametrize(("defect", "value", "command"), [
     ("missing_object", BASE, "diff"),
     ("ancestry_error", True, "merge-base"),
-])
+], ids=["missing-object-in-diff", "missing-object-in-ancestry-check"])
 def test_missing_object_names_git_exit(monkeypatch, tmp_path, packet, capsys, defect, value, command):
     packet[defect] = value
     invoke(monkeypatch, packet)
