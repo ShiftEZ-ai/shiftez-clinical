@@ -239,7 +239,8 @@ def test_failed_safety_protection_question_only_blocks_the_proposer(browser, liv
 
     reviewer = identity(h, 'proposing_approver', ['coordinator', 'approver'])
     h.command('admin', 'self_approval.grant', {'identity_id': reviewer, 'actions': ['rule.activate'],
-        'starts_on': '2020-01-01', 'reason': 'Temporary review cover'})
+        'starts_on': '2020-01-01', 'no_end_date': True, 'reason': 'Synthetic review cover'})
+    assert 'rule.activate' in h.get('proposing_approver', '/api/me')['self_approval']
     old = h.policy({'kind': 'min_rest', 'hours': 11})
     new = h.command('proposing_approver', 'policy.create', {
         'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
