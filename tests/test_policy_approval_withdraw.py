@@ -251,7 +251,10 @@ def test_postgres_history_conflict_rolls_back_racing_withdrawal_or_approval(pg, 
         votes = list(db.scalars(select(m.DefinitionHistory).where(
             m.DefinitionHistory.kind == "policy_transition_approval", m.DefinitionHistory.object_id == row["id"])
             .order_by(m.DefinitionHistory.object_revision)))
-        assert [vote.object_revision for vote in votes] == [1, 2]
+        if action == "restore":
+            assert [vote.snapshot["action"] for vote in votes[:2]] == ["retire", "retire"]
+        assert [vote.object_revision for vote in votes] == ([1, 2, 3, 4] if action == "restore" else [1, 2])
+        assert [vote.snapshot["action"] for vote in votes[-2:]] == [action, action]
     if first == "withdraw":
         assert first_result["withdrawn"] == action
         assert record(stored) == row and votes[-1].snapshot["withdrawn"] is True

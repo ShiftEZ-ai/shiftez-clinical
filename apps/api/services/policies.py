@@ -1186,28 +1186,29 @@ def transition_approval_state(db, actor, policy, *, excluded=()):
 
 
 def _safety_retirement(policy):
-    if not s.safety_rule(policy.definition):
+    definition = policy['definition']
+    if not s.safety_rule(definition):
         return False
-    definition = policy.definition
-    if policy.kind == 'catalogue':
+    if policy['kind'] == 'catalogue':
         definition = {**definition, 'rule': {**definition['rule'], 'on': True}}
     return any(mandatory_safety_copies(
-        [{**record(policy), 'definition': definition, 'active': True, 'status': 'active'}]))
+        [{**policy, 'definition': definition, 'active': True, 'status': 'active'}]))
 
 
-def transition_approvals_required(db, actor, policy, action):
-    configured = db.get(m.Department, actor.department_id).policy_retire_approvals_required
+def transition_approvals_required(configured, policy, action):
     return max(configured, 2) if action == 'retire' and _safety_retirement(policy) else configured
 
 
 def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), minimum=1):
-    required = max(minimum, transition_approvals_required(db, actor, policy, action))
+    configured = db.get(m.Department, actor.department_id).policy_retire_approvals_required
+    view = record(policy)
+    required = max(minimum, transition_approvals_required(configured, view, action))
     proposers = set(excluded)
     if policy.created_by:
         proposers.add(independence.person_key(db, policy.created_by))
     reviewer = independence.person_key(db, actor.identity_id)
     safety = s.safety_rule(policy.definition)
-    if action == 'retire' and reviewer in proposers and _safety_retirement(policy):
+    if action == 'retire' and reviewer in proposers and _safety_retirement(view):
         _require_independent_safety_change(True)
     independence.ensure(db, actor, "rule.activate", reviewer not in proposers,
         "The rule proposer cannot approve its retirement or restoration", reason, policy.id,

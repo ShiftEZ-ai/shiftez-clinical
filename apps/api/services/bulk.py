@@ -671,7 +671,8 @@ def _policy_undo_requirements(db, actor, items):
     if not items or any(item.get("item_kind") not in {"policy.retire", "policy.restore"} for item in items):
         return [], 1
     targets = [scoped(db, m.Policy, item["target_id"], actor) for item in items]
-    required = max(transition_approvals_required(db, actor, policy, item["item_kind"].split(".")[1])
+    configured = db.get(m.Department, actor.department_id).policy_retire_approvals_required
+    required = max(transition_approvals_required(configured, record(policy), item["item_kind"].split(".")[1])
                    for policy, item in zip(targets, items))
     return targets, required
 
@@ -1215,12 +1216,19 @@ def _reverse(command, before, reply, reason):
 
 
 def governed_policy_undo(db, actor, command, result, receipt_id):
+    from .policies import transition_approvals_required
+
     if command.kind not in {"policy.activate", "policy.activate_many", "policy.retire"}:
         return None
     if result.get("approval") and not result["approval"]["complete"]:
         return None
     items = _reverse(command, {}, result, "Undo rule decision")
-    if len(items) < 2 or _policy_undo_requirements(db, actor, items)[1] == 1:
+    if len(items) < 2:
+        return None
+    retiring = (result.get("restored", []) if command.kind == "policy.retire"
+                else result.get("records") or [result["record"]])
+    configured = db.get(m.Department, actor.department_id).policy_retire_approvals_required
+    if not any(transition_approvals_required(configured, row, "retire") > 1 for row in retiring):
         return None
     return {"kind": "bulk.apply", "payload": {
         "items": items, "undo_of": receipt_id, "reason": "Undo rule decision"}}
