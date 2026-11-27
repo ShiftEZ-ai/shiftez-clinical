@@ -106,7 +106,9 @@ def anonymise(db, actor, command, settings):
     scrubbed["availability_history"] = _scrub_availability_history(db, person.id, availability_ids)
     from .bulk_staged import scrub_for_person
     scrubbed["bulk_staged"] = scrub_for_person(db, person.id)
-    affected += scrubbed["bulk_staged"]
+    from . import leave_balances
+    scrubbed["leave_allowances"] = leave_balances.scrub_for_person(db, actor.organisation_id, person.id)
+    affected += scrubbed["bulk_staged"] + scrubbed["leave_allowances"]
     feeds = [row for row in _person_rows(db, m.CalendarFeed, person.id) if not row.revoked]
     for row in feeds:
         row.revoked = True
