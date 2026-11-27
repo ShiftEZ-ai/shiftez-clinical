@@ -6064,8 +6064,8 @@ class LeaveAllowanceLine(Schema):
 
     @model_validator(mode='after')
     def dated_person_line(self):
-        if (self.person_id is None) != (self.starts_on is None):
-            raise ValueError('Supply a person and start date together for an individual allowance')
+        if self.person_id is not None and self.starts_on is None:
+            raise ValueError('Supply a start date for an individual allowance')
         return self
 
 
@@ -6094,6 +6094,7 @@ class LeaveBalanceSettingsChange(Decision):
 class LeaveBalanceSettings(Schema):
     revision: int | None = None
     configuration: LeaveBalanceConfiguration
+    default_starts_on_min: date | None = None
 
 
 class LeaveBalance(Schema):
@@ -9196,7 +9197,7 @@ DEFAULT_CONTACT_TYPES = (
      'visibility': {'mode': 'everyone', 'roles': []}, 'one_tap': True, 'action_off': False},
     {'id': 'f0136000-0000-4000-8000-000000000002', 'name': 'Extension', 'kind': 'extension', 'legacy_field': 'work_extension', 'sort_order': 30,
      'visibility': {'mode': 'roles', 'roles': ['admin', 'coordinator', 'approver']}, 'one_tap': False, 'action_off': False},
-    {'id': 'f0136000-0000-4000-8000-000000000003', 'name': 'MCD pager', 'kind': 'pager', 'legacy_field': 'pager', 'sort_order': 10,
+    {'id': 'f0136000-0000-4000-8000-000000000003', 'name': 'Pager', 'kind': 'pager', 'legacy_field': 'pager', 'sort_order': 10,
      'visibility': {'mode': 'everyone', 'roles': []}, 'one_tap': False, 'action_off': False},
     {'id': 'f0136000-0000-4000-8000-000000000004', 'name': 'Work email', 'kind': 'email', 'legacy_field': 'work_email', 'sort_order': 40,
      'visibility': {'mode': 'roles', 'roles': ['admin', 'coordinator', 'approver']}, 'one_tap': True, 'action_off': False},

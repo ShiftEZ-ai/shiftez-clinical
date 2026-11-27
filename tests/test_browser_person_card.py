@@ -40,7 +40,7 @@ def retype(h, typ, **changes):
 
 
 def fixture(h):
-    """A trainee on duty now, supervised by the staff account's own person, with a mobile and an MCD pager."""
+    """A trainee on duty now, supervised by the staff account's own person, with a mobile and a pager."""
     zone = h.get('staff', '/api/me')['organisation']['timezone']
     now = clock_now().astimezone(ZoneInfo(zone)).replace(second=0, microsecond=0)  # the app's clock, not the wall's
     start = max(now.replace(hour=0, minute=0), now - timedelta(minutes=30 + now.minute % 15))

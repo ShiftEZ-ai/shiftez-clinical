@@ -49,6 +49,8 @@ export async function leaveAllowanceSettings(ctx:Context){
   const value=await get<LeaveBalanceSettings>('/api/leave-balance-settings'),configuration=value.configuration;
   const types=(ctx.catalogues.leave_types||[]).map(type=>({value:String(type.id),label:labelOf(type)}));
   const people=peopleChoices(ctx);
+  const defaultMin=value.default_starts_on_min||'';
+  const configuredDefaults=new Set(configuration.allowances?.filter(line=>!line.person_id).map(line=>line.leave_type_id));
   formDialog('Leave allowances','',form=>{
     const month=field('Leave year start month','number',configuration.year_start_month??1,{required:true,min:1,max:12,step:1});
     const day=field('Leave year start day','number',configuration.year_start_day??1,{required:true,min:1,max:31,step:1});
@@ -60,14 +62,19 @@ export async function leaveAllowanceSettings(ctx:Context){
       const person=select('Person',people,line?.person_id||'',false,'Everyone');
       const from=field('First leave year starting on or after','date',line?.starts_on||'');
       const days=field('Calendar days per year','number',line?.days??0,{required:true,min:0,max:366,step:1});
-      const group=el('fieldset',{class:'form-grid'});
-      const sync=()=>{from.wrap.hidden=!person.input.value;from.input.required=!!person.input.value;};
-      person.input.addEventListener('change',sync);sync();
-      group.append(el('legend',{},'Allowance'),type.wrap,days.wrap,person.wrap,from.wrap,
-        button('Remove allowance',()=>{entries.delete(group);group.remove();},'ghost small'));
+      const closed=!!(line&&!line.person_id&&defaultMin&&(!line.starts_on||line.starts_on<defaultMin));
+      const group=el('fieldset',{class:'form-grid',disabled:closed});
+      const sync=()=>{
+        from.input.required=!!person.input.value||configuredDefaults.has(type.input.value);
+        from.input.min=person.input.value?'':defaultMin;
+      };
+      person.input.addEventListener('change',sync);
+      type.input.addEventListener('change',sync);sync();
+      group.append(el('legend',{},closed?'Allowance for closed leave years':'Allowance'),type.wrap,days.wrap,person.wrap,from.wrap);
+      if(!closed)group.append(button('Remove allowance',()=>{entries.delete(group);group.remove();},'ghost small'));
       rows.append(group);
-      entries.set(group,()=>({leave_type_id:type.input.value,days:Number(days.input.value),
-        person_id:person.input.value||null,starts_on:person.input.value?from.input.value:null}));
+      entries.set(group,()=>closed&&line?line:{leave_type_id:type.input.value,days:Number(days.input.value),
+        person_id:person.input.value||null,starts_on:from.input.value||null});
     };
     for(const line of configuration.allowances||[])add(line);
     const reason=area('Reason','');reason.input.required=true;reason.input.minLength=3;

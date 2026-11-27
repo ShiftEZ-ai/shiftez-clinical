@@ -27,6 +27,9 @@ def bounded(pg,monkeypatch):
         command_write_budget_ms=500,db_pool_timeout_seconds=1)
     engine=db.make_engine(settings.database_url,settings=settings)
     monkeypatch.setattr(db,"WRITE_LOCK_KEY",1_000_000_000+uuid.uuid4().int%1_000_000_000)
+    # The diagnostic rate limit is per process; an earlier test's diagnostic must not suppress this one.
+    monkeypatch.setattr(db,"_lock_diagnostic_last_at",None)
+    monkeypatch.setattr(db,"_lock_diagnostic_suppressed",0)
     yield settings,engine
     engine.dispose()
 

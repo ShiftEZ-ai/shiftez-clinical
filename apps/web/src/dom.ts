@@ -1397,7 +1397,8 @@ export function notify(message: string, tone = 'success', action?: {label:string
   if (!tray.hasAttribute('role')) { tray.setAttribute('role','region'); tray.setAttribute('aria-label','Messages'); }
   placeTray(tray as HTMLElement);
   const item = el('div',{class:`toast ${tone}${action||next?' with-action':''}`,role: tone === 'error' ? 'alert' : 'status'},tone === 'error' || tone === 'warning' ? icon('alert') : null,el('span',{},message));
-  const done=()=>{item.remove();stackToasts(tray);};
+  // WCAG 2.4.3: a message closing (Undo, Dismiss, its timeout) with focus in it gives focus back to where it came from.
+  const done=()=>{const had=item.contains(document.activeElement);item.remove();stackToasts(tray);if(had)backFromTray();};
   // Report this problem captures the page with this message still on it, then the message goes.
   // maintenance: an action that saves (`saves`; every Undo and Redo) keeps its message open, saying what the footer says
   // (savingWords), until the save settles; its outcome is then said by the message that follows. Never closed first.
@@ -1406,7 +1407,8 @@ export function notify(message: string, tone = 'success', action?: {label:string
   if(action){const run=action.run,first=action.label===REPORT_PROBLEM,b=button(action.label,()=>{if(first){const r=run();done();return r;}
     if(!(action!.saves??['Undo','Redo'].includes(action!.label))){done();return run();}
     const r=run();if(!(r instanceof Promise)){done();return r;}
-    working=true;window.clearTimeout(timer);b.remove();item.classList.add('working');
+    const had=item.contains(document.activeElement);
+    working=true;window.clearTimeout(timer);b.remove();item.classList.add('working');if(had)backFromTray();
     const said=item.querySelector(':scope>span')!,word=()=>{said.textContent=savingWords();};word();
     said.before(el('span',{class:'spinner','aria-hidden':'true'}));
     for(const t of SAVE_EVENTS)window.addEventListener(t,word);
@@ -1473,7 +1475,8 @@ export function settledWords(e:unknown):string|null{
 function stackToasts(tray:Element){
   const max=phoneQuery.matches?2:3,items=[...tray.children] as HTMLElement[];
   let shown=0;
-  for(const t of items){if(shown<max){t.hidden=false;shown++;}else if(t.classList.contains('with-action'))t.hidden=true;else t.remove();}
+  // The message focus is in stays shown (WCAG 2.2.1), even when newer ones arrive.
+  for(const t of items){if(shown<max||t.contains(document.activeElement)){t.hidden=false;shown++;}else if(t.classList.contains('with-action')){if(!t.hidden)t.hidden=true;}else t.remove();}
   // Only the bars of the tray's own host count: in a dialog its footer, on the page the page's bars (not a dialog's).
   const host=tray.parentElement||document.body,inDialog=host!==document.body;
   let lift=0;
@@ -1483,18 +1486,21 @@ function stackToasts(tray:Element){
     if(r.height&&r.top>innerHeight/2&&r.top<innerHeight)lift=Math.max(lift,innerHeight-r.top);
   }
   (tray as HTMLElement).style.setProperty('bottom',lift?`${lift+8}px`:'');
-  // A docked side panel beside the page: the messages sit over the page column, never over the panel's controls.
-  const dock=inDialog?null:document.querySelector<HTMLElement>('.shell>.dock-panel');
-  const left=dock?.getBoundingClientRect().left??innerWidth;
-  (tray as HTMLElement).style.setProperty('right',dock&&left>innerWidth/3&&left<innerWidth?`${innerWidth-left+20}px`:'');
+  // Any side panel open beside the page (the shared docked one or a page's own, such as Auto-schedule): the messages sit
+  // over the page column, never over the panel's controls. A phone's full-width sheet starts at the left edge: not beside.
+  let left=innerWidth;
+  if(!inDialog)for(const p of document.querySelectorAll<HTMLElement>('.side-panel:not([hidden],.slot-covered)')){
+    const l=p.getBoundingClientRect().left;if(!p.closest('dialog')&&p.getClientRects().length&&l>innerWidth/3)left=Math.min(left,l);}
+  (tray as HTMLElement).style.setProperty('right',left<innerWidth?`${innerWidth-left+20}px`:'');
 }
-/** While messages show, a panel docking or a bar appearing (a redraw) moves them out of the way, once per frame. */
+/** While messages show, a panel docking or opening or a bar appearing (a redraw) moves them out of the way, once per frame. */
 let layoutWatch:MutationObserver|null=null;
 function followLayout(tray:HTMLElement){
   if(layoutWatch)return;let queued=false;
   layoutWatch=new MutationObserver(()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;
     if(!tray.isConnected||!tray.childElementCount){layoutWatch?.disconnect();layoutWatch=null;return;}stackToasts(tray);});});
-  layoutWatch.observe(document.body,{childList:true,subtree:true});
+  // A page's own panel opens by losing its hidden attribute, not by being added.
+  layoutWatch.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
 }
 /** Ctrl/⌘ Z outside a text field undoes the newest change that offers Undo (its message's own button), as in any editor
  *  (owner decision OD-8); Ctrl/⌘ Shift Z and Ctrl Y redo (SW3-A-06): the newest message's Redo, else the page's Redo
@@ -1511,6 +1517,36 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   if(!b)return;
   e.preventDefault();announce(redo?'Redoing the last undone change':'Undoing the last change');b.click();
 });
+/** The messages' key (issue 1408; WCAG 2.1.1, 2.4.3): from anywhere it focuses the newest message's action (its Undo),
+ *  else the newest message's Dismiss; Escape in the messages, Undo or Dismiss go back to the control focus came from.
+ *  Not F6 (the browser's own move to its address bar) nor Ctrl Shift with a letter (taken by browsers). In a text field
+ *  only a key that types nothing (Alt M on Windows and Linux; Option M types µ on a Mac, so there it works outside one). */
+export const MESSAGES_KEY='Alt M';
+/** Where focus was before it entered the messages (by this key or by Tab). */
+let trayFrom:Opener|null=null;
+function backFromTray(){const o=trayFrom;trayFrom=null;if(o)returnFocus(o);else if(focusLost())document.querySelector<HTMLElement>('#main')?.focus({preventScroll:true});}
+if(typeof window!=='undefined'&&typeof document!=='undefined'&&typeof document.addEventListener==='function'){
+  document.addEventListener('focusin',e=>{const tray=document.querySelector('#toast-tray'),from=e.relatedTarget as HTMLElement|null;
+    if(!tray||!from)return;const inside=tray.contains(e.target as Node);
+    // Only a keyboard arrival (:focus-visible): a click on Undo never scrolls the page back to a control focused earlier.
+    if(inside&&!tray.contains(from))trayFrom=(e.target as Element).matches(':focus-visible')?openerOf(from):null;
+    else if(!inside&&tray.contains(from))trayFrom=null;});
+  window.addEventListener('keydown',e=>{
+    const tray=document.querySelector('#toast-tray');
+    // Before a dialog's or panel's own Escape: the person leaves the messages, not the dialog.
+    if(e.key==='Escape'&&trayFrom&&tray?.contains(e.target as Node)){e.preventDefault();e.stopImmediatePropagation();backFromTray();return;}
+    if(!e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.defaultPrevented||e.code!=='KeyM'&&e.key.toLowerCase()!=='m')return;
+    if((e.target as HTMLElement|null)?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable=true]')&&e.key.toLowerCase()!=='m')return;
+    e.preventDefault();
+    const to=tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-action')||tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-close');
+    if(!to){announce('No messages');return;}
+    // Chromium does not count a key with Alt as keyboard use for :focus-visible, so the key shows the ring and keeps
+    // where focus came from itself (focusin above only sees a plain focus here).
+    const from=document.activeElement as HTMLElement|null;
+    const ring:FocusOptions&{focusVisible?:boolean}={focusVisible:true};to.focus(ring);
+    if(from&&!tray!.contains(from))trayFrom=openerOf(from);
+  },true);
+}
 /** The screen's own status for the footer (left side): rota health, counts, a score. A page puts it anywhere in its
  *  content; the shell moves it into the footer when that page is shown, so a page that finished loading after you left
  *  never writes into another page's footer. Keep the node to update it later. An empty one keeps the footer clear.
