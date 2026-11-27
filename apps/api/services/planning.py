@@ -2886,11 +2886,15 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         result['review_item_decisions'] = (workspace.validation or {}).get('review_item_decisions', [])
         superseded, trimmed, effective_until = schedule.make_room(db, workspace)
         sequence = (db.scalar(select(func.max(m.Publication.sequence)).where(m.Publication.department_id == actor.department_id)) or 0) + 1
+        from apps.api.db import bump_snapshot_input_revisions, isolated_publication
+        publication_id = command_id(db)
+        isolated = isolated_publication(db, workspace, acquired)
+        if isolated:
+            db.info['_isolated_publication'] = publication_id, workspace.id
         workspace.status = "published"
         workspace.revision += 1
         snapshot = publication_snapshot(db, workspace, result, own_shifts=own, data=acquired)
-        if not (workspace.base_publication_id or workspace.replaces_publication_id):
-            from apps.api.db import bump_snapshot_input_revisions
+        if not (workspace.base_publication_id or workspace.replaces_publication_id or isolated):
             # The publication is an input even when the rota's status change is local.
             # The insert listener shares this transaction's revision bump.
             bump_snapshot_input_revisions(db, (actor.organisation_id,))
@@ -2898,7 +2902,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
             manifest = result['input_manifest']
             result['input_manifest'] = {**manifest, 'dirty_hint': {
                 **manifest['dirty_hint'], 'input_revision': organisation.input_revision}}
-        publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
+        publication = m.Publication(id=publication_id, department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
                                     effective_until=effective_until, calendar_lineage=True,
@@ -2925,7 +2929,8 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .published_changes import on_published
         person_changes = on_published(db, actor, workspace, publication, value.reason)
         wishes.published(db, actor, workspace, publication, zone)
-        bump_inputs(db, actor)
+        db.flush()
+        db.info.pop('_isolated_publication', None)
         from .common import neutral_rota_name
         outbox(db, actor, "publication:" + publication.id, "publication",
                {"publication_id": publication.id, "sequence": sequence, "workspace_name": neutral_rota_name(workspace.name),

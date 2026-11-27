@@ -248,7 +248,20 @@ def _wish_reservation_changes(row, name, old, new):
     return old is NO_VALUE or new is NO_VALUE or _wish_reservation(old) != _wish_reservation(new)
 
 
-def _unread_status_change(session, row, changed):
+def _unread_draft_lifecycle(session, row, changed):
+    """Unpublished drafts enter other snapshots only through rota-level wish overrides."""
+    from . import models as m
+    if (not isinstance(row, m.Workspace) or set(changed) != {'archived_at'}
+            or 'status' in inspect(row).unloaded or row.status != 'draft'):
+        return False
+    # An archived publication can still have a draft row in legacy data.
+    with session.no_autoflush:
+        return not session.scalar(select(or_(
+            exists().where(m.Publication.__table__.c.workspace_id == row.id),
+            exists().where(m.WishOverride.__table__.c.workspace_id == row.id))))
+
+
+def _unread_status_change(session, row, changed, *, include_archived=False):
     """Other rotas read a rota's status only in snapshot_wishes' settled reservation, over each reader's wish-budget
     window: [period start of its first day, period end of its last day), as snapshot_wishes computes it. A status-only
     write that meets no such window changes no other rota's snapshot. The rota's own status change is covered by its
@@ -262,11 +275,12 @@ def _unread_status_change(session, row, changed):
         return False
     from .services.wishes import period_of, scoring
     from .workspace_baselines import latest_many
-    W, B = m.Workspace, m.WorkspaceBaseline
+    W, B = m.Workspace.__table__.c, m.WorkspaceBaseline
     reach = timedelta(days=92)  # A wish period is at most a quarter, so no window reaches further.
     with session.no_autoflush:
         readers = session.execute(select(W.id, W.starts_on, W.ends_on).where(
-            W.department_id == row.department_id, W.id != row.id, W.archived_at.is_(None),
+            W.department_id == row.department_id, W.id != row.id,
+            *(() if include_archived else (W.archived_at.is_(None),)),
             W.starts_on < row.ends_on + reach, W.ends_on > row.starts_on - reach)).all()
         if not readers:
             return True
@@ -275,6 +289,9 @@ def _unread_status_change(session, row, changed):
         current = scoring(session, row.department_id).wish_period
         # A rota's baseline may freeze older scoring settings; an absent period there means the default month.
         baselines = latest_many(session, [reader.id for reader in readers])
+        if include_archived and len(baselines) != len(readers):
+            # Unavailable evidence can hide a longer frozen wish period.
+            return False
         path = ('departments', row.department_id, 'generation_defaults', 'scoring', 'wish_period')
         frozen = dict(session.execute(select(B.workspace_id, B.canonical_payload[path].as_string()).where(
             B.id.in_([baseline.id for baseline in baselines.values()]))).all()) if baselines else {}
@@ -286,6 +303,52 @@ def _unread_status_change(session, row, changed):
             if row.starts_on < hi and row.ends_on > lo:
                 return False
     return True
+
+
+def isolated_publication(session, workspace, checked):
+    """Prove a new publication cannot enter another workspace's snapshot."""
+    from datetime import timedelta
+    from . import models as m
+    from .snapshots import snapshot_department_ids, snapshot_window
+    from packages.domain.time import local_midnight
+
+    if workspace.base_publication_id or workspace.replaces_publication_id or checked.get('wishes'):
+        return False
+    department = session.get(m.Department, workspace.department_id)
+    organisation = session.get(m.Organisation, department.organisation_id)
+    departments = snapshot_department_ids(session, organisation.id)
+    W = m.Workspace.__table__.c
+    # Include private and archived workspaces. A restored check must not reuse stale evidence.
+    readers = session.execute(select(W.department_id, W.starts_on, W.ends_on).where(
+        W.department_id.in_(departments), W.id != workspace.id)).all()
+    if not readers:
+        return True
+    if any(reader.department_id == workspace.department_id and reader.starts_on >= workspace.starts_on
+           for reader in readers):
+        return False  # Fairness history and wish debt can read earlier publications.
+    published_from = local_midnight(workspace.starts_on, organisation.timezone)
+    published_until = local_midnight(workspace.ends_on, organisation.timezone)
+    if any(lo < published_until and hi > published_from
+           for lo, hi in (snapshot_window(reader, organisation.timezone) for reader in readers)):
+        return False
+    if not _unread_status_change(session, workspace, {'status'}, include_archived=True):
+        return False
+
+    # A fixed or rolling quota can extend the normal schedule window. An older
+    # captured definition can still bind, or a saved proposal can be checked.
+    # BlockQuota bounds any such extension to 366 days.
+    may_reach = {reader.department_id for reader in readers
+                 if reader.starts_on - timedelta(days=366) < workspace.ends_on
+                 and reader.ends_on + timedelta(days=366) > workspace.starts_on}
+    if not may_reach:
+        return True
+    P, H, F = (model.__table__.c for model in (m.Policy, m.DefinitionHistory, m.SchedulingFact))
+    kinds = ('block_quota', 'catalogue')
+    return not session.scalar(select(or_(
+        exists().where(P.department_id.in_(may_reach), P.definition['rule']['kind'].as_string().in_(kinds)),
+        exists().where(H.department_id.in_(may_reach), H.kind == 'policy',
+                       H.snapshot['definition']['rule']['kind'].as_string().in_(kinds)),
+        exists().where(F.department_id.in_(may_reach), F.kind == 'block_quota'))))
 
 
 def _event_audience_input_organisations(session, organisation_ids):
@@ -310,6 +373,7 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
     from sqlalchemy.orm.attributes import NO_VALUE
     specs = {cls: (category, exclusions) for _name, cls, category, _scope, _shape, exclusions in snapshot_input_specs()}
     general, availability, audience, related = set(), set(), set(), {}
+    publication_id, publishing_workspace = session.info.get('_isolated_publication', (None, None))
     for row in (*session.new, *session.dirty, *session.deleted):
         if isinstance(row, (m.Department, m.Organisation, m.RoleBinding, m.SelfApprovalPermission)):
             session.info.get('_request_parents', {}).clear()
@@ -323,6 +387,10 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
         if _notice_receipt(row):
             continue
         category, exclusions = spec
+        if publication_id and isinstance(row, m.Publication) and row in session.new and row.id == publication_id:
+            continue
+        if isinstance(row, m.Workspace) and row in session.new and row.status in (None, 'draft'):
+            continue  # The new row has no published sessions or settled wish reservation.
         state = inspect(row)
         if row in session.dirty and row not in session.deleted:
             changed = [attribute.key for attribute in state.attrs
@@ -330,7 +398,11 @@ def stamp_snapshot_inputs(session, _flush_context, _instances):
                        if attribute.history.has_changes() and (
                            _snapshot_attribute_changes(row, attribute.key, old, getattr(row, attribute.key), exclusions)
                            or _wish_reservation_changes(row, attribute.key, old, getattr(row, attribute.key)))]
-            if not changed or _unread_status_change(session, row, changed):
+            if (isinstance(row, m.Workspace) and row.id == publishing_workspace
+                    and set(changed) <= {'status', 'validation'} and row.status == 'published'):
+                continue
+            if (not changed or _unread_status_change(session, row, changed)
+                    or _unread_draft_lifecycle(session, row, changed)):
                 continue
         if isinstance(row, m.Organisation) and row in session.new and row.id is None:
             row.id = m.uid()

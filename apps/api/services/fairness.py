@@ -192,8 +192,10 @@ def _write_ledger_rows(db, department_id, rows, *, delete_publication_ids=()):
             db.execute(m.FairnessLedger.__table__.insert(), chunk)
     from apps.api.db import bump_snapshot_input_revisions, snapshot_input_listener_classes
     organisation_id = db.get(m.Department, department_id).organisation_id
-    bump_snapshot_input_revisions(db, [organisation_id],
-        availability=snapshot_input_listener_classes()[m.FairnessLedger] == 'availability')
+    isolated = db.info.get('_isolated_publication')
+    if not isolated or (set(delete_publication_ids) | {row['publication_id'] for row in rows}) != {isolated[0]}:
+        bump_snapshot_input_revisions(db, [organisation_id],
+            availability=snapshot_input_listener_classes()[m.FairnessLedger] == 'availability')
     return len(rows)
 
 
