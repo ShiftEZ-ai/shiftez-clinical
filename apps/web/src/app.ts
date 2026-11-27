@@ -8585,7 +8585,7 @@ function auditQuery(){
 function auditFeed(events:Row[]):DocumentFragment{
   const out=document.createDocumentFragment(),selfApproved=(e:Row)=>!!e.detail?.self_approved;
   const runs:{e:Row;n:number;last:Row}[]=[];
-  for(const e of events){const r=runs.at(-1);if(r&&r.e.action===e.action&&r.e.detail?.catalogue===e.detail?.catalogue&&(r.e.target_label||'')===(e.target_label||'')&&r.e.actor_id===e.actor_id&&r.e.reason===e.reason&&toLocal(r.e.created_at,zone()).slice(0,10)===toLocal(e.created_at,zone()).slice(0,10)){r.n++;r.last=e;}else runs.push({e,n:1,last:e});}
+  for(const e of events){const r=runs.at(-1);if(r&&r.e.action===e.action&&!e.detail?.leave_allowance_changes&&!r.e.detail?.leave_allowance_changes&&r.e.detail?.catalogue===e.detail?.catalogue&&(r.e.target_label||'')===(e.target_label||'')&&r.e.actor_id===e.actor_id&&r.e.reason===e.reason&&toLocal(r.e.created_at,zone()).slice(0,10)===toLocal(e.created_at,zone()).slice(0,10)){r.n++;r.last=e;}else runs.push({e,n:1,last:e});}
   let day='';
   for(const {e,n,last} of runs){
     const d=toLocal(e.created_at,zone()).slice(0,10);
@@ -8597,8 +8597,11 @@ function auditFeed(events:Row[]):DocumentFragment{
     const copyRef=iconButton(`Copy reference for ${time} change`,'copy',async()=>{try{await navigator.clipboard.writeText(ref);notify('Reference copied.');}catch{notify('Copying is blocked here. The reference is '+ref,'info');}},{class:'audit-ref','data-tip':ref});
     // A reason that only repeats the change ("Signed in" on a sign-in) is left out.
     const said=e.reason&&e.reason!==e.action&&!verb.startsWith(String(e.reason).toLowerCase())?e.reason:'';
+    const allowances=(e.detail?.leave_allowance_changes||[]) as {leave_type_name:string|null;effective_year_start:string|null;before_days:number|null;after_days:number|null}[];
+    const days=(value:number|null)=>value===null?'No allowance':plural(value,'calendar day');
     out.append(el('div',{class:'audit-row'},el('span',{class:'audit-time mono'},time),el('span',{class:`role-chip duty-${colour}`,title:chip},el('span',{class:'chip-text'},chip)),
-      el('div',{class:'audit-text'},el('span',{},el('strong',{},e.actor_display_name||'Account not available'),` ${verb} ${what}${verb==='submitted'?' for review':''}`,selfApproved(e)?badge('Self-approved','warn','audit-self',{tip:'Their own work, allowed by a self-approval permission'}):''),said?el('small',{title:said},'“'+said+'”'):null),copyRef));
+      el('div',{class:'audit-text'},el('span',{},el('strong',{},e.actor_display_name||'Account not available'),` ${verb} ${what}${verb==='submitted'?' for review':''}`,selfApproved(e)?badge('Self-approved','warn','audit-self',{tip:'Their own work, allowed by a self-approval permission'}):''),said?el('small',{title:said},'“'+said+'”'):null,
+        allowances.map(line=>el('span',{},`${line.leave_type_name||'Leave'}${line.effective_year_start?' from '+formatDate(line.effective_year_start):''} · ${days(line.before_days)} → ${days(line.after_days)}`))),copyRef));
   }
   return out;
 }

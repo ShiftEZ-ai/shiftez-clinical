@@ -24,8 +24,67 @@ def _policy(db, department_id):
 def settings(db, actor):
     require_role(actor, 'admin')
     row = _policy(db, actor.department_id)
+    config = s.LeaveBalanceConfiguration.model_validate(row.definition) if row else s.LeaveBalanceConfiguration()
+    first = year_start(config, today(db, actor.department_id))
     return s.LeaveBalanceSettings(revision=row.revision if row else None,
-        configuration=row.definition if row else s.LeaveBalanceConfiguration())
+        configuration=config, default_starts_on_min=_default_start_min(first))
+
+
+def _default_start_min(first):
+    return first.replace(year=first.year - 1) + timedelta(days=1) if first.year > 1 else None
+
+
+def _defaults(config):
+    lines = defaultdict(list)
+    for line in config.allowances:
+        if line.person_id is None:
+            lines[line.leave_type_id].append(line)
+    return lines
+
+
+def _default_changes(db, actor, previous, config, *, undo):
+    before, after = _defaults(previous), _defaults(config)
+    first = year_start(previous, today(db, actor.department_id))
+    earliest = _default_start_min(first)
+    undo_setup = False
+    if undo and any(type_id not in after and any(line.starts_on is None for line in lines)
+                    for type_id, lines in before.items()):
+        event = m.AuditEvent
+        saved_at = db.scalar(select(event.created_at).where(event.department_id == actor.department_id,
+            event.action == 'department.leave_balance_settings').order_by(event.seq.desc()).limit(1))
+        zone = db.get(m.Organisation, actor.organisation_id).timezone
+        undo_setup = saved_at is not None and aware(saved_at) >= local_midnight(first, zone)
+    changes = []
+    for type_id in sorted(before.keys() | after.keys()):
+        old_lines, new_lines = before[type_id], after[type_id]
+        old_days = {line.starts_on: line.days for line in old_lines}
+        new_days = {line.starts_on: line.days for line in new_lines}
+        for starts_on in sorted(old_days.keys() | new_days.keys(), key=lambda day: (day is not None, day or date.min)):
+            if old_days.get(starts_on) == new_days.get(starts_on):
+                continue
+            closed = earliest is not None and (starts_on is None or starts_on < earliest)
+            # Undated defaults from initial setup remain compatible with the existing Undo.
+            legacy_setup = starts_on is None and (not old_lines or undo_setup and not new_lines)
+            require(not closed or legacy_setup, 'LEAVE_ALLOWANCE_HISTORY',
+                    'Keep allowances for closed leave years. Add an allowance with a later start date.', 409)
+            before_days, after_days = old_days.get(starts_on), new_days.get(starts_on)
+            effective = None
+            if starts_on is not None:
+                effective = year_start(config, starts_on)
+                if effective < starts_on:
+                    require(effective.year < date.max.year, 'LEAVE_BALANCE_DATES', 'Choose a supported leave year')
+                    effective = effective.replace(year=effective.year + 1)
+                before_days, after_days = _allowance(old_lines, effective), _allowance(new_lines, effective)
+            changes.append({'leave_type_id': type_id, 'starts_on': starts_on.isoformat() if starts_on else None,
+                            'effective_year_start': effective.isoformat() if effective else None,
+                            'before_days': before_days, 'after_days': after_days})
+    if changes:
+        type_ids = {line['leave_type_id'] for line in changes}
+        names = dict(db.execute(select(m.LeaveType.id, m.LeaveType.name).where(
+            m.LeaveType.department_id == actor.department_id, m.LeaveType.id.in_(type_ids))).all())
+        for line in changes:
+            line['leave_type_name'] = names.get(line['leave_type_id'])
+    return changes
 
 
 def update(db, actor, command):
@@ -34,11 +93,13 @@ def update(db, actor, command):
     row = _policy(db, actor.department_id)
     require((row.revision if row else None) == command.expected_revision, 'STALE_REVISION',
             'Reload the current leave allowance settings', 409)
+    previous = s.LeaveBalanceConfiguration.model_validate(row.definition) if row else s.LeaveBalanceConfiguration()
     config = change.configuration
-    if config is None:
+    undo = config is None
+    if undo:
         require(row is not None and row.previous_definition is not None, 'NOTHING_TO_UNDO',
                 'There are no earlier leave allowances to restore', 409)
-        definition = row.previous_definition
+        config = s.LeaveBalanceConfiguration.model_validate(row.previous_definition)
     else:
         types = {line.leave_type_id for line in config.allowances}
         available = set(db.scalars(select(m.LeaveType.id).where(
@@ -49,7 +110,8 @@ def update(db, actor, command):
         members = set(db.scalars(select(member.person_id).where(member.department_id == actor.department_id,
             member.person_id.in_(people), member.withdrawn.is_(False)))) if people else set()
         require(members == people, 'PERSON_NOT_IN_DEPARTMENT', 'Choose people in this department', 404)
-        definition = config.model_dump(mode='json')
+    changes = _default_changes(db, actor, previous, config, undo=undo)
+    definition = config.model_dump(mode='json')
     if row:
         row.previous_definition, row.definition = row.definition, definition
         row.revision += 1
@@ -59,6 +121,7 @@ def update(db, actor, command):
         db.add(row)
     db.flush()
     return {'record': {'id': row.id, 'revision': row.revision},
+            'leave_allowance_changes': changes,
             'undo': {'kind': 'department.leave_balance_settings', 'expected_revision': row.revision,
                      'payload': {'configuration': None, 'reason': 'Undo'}}}
 
@@ -99,10 +162,10 @@ def _days(intervals, first, after, zone):
 
 
 def _allowance(lines, first):
-    individual = [line for line in lines if line.starts_on is not None and line.starts_on <= first]
-    if individual:
-        return max(individual, key=lambda line: line.starts_on).days
-    return next((line.days for line in lines if line.person_id is None), None)
+    applicable = (line for line in lines if line.starts_on is None or line.starts_on <= first)
+    current = max(applicable, key=lambda line: (line.person_id is not None, line.starts_on is not None,
+                                               line.starts_on or date.min), default=None)
+    return current.days if current else None
 
 
 def balances(db, actor, person_id, *, request=None, policy=None):
