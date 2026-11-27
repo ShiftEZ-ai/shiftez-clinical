@@ -90,6 +90,8 @@ def test_a_frozen_longer_wish_period_still_reads_the_later_month(database, reque
 @pytest.mark.parametrize('database', DATABASES)
 def test_unrelated_draft_lifecycle_keeps_a_review_current(database, request):
     h = request.getfixturevalue(database)
+    assert any(p['definition']['rule'].get('id') == 'fair_share' and p['status'] == 'active'
+               for p in h.get('coordinator', '/api/catalogues')['policies'])
     first = month(h, 'First month', '2026-10-01', '2026-11-01', '2026-10-05')
     first = h.lifecycle(first, 'submit')['workspace']
     before, revision = h.snapshot(first)['fingerprint'], input_revision(h)

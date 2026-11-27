@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 from threading import Lock, get_native_id
 import time
-from sqlalchemy import and_, create_engine, event, exists, inspect, or_, select, text
+from sqlalchemy import and_, create_engine, event, exists, func, inspect, or_, select, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError, TimeoutError as PoolTimeout
 from sqlalchemy.orm import Session, load_only, with_loader_criteria
 from .errors import Problem
@@ -310,6 +310,7 @@ def isolated_publication(session, workspace, checked):
     from datetime import timedelta
     from . import models as m
     from .snapshots import snapshot_department_ids, snapshot_window
+    from packages.contracts.rule_catalogue import CATALOGUE_REGISTRIES, entry_kinds
     from packages.domain.time import local_midnight
 
     if workspace.base_publication_id or workspace.replaces_publication_id or checked.get('wishes'):
@@ -348,11 +349,19 @@ def isolated_publication(session, workspace, checked):
     if not may_reach:
         return True
     P, H, F = (model.__table__.c for model in (m.Policy, m.DefinitionHistory, m.SchedulingFact))
-    kinds = ('block_quota', 'catalogue')
+    quota_entries = {entry['id'] for registry in CATALOGUE_REGISTRIES.values() for entry in registry.values()
+                     if 'block_quota' in entry_kinds(entry)}
+    ordinary_entries = sorted(set().union(*CATALOGUE_REGISTRIES.values()) - quota_entries)
+
+    def may_set_quota(rule):
+        kind = rule['kind'].as_string()
+        return or_(kind == 'block_quota',
+                   and_(kind == 'catalogue', func.coalesce(rule['id'].as_string(), '').not_in(ordinary_entries)))
+
     return not session.scalar(select(or_(
-        exists().where(P.department_id.in_(may_reach), P.definition['rule']['kind'].as_string().in_(kinds)),
+        exists().where(P.department_id.in_(may_reach), may_set_quota(P.definition['rule'])),
         exists().where(H.department_id.in_(may_reach), H.kind == 'policy',
-                       H.snapshot['definition']['rule']['kind'].as_string().in_(kinds)),
+                       may_set_quota(H.snapshot['definition']['rule'])),
         exists().where(F.department_id.in_(may_reach), F.kind == 'block_quota'))))
 
 
