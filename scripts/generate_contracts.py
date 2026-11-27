@@ -13,7 +13,8 @@ CLASSES = [s.DisplaySettingsRestore, s.PersonPropertiesInput, s.ContactTypeInput
            s.LivePulse, s.ScheduleSession, s.WorkspaceCompactDetail, s.WorkspacePartQuery, s.WorkspacePartPage,
            s.DraftEditDelta, s.WorkspaceUndoInput,
            s.MembershipInput, s.ProgrammeMembershipInput, s.ProgrammeCalendarInput, s.MentorshipInput, s.RotationInput, s.EligibilityInput, s.GrantInput, s.AvailabilityInput,
-           s.RotationBoard, s.RotationBlock, s.RotationTemplateInput, s.RotationPlanInput, s.RotationCopyInput, s.RotationRemoveInput,
+           s.RotationBoard, s.ReferenceRotationFile, s.ReferenceRotationImport, s.ReferenceRotationConflict, s.ReferenceRotationReview,
+           s.RotationBlock, s.RotationTemplateInput, s.RotationPlanInput, s.RotationCopyInput, s.RotationRemoveInput,
            s.RotationChangeInput, s.RotationSwapInput, s.TraineeNoteInput, s.TraineeNoteEdit,
            s.WorkspaceInput, s.RotaSummary, s.RotaCauseSummary, s.PublishedScheduleSummary, s.LocationInput, s.RoleInput, s.CustomField, s.LeaveTypeInput, s.ParticipantRecord,
            s.ReviewRouteInput, s.ReviewDelegationInput, s.ReviewDecisionInput, s.AuthorityRestoreInput,
@@ -293,7 +294,7 @@ def render():
                  'PLANNER_PEOPLE_SORT_LABELS', 'PLANNER_COLOUR_LABELS', 'PLANNER_PERSON_DISPLAYS',
                  'PLANNER_PERSON_DISPLAY_DEFAULT', 'PLANNER_TEAM_ROWS_DEFAULT', 'PLANNER_TEAM_ROWS_LIMIT', 'PLANNER_WIDTH_KEYS', 'VIEW_PROPERTY_DEFINITIONS', 'VIEW_ITEM_SHOWN_BY_DEFAULT', 'TABLE_GROUP_FIELDS',
                  'LABEL_PART_DEFINITIONS', 'LABEL_SEPARATORS', 'LABEL_HONORIFIC_MODES', 'HONORIFIC_DEFAULTS',
-                 'NAME_PARTICLE_DEFAULTS', 'NAME_LABEL_DEFAULTS', 'PERSON_PROPERTY_DEFINITIONS',
+                 'NAME_PARTICLE_DEFAULTS', 'NAME_LABEL_DEFAULTS', 'PERSON_PROPERTY_DEFINITIONS', 'REFERENCE_ROTATION_FILE_LIMIT',
                  'PERSON_PROPERTY_ALIASES', 'FAIRNESS_METRIC_LABELS',
                  'PLANNER_COLOUR_TAG_LIMIT', 'PRINT_IMAGE_DPI', 'PRINT_IMAGE_DPI_DEFAULT', 'PRINT_WRAP_DEFAULT',
                  'WHEREABOUTS_DEFAULTS', 'WHEREABOUTS_LIMITS'):

@@ -6062,8 +6062,8 @@ class LeaveAllowanceLine(Schema):
 
     @model_validator(mode='after')
     def dated_person_line(self):
-        if (self.person_id is None) != (self.starts_on is None):
-            raise ValueError('Supply a person and start date together for an individual allowance')
+        if self.person_id is not None and self.starts_on is None:
+            raise ValueError('Supply a start date for an individual allowance')
         return self
 
 
@@ -6092,6 +6092,7 @@ class LeaveBalanceSettingsChange(Decision):
 class LeaveBalanceSettings(Schema):
     revision: int | None = None
     configuration: LeaveBalanceConfiguration
+    default_starts_on_min: date | None = None
 
 
 class LeaveBalance(Schema):
@@ -7455,6 +7456,31 @@ class ImportPreview(Schema):
     csv_text: str = Field(min_length=1, max_length=1_000_000)
 
 
+class ReferenceRotationFile(Schema):
+    rotations: list[RotationInput] = Field(min_length=1, max_length=1000)
+
+
+REFERENCE_ROTATION_FILE_LIMIT = 500_000
+ROTATION_REFERENCE_FORMAT = 'rotation_reference'
+
+
+class ReferenceRotationImport(Schema):
+    file_text: str = Field(min_length=1, max_length=REFERENCE_ROTATION_FILE_LIMIT)
+    reason: Reason
+    expected_fingerprint: Sha256 | None = None
+
+
+class ReferenceRotationConflict(Schema):
+    row: int
+    messages: list[str]
+
+
+class ReferenceRotationReview(Schema):
+    count: int
+    conflicts: list[ReferenceRotationConflict]
+    expected_fingerprint: Sha256
+
+
 class ReferenceRotaPreview(Schema):
     workspace_id: ID
     reference_import_id: ID
@@ -8773,6 +8799,7 @@ class RotationBoard(Schema):
     can_plan: bool
     can_note: bool
     note_person_ids: list[ID]
+    reference_leave_conflicts: list[ID] = Field(default_factory=list)
 
 
 class RotationBlock(Schema):
@@ -9168,7 +9195,7 @@ DEFAULT_CONTACT_TYPES = (
      'visibility': {'mode': 'everyone', 'roles': []}, 'one_tap': True, 'action_off': False},
     {'id': 'f0136000-0000-4000-8000-000000000002', 'name': 'Extension', 'kind': 'extension', 'legacy_field': 'work_extension', 'sort_order': 30,
      'visibility': {'mode': 'roles', 'roles': ['admin', 'coordinator', 'approver']}, 'one_tap': False, 'action_off': False},
-    {'id': 'f0136000-0000-4000-8000-000000000003', 'name': 'MCD pager', 'kind': 'pager', 'legacy_field': 'pager', 'sort_order': 10,
+    {'id': 'f0136000-0000-4000-8000-000000000003', 'name': 'Pager', 'kind': 'pager', 'legacy_field': 'pager', 'sort_order': 10,
      'visibility': {'mode': 'everyone', 'roles': []}, 'one_tap': False, 'action_off': False},
     {'id': 'f0136000-0000-4000-8000-000000000004', 'name': 'Work email', 'kind': 'email', 'legacy_field': 'work_email', 'sort_order': 40,
      'visibility': {'mode': 'roles', 'roles': ['admin', 'coordinator', 'approver']}, 'one_tap': True, 'action_off': False},

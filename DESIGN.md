@@ -152,8 +152,9 @@ Mockup names and numbers are illustrative only; nothing from them is seeded into
   User agent control (unstyled native controls), and a box or glyph inside a larger target of the same action.
   Shared roots: a table's column grip is 24 px centred on the boundary (12 px into each heading; inside its heading at
   the table's edge), each heading stacked above the next; a resized heading clips its own button, so its text ends in
-  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Ctrl D is its
-  keyboard way, no pointer equivalent yet) and the native × of search fields.
+  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Fill down in the
+  cell bar, then a click or tap on the pattern's last cell and on the last row, is its single-pointer way, and Ctrl D
+  its keyboard way) and the native × of search fields.
 - Touch targets (WCAG 2.2 SC 2.5.5 Target Size (Enhanced), level AAA, beyond the AA target): on a phone every interactive target is at least 44 × 44 CSS px, from one block
   in `app.css` (Touch targets) for the shared controls (buttons, icon buttons, collection toolbar tools, segmented
   options, menu rows, tabs, search fields, pickers, link buttons, the skip link). A checkbox or radio keeps its 24 px box; its target is its whole label row (at least 44 px tall), or, with no visible label (row selection), the centred invisible 44 px `::after`. Pills and chips that act as buttons,
@@ -400,7 +401,9 @@ and a desktop window narrowed below it gets the same rule at once.
   refuses (403) says "Not available for your role." as information, with no Retry; any other failure is an error with
   Retry inside the message. One builder: `readFailed()` in `dom.ts` (`tests/test_web_ssot_guards.py` keeps it so).
 - Ctrl/⌘ K opens the command menu from anywhere (each typed word matches a word start, in any order); `?` lists
-  keyboard shortcuts.
+  keyboard shortcuts. Alt M (`MESSAGES_KEY`) goes to the newest message's Undo (else its Dismiss) from anywhere;
+  a message stays while focus or the pointer is in it, and Esc, Undo or Dismiss hand focus back to the control it came
+  from, as does an Undo that turns its message into a saving note. Not F6 (the browser's move to its address bar).
 - A failed refresh (server error or offline) never presents saved data as current: a page showing data keeps its header,
   toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message when it is a sentence for people, its problem detail, never a bare status phrase such as "Service unavailable") with Retry inside it (app.ts
   `showStale`); a page that showed nothing shows `readFailed()` (above): "Couldn’t load <page>." with the same server-message rule and Retry inside it, plus Report this problem on a 5xx or lost connection. In a tab still

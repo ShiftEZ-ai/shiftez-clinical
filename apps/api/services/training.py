@@ -3,6 +3,7 @@ requests and programme leads' notes on trainees.
 
 A trainee is anyone with a programme membership in the department. Programme leads manage only their led programmes."""
 from datetime import date, timedelta
+from hashlib import sha256
 from zoneinfo import ZoneInfo
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import and_, false, func, or_, select, true, tuple_
@@ -305,13 +306,17 @@ def board(db, actor, start, end, programme_id=None):
     names = {kind: dict(db.execute(select(cls.id, cls.name).where(cls.department_id == dep, cls.id.in_(ids - {None}))).all()) if ids - {None} else {}
              for kind, (cls, ids) in refs.items()}
     choices = rotation_choices(db, actor)
+    S = m.SourceMapping
+    reference_conflicts = sorted(set(db.scalars(select(S.target_id).where(S.department_id == dep,
+        S.target_kind == s.ROTATION_REFERENCE_FORMAT, S.target_id.in_({r.id for r in rotations}),
+        S.source_key.endswith('/leave-conflict'))))) if rotations else []
     return {"start": start.isoformat(), "end": end.isoformat(), "names": names, "choices": choices,
             "people": [{"id": p.id, "display_name": p.display_name, "short_code": p.short_code, "notes": notes.get(p.id, 0)}
                        for p in sorted(people.values(), key=lambda p: (p.display_name.casefold(), p.id))],
             "memberships": [record(x) for x in memberships], "rotations": [record(r) for r in rotations],
             "leave": sorted(leave, key=lambda x: (x["starts_on"], x["person_id"])), "changes": changes,
             "can_plan": actor.permits("admin", "coordinator", "programme_lead"), "can_note": actor.permits("programme_lead"),
-            "note_person_ids": sorted(note_person_ids)}
+            "note_person_ids": sorted(note_person_ids), "reference_leave_conflicts": reference_conflicts}
 
 
 def _day_span(row, tz, stage, label):
@@ -335,10 +340,15 @@ def _block_end(start, block):
 
 
 def _create_rotation(db, actor, value, context, reason):
-    from .catalogue import sync_rotation_attachment, validate_references
+    from .catalogue import validate_references
     value = s.RotationInput.model_validate(value)
     conflicts = validate_references(db, actor, "rotations", value, rotation_context=context)
     context.setdefault('leave_conflicts', []).extend(conflicts or [])
+    return _store_rotation(db, actor, value, reason)
+
+
+def _store_rotation(db, actor, value, reason):
+    from .catalogue import sync_rotation_attachment
     values = value.model_dump()
     mentor_id = values.pop('mentor_id')
     row = m.Rotation(department_id=actor.department_id, attachment_link=None, **values)
@@ -371,6 +381,59 @@ def _rotation_context(db, actor, people, types, services, cohorts, mentors=(), p
             M.department_id == actor.department_id, M.person_id.in_(people)).order_by(M.starts_on)):
         memberships.setdefault((pid, programme), []).append((start, end))
     return {"references": refs, "memberships": memberships, "taken": _taken(db, actor, people)}
+
+
+def reference_rotation_import(db, actor, payload, *, preview=False):
+    from apps.api.snapshots import snapshot_hash
+    from .catalogue import programme_access, validate_references
+    from .independence import today
+
+    require_role(actor, "admin", "coordinator", "programme_lead")
+    value = s.ReferenceRotationImport.model_validate(payload)
+    file = s.ReferenceRotationFile.model_validate_json(value.file_text.removeprefix('\ufeff'))
+    day = today(db, actor.department_id)
+    # Rotation end dates are exclusive, so an end equal to today has no dates on or after today.
+    require(all(row.ends_on <= day for row in file.rotations), 'REFERENCE_ROTATION_DATES',
+            'A reference rotation must finish before the import date')
+    digest = sha256(value.file_text.encode('utf-8')).hexdigest()
+    require(db.scalar(select(m.ReferenceImport.id).where(m.ReferenceImport.department_id == actor.department_id,
+            m.ReferenceImport.archive_sha256 == digest)) is None, 'DUPLICATE_IMPORT',
+            'This reference file has already been imported', 409)
+
+    cohort_ids = {row.cohort_id for row in file.rotations}
+    cohorts = [scoped(db, m.Cohort, cohort_id, actor) for cohort_id in sorted(cohort_ids)]
+    for programme_id in {row.programme_id for row in cohorts}:
+        programme_access(db, actor, programme_id)
+    context = _rotation_context(db, actor, {row.person_id for row in file.rotations},
+        {row.rotation_type_id for row in file.rotations} - {None},
+        {row.service_id for row in file.rotations} - {None}, cohort_ids,
+        {row.mentor_id for row in file.rotations} - {None}, preloaded=cohorts)
+    conflicts = {}
+    for number, row in enumerate(file.rotations, 1):
+        findings = validate_references(db, actor, 'rotations', row, rotation_context=context,
+                                       reference_import_day=day)
+        if findings:
+            conflicts[number] = list(dict.fromkeys(finding['message'] for finding in findings))
+        context['taken'].setdefault(row.person_id, []).append((row.starts_on, row.ends_on))
+
+    findings = [{'row': number, 'messages': messages} for number, messages in conflicts.items()]
+    fingerprint = snapshot_hash([digest, day.isoformat(), findings])
+    review = {'count': len(file.rotations), 'conflicts': findings, 'expected_fingerprint': fingerprint}
+    if preview:
+        return review
+    require(value.expected_fingerprint == fingerprint, 'STALE_PREVIEW',
+            'Review the reference file again before importing', 409)
+    rows = [_store_rotation(db, actor, row, value.reason) for row in file.rotations]
+    created = _finish_rotations(db, actor, rows, value.reason, context)
+    source = m.ReferenceImport(department_id=actor.department_id, archive_sha256=digest,
+        source_name=f'Reference rotations {digest}', manifest={'format': s.ROTATION_REFERENCE_FORMAT, 'count': len(rows)})
+    db.add(source)
+    # Reference provenance is retained evidence, so it does not lock the live row against Undo.
+    db.add_all(m.SourceMapping(department_id=actor.department_id, source_name=source.source_name,
+        source_key=f'{number}/leave-conflict' if number in conflicts else str(number),
+        target_kind=s.ROTATION_REFERENCE_FORMAT, target_id=row.id) for number, row in enumerate(rows, 1))
+    return {**review, 'created': created, 'rotation_scope': [
+        {'cohort_id': cohort.id, 'programme_id': cohort.programme_id} for cohort in cohorts]}
 
 
 def _taken(db, actor, person_ids):

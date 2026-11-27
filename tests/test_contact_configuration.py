@@ -279,6 +279,8 @@ def test_migration_retains_all_existing_data(session_limits_database):
             expected['visibility'] = ({'mode': 'everyone', 'roles': seeded}
                                       if row.legacy_field not in {'work_extension', 'work_email'}
                                       else {'mode': 'roles', 'roles': ['admin', 'coordinator']})
+            if row.legacy_field == 'pager':  # the default was renamed for new departments; a seeded row is never renamed
+                assert row.name != expected.pop('name')
             assert all(getattr(row, k) == value for k, value in expected.items())
     for revision, expected_class in (('0136_person_contacts', 'fill_only'),
                                      ('0137_display_settings', 'fill_only'),
