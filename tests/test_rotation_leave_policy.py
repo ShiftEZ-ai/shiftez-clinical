@@ -349,11 +349,37 @@ def test_reference_import_keeps_an_approved_leave_conflict_visible(h, monkeypatc
 
     with transaction(h.app.state.engine) as db:
         reference = db.scalar(sa.select(m.ReferenceImport).where(m.ReferenceImport.department_id == h.seed['department_id']))
-        reference_id, source_name = reference.id, reference.source_name
+        reference_id = reference.id
+        saved = db.get(m.Workspace, workspace['id']).validation
+        assert any(f['code'] == 'ROTATION_LEAVE_NOT_ALLOWED' and f['detail']['rotation_id'] == rotation['id']
+                   for f in saved['findings'])
     monkeypatch.setattr(imports, '_IMPORT_MAPPING', {'literals': []})
     no_duties = h.command('coordinator', 'import.reference_preview',
         {'reference_import_id': reference_id, 'workspace_id': workspace['id']}, revision=workspace['revision'], status=422)
     assert no_duties['error']['code'] == 'NO_SOURCE_DUTIES'
+
+    undo = {'items': [{'id': rotation['id'], 'revision': rotation['revision']}], 'reason': REASON}
+    assert h.command('coordinator', 'rotation.undo_plan', undo, status=409)['error']['code'] == 'INTEGRITY_CONFLICT'
+
+
+def test_reference_rotation_undo_keeps_import_evidence(h, monkeypatch):
+    from apps.api.services import independence
+
+    _, value, _ = resident(h, create=False)
+    monkeypatch.setattr(independence, 'today', lambda db, department_id: date(2026, 11, 1))
+    pending = request_leave(h)['record']
+    h.command('approver', 'request.decide', {'decision': 'approve', 'reason': REASON},
+              pending['id'], pending['revision'])
+    payload = {'file_text': dumps({'rotations': [value]}), 'reason': REASON}
+    preview = h.client('coordinator').post('/api/rotation-board/reference-preview', json=payload)
+    assert preview.status_code == 200, preview.text
+    payload['expected_fingerprint'] = preview.json()['expected_fingerprint']
+    rotation = h.command('coordinator', 'rotation.import_reference', payload)['created'][0]
+    board_url = '/api/rotation-board?start=2026-10-01&end=2026-11-01'
+    assert h.get('coordinator', board_url)['reference_leave_conflicts'] == [rotation['id']]
+    with transaction(h.app.state.engine) as db:
+        reference = db.scalar(sa.select(m.ReferenceImport).where(m.ReferenceImport.department_id == h.seed['department_id']))
+        reference_id, source_name = reference.id, reference.source_name
 
     undo = {'items': [{'id': rotation['id'], 'revision': rotation['revision']}], 'reason': REASON}
     assert h.command('admin', 'rotation.undo_plan', undo)['kept'] == 1
