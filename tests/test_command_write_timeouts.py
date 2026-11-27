@@ -35,7 +35,7 @@ def bounded(pg,monkeypatch):
 
 
 @pytest.fixture
-def advisory_lock_timeout(bounded,pg,caplog):
+def advisory_lock_timeout(bounded,pg,caplog,monkeypatch,request):
     settings,engine=bounded
     client=TestClient(create_app(settings,engine),base_url=settings.public_origin)
     try:
@@ -52,7 +52,10 @@ def advisory_lock_timeout(bounded,pg,caplog):
             holder_pid=holder.scalar(text("SELECT pg_backend_pid()"))
             before=client.get("/api/me")
             started=time.monotonic()
-            with caplog.at_level(logging.INFO):
+            with caplog.at_level(logging.INFO), monkeypatch.context() as patch:
+                if not request.node.get_closest_marker("wall_benchmark"):
+                    # Keep the write budget available for the diagnostic; PostgreSQL still times out the real lock.
+                    patch.setattr(db,"time",SimpleNamespace(monotonic=lambda:started,sleep=time.sleep))
                 response=client.post("/api/commands",headers={"idempotency-key":key},json={"kind":"workspace.create",
                     "payload":{"name":"Private synthetic lock fixture","starts_on":"2026-10-04","ends_on":"2026-10-11"}})
             elapsed=time.monotonic()-started
@@ -77,7 +80,11 @@ def test_command_advisory_lock_times_out_without_receipt_and_reads_stay_usable(a
     assert after.status_code==200
     assert receipts==0
     assert workspaces==0
-    assert str(holder_pid) in records
+    database_logs=[row for row in json.loads(records) if row["name"]=="rota.db"]
+    blockers=[holder for row in database_logs if row["msg"]=="write_lock_wait"
+              and row.get("command_kind")=="workspace.create" for holder in row["blockers"]]
+    assert holder_pid in {holder["pid"] for holder in blockers}, [
+        (row["msg"],row.get("phase"),row.get("error_code")) for row in database_logs]
     assert "Private synthetic lock fixture" not in records and TEST_PASSWORD not in records
 
 
