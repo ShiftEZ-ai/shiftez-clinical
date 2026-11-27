@@ -189,7 +189,7 @@ const freshScheduling=(workspace='',open=false)=>({workspace,open,scope:'period'
    *  groupKeep: a group run's own Keep existing (on unless unticked); scopeError: the server's reason a group was refused. */
   group:null as Conditions|null,pickGroup:false,groupKeep:undefined as boolean|undefined,scopeError:'',
   /** The run the grid is showing live (autoschedule_live.ts) until it ends. */live:'',
-  /** A Run press waiting for the server: no second run starts meanwhile, even from a redrawn panel. */starting:false,
+  /** A Run press waiting for the server (its kind): no second run starts meanwhile, even from a redrawn panel. */starting:'',
   /** The setup's fields are open (Change): a redraw keeps them open. Not kept on the device (keepSetup). */editing:false});
 let schedulingSettings=freshScheduling();
 // Each rota keeps its own run setup (dates, clinics, priorities) while you switch between rotas; sign-out forgets them.
@@ -7761,7 +7761,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       const t=runScope();if(typeof t==='string')throw new Error(t);ids=t;
     }
     // Feedback at once: Review & apply and the footer show the run starting before the server has answered.
-    st().starting=true;let starting:HTMLElement|null=null;
+    st().starting=kind;let starting:HTMLElement|null=null;
     if(kind==='generation'){st().step=3;drawStep();feedback.inert=false;feedback.removeAttribute('aria-busy');
       feedback.replaceChildren(...continuedNotes(diagnostic),generationProgress({id:'',revision:0,status:'queued'},0,diagnostic,phoneQuery.matches));starting=startingStrip();void liveView();}
     else drawStep();
@@ -7775,7 +7775,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       ...(kind==='generation'&&own?{planning_group_version_id:own.group_version_id||(own.group_id===planning!.group_id?planning!.group_version_id:undefined),lookahead:leaveRoom?.input.checked?'coupled':'none'}:{}),
       // Repairs move other people's assignments: never in a group run.
       session_ids:ids,repair_unavailable:!cpSat&&kind==='generation'&&!keeping()&&!grouped(),repair_conflicts:!cpSat&&kind==='generation'&&!keeping()&&!grouped()},undefined,w.revision);}
-    catch(e){st().starting=false;starting?.remove();jobsKey='';
+    catch(e){st().starting='';starting?.remove();jobsKey='';
       // A group the server refuses (nobody matches, a field it no longer accepts): said on What to fill, beside Run.
       if(e instanceof ApiError&&e.code==='INVALID_SCOPE'){st().scopeError=e.message;st().step=1;drawStep();void load().catch(failed);return;}
       // SW3-A-03: a run that did not start says so, with Try again; Run is offered again. The read after it may fail
@@ -7787,7 +7787,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       const n=note(`The run didn't start. ${(e as Error).message}`,'error',e);n.classList.add('auto-start-failed');
       n.append(' ',button('Try again',()=>{n.remove();void queue(kind,diagnostic,extra).catch(reportError);},'link-button'));
       feedback.prepend(n);return;}
-    st().starting=false;starting?.remove();active=true;
+    st().starting='';starting?.remove();active=true;
     // The new run is on the grid and in the footer now, not after the next read of the job list.
     const job=created?.job as Row|undefined;
     if(job?.id&&kind==='generation'){st().live=job.id;const hooks=liveHooks(data);void ours(liveView()).then(m=>m.liveRun(job.id,hooks).update(job));}
@@ -7977,6 +7977,10 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // Hidden panels still discover live jobs, but completed results are read only when opened.
     if(!running&&target.hidden){if(!jobs.length)known=true;if(!st().step)drawStep();return;}
     if(!liveRunning&&nextKey===jobsKey)return;
+    // A Run press still waiting for the server: a list read before it (none yet, or older runs) never replaces its pending
+    // progress; the press reads again once the run is created. A panel rebuilt meanwhile shows that progress too.
+    if(st().starting&&!liveRunning){if(st().starting==='generation'&&!feedback.querySelector('.auto-stage')){feedback.inert=false;feedback.removeAttribute('aria-busy');
+      feedback.replaceChildren(generationProgress({id:'',revision:0,status:'queued'},0,false,phoneQuery.matches));}return;}
     // The latest run is read before anything is cleared: what is shown stays until its replacement is ready.
     // Drawing the proposal reuses the read already on screen; fresh summaries still verify its job and rota revisions.
     // A rule check does not replace an unfinished auto-schedule run's Continue action.
