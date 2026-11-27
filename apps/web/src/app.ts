@@ -2836,7 +2836,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     const away=picked.filter(s=>!period.days.includes(toLocal(s.start,zone()).slice(0,10))).length;
     // Resolve these (SI-16): their open places and blocking problems one by one, as Resolve does for the whole rota.
     const toResolve=resolveQueue(data,selected);
-    sel.show({count:selected.size,noun:['session','sessions'],detail:[closed?`${closed} closed`:'',locked?`${locked} locked`:'',away?`${away} in other weeks`:''].filter(Boolean).join(' · ')||undefined,
+    sel.show({count:selected.size,noun:['session','sessions'],key:JSON.stringify([data.workspace.id,...picked.map(s=>s.id).sort()]),detail:[closed?`${closed} closed`:'',locked?`${locked} locked`:'',away?`${away} in other weeks`:''].filter(Boolean).join(' · ')||undefined,
       clear:()=>{selected.clear();renderPage();},actions:[
       ...(toResolve.length?[{label:'Resolve these',icon:'target' as IconName,run:()=>{startResolve(data.workspace.id,selected);schedulingSettings.open=schedulingSettings.editing=false;toCalendar(toResolve[0].shift);renderPage();},tip:plural(toResolve.length,'step')}]:[]),
       ...(picked.some(s=>!s.cancelled)?[{label:'Close sessions',icon:'close' as IconName,run:bulkRun('cancel'),...heldAct(onlyRotaCoordinator('close'),'Kept on the rota, marked closed')}]:[]),

@@ -71,8 +71,26 @@ def test_locking_is_one_click_with_undo_and_shows_where_it_is(browser, live_serv
         # The selection bar never calls a staffed session "open"; Lock there is instant too.
         page.locator('.wk-check').first.check()
         expect(bar).not_to_contain_text('open')
-        bar.get_by_role('button', name=re.compile('More')).click()
-        page.get_by_role('menuitem', name='Lock').click()
+        # A refresh already in flight when More opens replaces its bar. The same selected session stays actionable.
+        held = []
+        draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+        page.route(draft, lambda route: held.append(route))
+        reconnect(page)
+        wait_held(page, held)
+        before_menu = bar.get_attribute('data-bar')
+        more = bar.get_by_role('button', name=re.compile('More'))
+        more.click()
+        item = page.get_by_role('menuitem', name='Lock', exact=True)
+        expect(item).to_be_visible()
+        for route in held:
+            route.continue_()
+        page.unroute(draft)
+        expect(bar).not_to_have_attribute('data-bar', before_menu)
+        expect(more).to_have_attribute('aria-expanded', 'true')
+        # The open menu sits above messages: a message left by the steps above never takes the click meant for Lock.
+        assert page.evaluate("""() => +getComputedStyle(document.querySelector('.popover[role=menu]')).zIndex
+            > +getComputedStyle(document.getElementById('toast-tray')).zIndex""")
+        item.click()
         expect(lock_mark).to_be_visible()
         assert locked(h, w) == [True, False]
         expect(page.locator('dialog.dialog')).to_have_count(0)
