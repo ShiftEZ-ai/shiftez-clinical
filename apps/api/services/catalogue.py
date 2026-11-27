@@ -168,7 +168,8 @@ def rotation_membership(db, actor, person_id, programme_id, start, end, rotation
             "The trainee must belong to the cohort's programme for the whole rotation")
 
 
-def validate_references(db, actor, kind, value, existing_id=None, *, rotation_context=None, series_context=None):
+def validate_references(db, actor, kind, value, existing_id=None, *, rotation_context=None, series_context=None,
+                        reference_import_day=None):
     if kind == 'operating_calendars':
         from .date_sets import references
         for rule in value.definition.date_set_rules:
@@ -273,8 +274,11 @@ def validate_references(db, actor, kind, value, existing_id=None, *, rotation_co
                        m.Rotation.starts_on < value.ends_on, m.Rotation.ends_on > value.starts_on).limit(1)) is not None)
         require(not overlap, "ROTATION_OVERLAP", "This trainee already has a rotation during these dates", 409)
         from .availability import rotation_leave_conflicts, require_rotation_leave
-        conflicts = rotation_leave_conflicts(db, actor, rotation=value, rotation_context=rotation_context)
-        require_rotation_leave(conflicts)
+        historical = reference_import_day is not None and value.ends_on <= reference_import_day
+        conflicts = rotation_leave_conflicts(db, actor, rotation=value, rotation_context=rotation_context,
+                                             historical_reference=historical)
+        if not historical:
+            require_rotation_leave(conflicts)
         return conflicts
     if kind == "rotation_templates":
         if value.programme_id:

@@ -451,7 +451,8 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   'availability_pattern.end':(_,x)=>({said:'Weekly availability ended',done:'Undone. The weekly availability is back.',undo:back('availability_pattern.restore',{reason:'Undo'},x?.pattern)}),
   'availability_pattern.restore':(_,x)=>({said:'Weekly availability restored',undo:back('availability_pattern.end',{reason:'Undo'},x?.pattern)}),
   // Rotations planned or copied are removed again (only unchanged ones, only by who made them); removed ones come back.
-  ...Object.fromEntries(['rotation.plan','rotation.copy'].map(k=>[k,(_:unknown,x:any)=>({said:k==='rotation.plan'?'Rotations planned':'Rotations copied',
+  ...Object.fromEntries(Object.entries({'rotation.plan':'Rotations planned','rotation.copy':'Rotations copied',
+    'rotation.import_reference':'Reference rotations imported'}).map(([k,said])=>[k,(_:unknown,x:any)=>({said,
     undo:x?.created?.length?[{kind:'rotation.undo_plan',payload:{items:x.created.map((r:Row)=>({id:r.id,revision:r.revision})),reason:'Undo'}}]:[]})])),
   'rotation.remove':(_,x)=>({said:'Rotations removed',undo:served(x).length?served(x):(x?.records||[]).map((r:Row)=>({kind:'catalogue.create',payload:{catalogue:'rotations',reason:'Undo',
     value:Object.fromEntries(['rotation_type_id','person_id','cohort_id','service_id','mentor_id','department_available','starts_on','ends_on'].map(k=>[k,r[k]]))}}))}),

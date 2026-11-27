@@ -208,6 +208,7 @@ HEAD_ROLES = {
     'role.restore': ('admin', 'operator'),
     'role.revoke': ('admin', 'operator'),
     'rotation.copy': ('admin', 'coordinator', 'programme_lead'),
+    'rotation.import_reference': ('admin', 'coordinator', 'programme_lead'),
     'rotation.plan': ('admin', 'coordinator', 'programme_lead'),
     'rotation.remove': ('admin', 'coordinator', 'programme_lead'),
     'rotation.request_change': ('staff', 'coordinator', 'programme_lead'),

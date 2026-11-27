@@ -39,7 +39,7 @@ _KINDS = {
     'request': ('request', 'requests', 'people', 'blue', 'create edit undo_edit decide decide_many withdraw undo link_rota'),
     'swap': ('swap', 'swaps', 'people', 'pink', 'offer counteroffer accept confirm reject withdraw prepare undo'),
     'person': ('person record', 'person records', 'people', 'blue', 'anonymise overtime workload contact.set'),
-    'rotation': ('rotation', 'rotations', 'people', 'blue', 'plan copy remove restore request_change swap undo_plan'),
+    'rotation': ('rotation', 'rotations', 'people', 'blue', 'plan copy import_reference remove restore request_change swap undo_plan'),
     'timeline': ('rotation', 'rotations', 'people', 'blue', 'rotation'),
     'trainee_note': ('trainee note', 'trainee notes', 'people', 'blue', 'create update delete restore'),
     'role': ('role', 'roles', 'access', 'slate', 'grant revoke restore'),
@@ -74,6 +74,7 @@ _KINDS = {
 }
 _VERBS = {
     'edit': 'changed', 'undo_edit': 'undid a change in',
+    'import_reference': 'imported',
     'create': 'added', 'create_many': 'added', 'bulk_create': 'added', 'update': 'changed', 'bulk_update': 'changed',
     'update_dates': 'changed the dates of', 'publish': 'published', 'approve': 'approved', 'submit': 'submitted',
     'validate': 'checked', 'capture': 'captured', 'reject': 'returned', 'retire': 'retired', 'activate': 'activated', 'activate_many': 'activated',
