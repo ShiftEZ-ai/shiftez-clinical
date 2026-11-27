@@ -723,8 +723,9 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
       const key=start.input.value+'|'+end.input.value;if(key===asked)return;asked=key;
       const o=await get<Overlaps>(`/api/schedule/overlaps?starts_on=${start.input.value}&ends_on=${shift(end.input.value,1)}`).catch(()=>null);
       if(key!==asked)return;
-      // Dates changed after a choice was made (or an answer for half-typed dates was drawn first): the choice stays.
-      choice=o&&o.publications.length?overlapChoice(o,ctx.me.organisation.timezone,label,undefined,choice?.value()?.choice):null;
+      // Dates changed after a choice was made (or an answer for half-typed dates was drawn first): the choice stays, with
+      // a takeover date the person chose.
+      choice=o&&o.publications.length?overlapChoice(o,ctx.me.organisation.timezone,label,undefined,choice?.kept()):null;
       suggest((o as {suggested_name?:string}|null)?.suggested_name);
       fit.replaceChildren(...(choice?[choice.root]:o?.drafts.length?[note(`Also being planned for these days: ${o.drafts.map(d=>d.name).join(', ')}. You can compare them side by side once this one is created.`,'info')]:[]),...gapNotes());label();
     };

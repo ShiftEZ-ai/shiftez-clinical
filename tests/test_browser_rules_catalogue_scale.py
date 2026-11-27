@@ -62,10 +62,12 @@ def test_rules_search_waits_for_a_pause_in_typing(browser, live_server, h):
         navigate(page, 'rules')
         main = page.locator('#main')
         expect(main.locator('li.rt-item').first).to_be_visible()
-        page.evaluate("""() => {const body=document.querySelector('.rt-body');const replace=body.replaceChildren.bind(body);window.__draws=0;
-            body.replaceChildren=(...children)=>{window.__draws++;return replace(...children);};}""")
         box = main.get_by_role('searchbox', name='Search rules')
         box.click()
+        # The installed clock still advances in real time until paused, including between keystrokes.
+        page.clock.pause_at(page.evaluate('Date.now()') + 1000)
+        page.evaluate("""() => {const body=document.querySelector('.rt-body');const replace=body.replaceChildren.bind(body);window.__draws=0;
+            body.replaceChildren=(...children)=>{window.__draws++;return replace(...children);};}""")
         page.keyboard.type('Duties per week')
         assert page.evaluate('window.__draws') == 0
         page.clock.run_for(300)
