@@ -1,5 +1,6 @@
 """Job ownership and operator writes remain correct without the global writer key."""
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from threading import Event
 
 import pytest
@@ -152,7 +153,7 @@ def test_finish_preserves_the_committed_resume(pg):
     with Session(engine) as db, db.begin():
         claim = worker.claim_job(db)
         assert claim['id'] == job_id
-    worker.prepare_deferred_generation(engine, claim, pg.settings)
+    worker.prepare_deferred_generation(engine, claim, replace(pg.settings, generation_engine='cp_sat'))
 
     resume = {'key': 'synthetic resume', 'model': 'synthetic model', 'hint': [1]}
     with Session(engine) as db, db.begin():
@@ -195,7 +196,14 @@ def test_merge_refusal_rolls_back_changes_and_commits_job(pg, monkeypatch):
             raise Problem(409, 'MERGE_STALE', 'Synthetic final merge refusal')
         return result
 
+    claim_pending = worker.claim_pending
+
+    def claim_merge(engine, *, recovering_worker=None, kinds=None):
+        # Setup writes can enqueue validation jobs before the merge.
+        return claim_pending(engine, recovering_worker=recovering_worker, kinds={'merge_apply'})
+
     monkeypatch.setattr(workspace_merge, 'execute', reject_final_write)
+    monkeypatch.setattr(worker, 'claim_pending', claim_merge)
     engine = pg.app.state.engine
     assert worker.process_one(engine)
 
