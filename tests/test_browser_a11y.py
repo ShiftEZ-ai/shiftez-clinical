@@ -545,6 +545,96 @@ def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, l
         context.close()
 
 
+DESKTOP = {'width': 1440, 'height': 900}
+HIT_AREA = r"""nodes => nodes.map(n => {
+  // The region that takes the pointer: the box, grown by an absolute ::before (a pseudo-element's clicks land on its
+  // element); each corner of it must land on the control itself, never on a neighbour or a clipping parent.
+  n.scrollIntoView({block: 'center'});
+  const r = n.getBoundingClientRect(), b = getComputedStyle(n, '::before');
+  const grown = b.content !== 'none' && b.position === 'absolute';
+  const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
+  const box = {left: r.left - x, top: r.top - y, right: r.right + x, bottom: r.bottom + y};
+  const lands = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.right - 1, box.bottom - 1], [box.left + 1, box.bottom - 1]]
+    .every(([px, py]) => { const hit = document.elementFromPoint(px, py); return !!hit && (hit === n || n.contains(hit)); });
+  const name = n.getAttribute('aria-label') || n.querySelector('[aria-label]')?.getAttribute('aria-label') || n.textContent.trim();
+  return {name, width: box.right - box.left, height: box.bottom - box.top, lands};
+})"""
+# The Rules list's row and head, a line, a line panel's reach links and the legend's "+N", built as the client builds
+# them (rules_tree.ts, rule_catalogue.ts, rule_line_reach.ts, dom.ts legend), in #main so the work container applies.
+RULE_CONTROLS = r"""() => {
+  const host = document.createElement('div'); host.id = 'probe-targets'; document.querySelector('#main').prepend(host);
+  const box = label => `<label class="dt-check-hit"><input type="checkbox" class="bulk-check" aria-label="${label}"></label>`;
+  host.innerHTML = '<div class="rt"><div class="rt-lhead">' + box('Select all lines shown')
+    + '<button type="button" class="icon-button bare rt-toggle" aria-label="All rules">&gt;</button><span>Rule</span></div>'
+    + '<ul class="rt-list"><li class="rt-item"><div class="rt-row">' + box('Select a rule')
+    + '<button type="button" class="icon-button bare rt-toggle" aria-label="A rule lines">&gt;</button>'
+    + '<input type="checkbox" role="switch" class="switch" aria-label="A rule on or off" checked>'
+    + '<div class="rt-main"><div class="rt-title">A rule</div></div></div>'
+    + '<ul class="rt-lines"><li class="rt-ln">' + box('Select line 1 of a rule')
+    + '<span class="rt-n">1</span><span class="rt-ln-who">Everyone</span></li></ul></li></ul></div>'
+    + '<p>Applies on <button type="button" class="rc-reach-link">line 3</button> to'
+    + ' <button type="button" class="rc-reach-link">1 person</button>.</p>'
+    + '<ul class="view-legend" aria-label="Key"><li>Key</li><li class="lg-more">'
+    + '<button type="button" class="pill-more" aria-label="3 more"><span class="lg-more-mark" aria-hidden="true">+3</span></button></li></ul>';
+}"""
+
+
+@pytest.mark.parametrize('viewport', [DESKTOP, PHONE], ids=['1440', '390'])
+def test_selection_boxes_switches_links_and_search_reach_the_target_size(browser, live_server, h, viewport):
+    """Issue 1341 (WCAG 2.2 SC 2.5.8; 44 px on a phone, DESIGN.md Touch targets): a row's and select-all's selection box,
+    a person's name in a list, the Search field, the Rules list's box, open and on/off, a line's box, the legend's "+N"
+    and a line panel's reach links (a link inside a sentence: 24 px at both widths) each take the whole target."""
+    from .test_browser import set_layout, whole_list
+    from .test_browser_requests import day, leave
+
+    phone = viewport == PHONE
+    size = 44 if phone else 24
+    for offset in (3, 4):
+        leave(h, on=day(offset))
+    context, page = sign_in(browser, live_server, 'approver', viewport, has_touch=phone)
+
+    def measure(locator, at_least=size):
+        expect(locator.first).to_be_attached()
+        found = locator.evaluate_all(HIT_AREA)
+        small = [t for t in found if min(t['width'], t['height']) < at_least - 0.01 or not t['lands']]
+        assert found and not small, (viewport['width'], small)
+
+    try:
+        navigate(page, 'requests')
+        whole_list(page)
+        main = page.locator('#main')
+        measure(main.locator('.dt-toolbar .dt-search:visible'))
+        set_layout(page, 'Table')
+        table = main.locator('.dt-table')
+        measure(table.locator('tbody td.dt-check .dt-check-hit'))
+        measure(table.locator('th .dt-check-head .dt-check-hit'))
+        measure(table.locator('tbody td .link-button.person-link:not(.pchip):visible'))
+        set_layout(page, 'Cards')
+        cards = main.locator('.dt-card')
+        measure(cards.locator('.dt-check-hit'))
+        measure(cards.locator('.link-button.person-link:not(.pchip):visible'))
+        page.evaluate(RULE_CONTROLS)
+        probe = page.locator('#probe-targets')
+        measure(probe.locator('.rt-lhead > .dt-check-hit, .rt-lhead > .rt-toggle'))
+        measure(probe.locator('.rt-row > .dt-check-hit, .rt-row > .rt-toggle, .rt-row > input.switch'))
+        measure(probe.locator('.rt-ln > .dt-check-hit'))
+        measure(probe.locator('.view-legend .pill-more'))
+        measure(probe.locator('.rc-reach-link'), 24)
+        # The label still ticks its box from its edge, and the switch turns from beyond its drawn track.
+        row_box = probe.locator('.rt-row > .dt-check-hit')
+        hit = row_box.bounding_box()
+        assert hit
+        page.mouse.click(hit['x'] + 1, hit['y'] + 1)
+        expect(row_box.get_by_role('checkbox')).to_be_checked()
+        switch = probe.get_by_role('switch', name='A rule on or off')
+        track = switch.bounding_box()
+        assert track
+        page.mouse.click(track['x'] + track['width'] / 2, track['y'] + track['height'] / 2 - (size / 2 - 1))
+        expect(switch).not_to_be_checked()
+    finally:
+        context.close()
+
+
 def test_disabled_primary_is_distinguishable_dark(browser, live_server, h):
     """LIVE-12: a disabled primary button (Rules › Propose with nothing to propose) keeps its disabled look under the pointer."""
     context, page = sign_in(browser, live_server, 'coordinator')

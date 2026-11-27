@@ -1,4 +1,4 @@
-import {phoneQuery,el,icon,popover,adoptPopover,multiPick,menuItem,menu,menuSource,opens,armed,badge,empty,field,select,check,button,iconButton,formDialog,notify,departmentToday,type Child,type Choice,type IconName,CAPABILITY} from './dom.js';
+import {phoneQuery,el,checkTarget,icon,popover,adoptPopover,multiPick,menuItem,menu,menuSource,opens,armed,badge,empty,field,select,check,button,iconButton,formDialog,notify,departmentToday,type Child,type Choice,type IconName,CAPABILITY} from './dom.js';
 import {dateInput,showDay} from './date_picker.js';
 import {treeMatches,conditionBuilder,conditionsText,negativeOp,type BuilderOptions,exclusiveLastDay,shownLastDay,lineMatches,relativeLines,relativeSummary,resolveOperands,resolvedNow,resolvable,resolveFailure,retryResolve,operandText,type ConditionField,type ResolveScope,type ValueKind} from './conditions.js';
 import type {Condition,Conditions,TableViewDefaults} from './generated.js';
@@ -1028,8 +1028,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     group:(ids:string[],label:string)=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':`Select all ${label}`}) as HTMLInputElement;
       setTriState(b,triStateOf(ids.filter(id=>ext.set.has(id)).length,ids.length));b.addEventListener('click',e=>e.stopPropagation());
       b.addEventListener('change',()=>{for(const id of ids)b.checked?ext.set.add(id):ext.set.delete(id);extBoxes.forEach((x,id)=>x.checked=ext.set.has(id));extSync();ext.changed();});return b;}}:null;
-  const selectionTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
-  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?selectionTarget(bulk.box(spec.rowId(r),label(r))):null;
+  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?checkTarget(bulk.box(spec.rowId(r),label(r))):null;
   const root=el('div',{class:'dt','data-table':spec.id});
   // "Show changed · N" is on: only the rows the last bulk change changed (read by matches(), so declared first).
   let onlyChanged=false;
@@ -1296,7 +1295,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     body.querySelector<HTMLElement>(`thead th[data-col="${CSS.escape(c.key)}"] .dt-sort`)?.focus({preventScroll:true});});}
   function tableOf(items:T[],groupKey:string){
     const cols=colsOf(items,groupKey);
-    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||selectionTarget(bulk.all))]:[]),...cols.map((c,i)=>{
+    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||checkTarget(bulk.all))]:[]),...cols.map((c,i)=>{
       const cls=[c.num?'num':'',c.class||'',v.wrap.includes(c.key)?'dt-wrap':''].join(' ').trim();
       const on=v.sort?.[0]===c.key,dir=on?v.sort![1]:null;
       // One menu per column header (table_menu.ts): sort, filter, group, wrap, hide, move; saved with the view.
@@ -1448,7 +1447,8 @@ export function dataTable<T>(spec:TableSpec<T>){
   const wholeGroups=(rows:T[],groupKey:string,then:string)=>{const m=new Map<string,T[]>();if(!groupKey)return m;
     for(const [k,rs] of grouped(rows,groupKey)){m.set(k,rs);if(then)for(const [k2,s] of grouped(rs,then))m.set(k+' › '+k2,s);}return m;};
   const groupHead=(k:string,rows:T[],closed:boolean,key:string)=>{const all=whole.get(key)||rows,ids=all.filter(pickable).map(spec.rowId);
-    return [ids.length?bulk?.group?.(ids,k==='—'?'without a value':k):null,groupToggle(key,groupCount(key,k,all.length),closed,k),spec.groupAction?.(k,all)];};
+    const box=ids.length?bulk?.group?.(ids,k==='—'?'without a value':k):null;
+    return [box?checkTarget(box):null,groupToggle(key,groupCount(key,k,all.length),closed,k),spec.groupAction?.(k,all)];};
   // A list paged on the server knows how many a group holds beyond the rows read so far ("100 of 411").
   const groupCount=(key:string,k:string,loaded:number)=>{const total=key===k?spec.groupTotal?.(layoutNow().groupKey,k):undefined;return total&&total>loaded?`${loaded} of ${total}`:String(loaded);};
   // Groups opened past their limit this visit ("Show N more").
