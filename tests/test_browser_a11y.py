@@ -549,14 +549,16 @@ DESKTOP = {'width': 1440, 'height': 900}
 HIT_AREA = r"""nodes => nodes.map(n => {
   // The region that takes the pointer: the box, grown by an absolute ::before (a pseudo-element's clicks land on its
   // element); each corner of it must land on the control itself, never on a neighbour or a clipping parent.
-  n.scrollIntoView({block: 'center'});
+  // The middle of its scroll box, clear of a column that sticks to an edge (a table's actions on a phone).
+  n.scrollIntoView({block: 'center', inline: 'center'});
   const r = n.getBoundingClientRect(), b = getComputedStyle(n, '::before');
   const grown = b.content !== 'none' && b.position === 'absolute';
   const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
   const box = {left: r.left - x, top: r.top - y, right: r.right + x, bottom: r.bottom + y};
   // A corner with a radius does not take the pointer outside its curve, so each corner is probed on the curve (45 degrees).
   const shape = grown ? b : getComputedStyle(n), side = (r => Math.min(r.right - r.left, r.bottom - r.top));
-  const inset = (v, s) => 1 + Math.ceil((v.endsWith('%') ? parseFloat(v) / 100 * s : parseFloat(v) || 0) * (1 - Math.SQRT1_2));
+  // A radius is never more than half the box (a pill's 999px is its height's half).
+  const inset = (v, s) => 1 + Math.ceil(Math.min(v.endsWith('%') ? parseFloat(v) / 100 * s : parseFloat(v) || 0, s / 2) * (1 - Math.SQRT1_2));
   const corners = [['TopLeft', box.left, box.top, 1, 1], ['TopRight', box.right, box.top, -1, 1],
     ['BottomRight', box.right, box.bottom, -1, -1], ['BottomLeft', box.left, box.bottom, 1, -1]]
     .map(([c, cx, cy, dx, dy]) => { const k = inset(shape[`border${c}Radius`], side(box)); return [c, cx + dx * k, cy + dy * k, dx, dy]; });
