@@ -16,18 +16,15 @@ def check_fair_share(data, ids, spec):
     rule_id = ids['share']
     people = {ids[name]: name for name in expected['people']}
 
-    def comparison(snapshot):
+    def assert_comparison(snapshot, key):
         goals = [row for row in evaluate(snapshot).get('goals', [])
                  if row['policy_id'] == rule_id and row['metric'] == 'duties']
-        return sorted((row['period_start'], row['period_end'],
-                       sorted((people[p['person_id']], p['planned'], p['expected']) for p in row['people']))
-                      for row in goals)
-
-    def assert_comparison(snapshot, key):
-        rows = expected[key]
-        actual = comparison(snapshot)
-        assert actual == sorted((r['start'], r['end'], [tuple(person) for person in r['rows']]) for r in rows)
-        return len(actual)
+        actual = sorted((row['line_id'] if key == 'within_group' else None,
+                         row['period_start'], row['period_end'],
+                         sorted((people[p['person_id']], p['planned'], p['expected']) for p in row['people']))
+                        for row in goals)
+        assert actual == sorted((row.get('line_id'), row['start'], row['end'],
+                                 [tuple(person) for person in row['rows']]) for row in expected[key])
 
     def variant(**updates):
         result = deepcopy(data)
@@ -37,18 +34,23 @@ def check_fair_share(data, ids, spec):
                 goal.update(updates)
         return result
 
-    pooled_count = assert_comparison(data, 'pooled')
+    assert_comparison(data, 'pooled')
     separate = variant(comparison='within_group')
-    separate_count = assert_comparison(separate, 'within_group')
+    assert_comparison(separate, 'within_group')
     assert_comparison(variant(period_months=None, period_days=32), 'day_window')
 
+    changed_choices = 0
     for seed in expected['seed_robustness']['seeds']:
+        assigned = []
         for snapshot, key in ((data, 'pooled'), (separate, 'within_group')):
             candidate = feasible(snapshot, solve(snapshot, seed))
             [assignment] = shift(candidate, ids['choice'])['participants']
-            assert people[assignment['person_id']] == expected['solver_choice'][key]
+            person = people[assignment['person_id']]
+            assert person == expected['solver_choice'][key]
+            assigned.append(person)
+        changed_choices += assigned[0] != assigned[1]
     return {'assertions': {'pooled', 'within_group', 'day_window', 'solver_choice', 'seed_robustness'},
-            'bindings': {'share': separate_count - pooled_count}}
+            'bindings': {'share': changed_choices}}
 
 
 def check_spread(data, ids, spec):
@@ -76,22 +78,36 @@ def check_spread(data, ids, spec):
         place(broken, duty_id, [{'person_id': pid, 'participation': 'supervisor'} for pid in supervisors] +
               [{'person_id': pid, 'participation': 'trainee', 'supervisor_person_id': supervisor} for pid in trainees])
         assert loads(broken, duty_id) == observed['skewed']
-    checked = evaluate(broken)
-    findings = [f for f in finding_observations(checked) if f.get('rule_id') == rule_id and f['severity'] == 'error']
-    assert {(f['shift_id'], f['code'], f['detail']['reason']) for f in findings} == {
-        (duty_id, observed['code'], 'imbalance') for duty_id in duties}
-    assert evaluate(disabled(broken, rule_id))['valid']
+    def imbalances(snapshot):
+        return {(f['shift_id'], f['code'], f['detail']['reason'])
+                for f in finding_observations(evaluate(snapshot))
+                if f.get('rule_id') == rule_id and f['severity'] == 'error'}
+
+    findings = imbalances(broken)
+    assert findings == {(duty_id, observed['code'], 'imbalance') for duty_id in duties}
+    rule_off = disabled(broken, rule_id)
+    assert evaluate(rule_off)['valid']
 
     allowed_gap = expected['permitted_gap']
     with pytest.raises(ValidationError, match='Levelled spread uses a maximum gap'):
         SpreadEvenly.model_validate({**rule, 'maximum_gap': allowed_gap})
-    permissive = deepcopy(broken)
-    updated = SpreadEvenly.model_validate({**rule, 'mode': 'maximum_gap', 'maximum_gap': allowed_gap})
-    policy(permissive, rule_id)['definition']['rule'] = updated.model_dump(mode='json')
-    assert evaluate(permissive)['valid']
+    maximum_gap = deepcopy(broken)
+    settings = policy(maximum_gap, rule_id)['definition']
+    settings['rule'] = SpreadEvenly.model_validate({
+        **rule, 'mode': 'maximum_gap', 'maximum_gap': allowed_gap}).model_dump(mode='json')
+    assert evaluate(maximum_gap)['valid']
+    settings['rule']['maximum_gap'] = allowed_gap - 1
+    assert imbalances(maximum_gap) == findings
 
     for seed in expected['seed_robustness']['seeds']:
         draft = feasible(data, solve(data, seed))
         assert all(loads(draft, duty_id) == observed['levelled'] for duty_id in duties)
+        on = feasible(broken, solve(broken, seed))
+        off = feasible(rule_off, solve(rule_off, seed))
+        for duty_id, supervisor in zip(duties, supervisors, strict=True):
+            assert loads(on, duty_id) == observed['levelled']
+            assert loads(off, duty_id) == observed['skewed']
+            assert {p['supervisor_person_id'] for p in shift(off, duty_id)['participants']
+                    if p['participation'] == 'trainee'} == {supervisor}
     return {'assertions': {'session_loads', 'permitted_gap', 'seed_robustness'},
-            'bindings': {'spread': len({f['shift_id'] for f in findings})}}
+            'bindings': {'spread': len({duty_id for duty_id, _, _ in findings})}}

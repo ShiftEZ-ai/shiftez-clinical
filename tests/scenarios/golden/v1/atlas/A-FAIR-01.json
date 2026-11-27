@@ -1,6 +1,6 @@
 {
   "id": "A-FAIR-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Pooled Fair share across a rolling month",
   "intent": "A month ending on 31 March begins on the last day of February.",
   "pressure": "Pooling two independently scoped duty types makes moving one editable duty improve equal share.",
@@ -25,13 +25,13 @@
     {"key": "room", "role": "admin", "kind": "catalogue.create",
      "payload": {"catalogue": "locations", "value": {"name": "A-FAIR-01 room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 8}, "reason": "Synthetic scenario"}},
     {"key": "p0", "role": "admin", "kind": "catalogue.create",
-     "payload": {"catalogue": "people", "value": {"display_name": "ثامر ضيظتو"}, "reason": "Synthetic scenario"}},
+     "payload": {"catalogue": "people", "value": {"display_name": "staff member 01"}, "reason": "Synthetic scenario"}},
     {"key": "p0_rank", "role": "admin", "kind": "membership.create",
      "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2027-01-01"}},
     {"key": "p0_service", "role": "credentialer", "kind": "eligibility.create",
      "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2027-01-01"}},
     {"key": "p1", "role": "admin", "kind": "catalogue.create",
-     "payload": {"catalogue": "people", "value": {"display_name": "عبدالقهار باجن"}, "reason": "Synthetic scenario"}},
+     "payload": {"catalogue": "people", "value": {"display_name": "staff member 02"}, "reason": "Synthetic scenario"}},
     {"key": "p1_rank", "role": "admin", "kind": "membership.create",
      "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2027-01-01"}},
     {"key": "p1_service", "role": "credentialer", "kind": "eligibility.create",
@@ -74,6 +74,8 @@
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$first_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-02-27T08:00:00+03:00", "end": "2027-02-27T12:00:00+03:00", "participants": [{"start": "2027-02-27T08:00:00+03:00", "end": "2027-02-27T12:00:00+03:00", "person_id": "$p1", "fixed": true}]}},
     {"key": "boundary", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$first_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-02-28T08:00:00+03:00", "end": "2027-02-28T12:00:00+03:00", "participants": [{"start": "2027-02-28T08:00:00+03:00", "end": "2027-02-28T12:00:00+03:00", "person_id": "$p0", "fixed": true}]}},
+    {"key": "fixed_first", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$first_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-03-01T08:00:00+03:00", "end": "2027-03-01T12:00:00+03:00", "participants": [{"start": "2027-03-01T08:00:00+03:00", "end": "2027-03-01T12:00:00+03:00", "person_id": "$p0", "fixed": true}]}},
     {"key": "choice", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$second_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-03-02T08:00:00+03:00", "end": "2027-03-02T12:00:00+03:00", "participants": [{"start": "2027-03-02T08:00:00+03:00", "end": "2027-03-02T12:00:00+03:00", "person_id": "$p0"}]}}
   ],
@@ -100,13 +102,13 @@
         "rows": [
           [
             "p0",
-            2,
-            1
+            3,
+            1.5
           ],
           [
             "p1",
             0,
-            1
+            1.5
           ]
         ]
       }
@@ -118,15 +120,16 @@
         "rows": [
           [
             "p0",
-            1,
-            0.5
+            2,
+            1.0
           ],
           [
             "p1",
             0,
-            0.5
+            1.0
           ]
-        ]
+        ],
+        "line_id": "00000000-0000-4000-8000-000000000001"
       },
       {
         "start": "2027-02-28",
@@ -142,7 +145,8 @@
             0,
             0.5
           ]
-        ]
+        ],
+        "line_id": "00000000-0000-4000-8000-000000000002"
       }
     ],
     "day_window": [
@@ -152,13 +156,13 @@
         "rows": [
           [
             "p0",
-            2,
-            1.5
+            3,
+            2
           ],
           [
             "p1",
             1,
-            1.5
+            2
           ]
         ]
       }
