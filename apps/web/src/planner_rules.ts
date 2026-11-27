@@ -344,7 +344,7 @@ function markSelection(){
   const sel=selectionOf(),keys=new Set(sel.map(keyOfTarget));
   const mark=(n:HTMLElement,on:boolean)=>{n.classList.toggle('rk-selected',on);if(GRID_ROLES.has(n.getAttribute('role')||''))on?n.setAttribute('aria-selected','true'):n.removeAttribute('aria-selected');};
   for(const n of main.querySelectorAll<HTMLElement>('.rk-selected'))mark(n,false);
-  for(const n of main.querySelectorAll<HTMLElement>('[data-rk-pin]'))if(keys.has(keyOfTarget(targetOf(n))))mark(n,true);
+  if(keys.size)for(const n of main.querySelectorAll<HTMLElement>('[data-rk-pin]'))if(keys.has(keyOfTarget(targetOf(n))))mark(n,true);
   for(const t of sel)if(t.kind==='session'&&t.shift)for(const n of main.querySelectorAll<HTMLElement>(`[data-session~="${CSS.escape(t.shift)}"]`))mark(n,true);
 }
 /** Select mode (the panel's Select toggle, for touch): every tap adds to or takes from the selection. */
@@ -380,6 +380,18 @@ function applyTicked():boolean{
   pinned.target=ts[0];pinned.sel=ts;pinned.ticked=true;return true;
 }
 const targetOf=(n:Element)=>{let t=parsed.get(n);if(!t){t=JSON.parse((n as HTMLElement).dataset.rk||'{}') as Target;parsed.set(n,t);}return t;};
+/** Selecting a pinnable place, for the whole view (one listener per event on its column, not two per place): each
+ *  pinnable place from the one used outwards, as its own listener did. Ctrl, ⌘ or Shift adds it to (or takes it from)
+ *  the selection; Shift+Enter on the keyboard. A control inside it (⋯, a checkbox, a chip) keeps its own action. */
+function pinClick(e:MouseEvent){
+  const root=e.currentTarget as HTMLElement,at=e.target instanceof Element?e.target:null,inner=at?.closest('button,a,input,select,label,.pchip,.team-box');
+  for(let n=at?.closest<HTMLElement>('[data-rk-pin]');n&&root.contains(n);n=n.parentElement?.closest<HTMLElement>('[data-rk-pin]'))
+    if(!inner||inner===n)pin(targetOf(n),undefined,'',addsToSelection(e));
+}
+function pinKey(e:KeyboardEvent){
+  const n=e.target instanceof HTMLElement&&e.target.dataset.rkPin?e.target:null;
+  if(n&&e.key==='Enter'){e.preventDefault();pin(targetOf(n),undefined,'',e.shiftKey||(selecting&&!!selectionOf().length));}
+}
 /** Whether an element is part of the highlighted rule. */
 function lit(r:MapRule,t:Target){
   if(t.kind==='assignment')return hits(r,t)!==null;
@@ -394,22 +406,20 @@ function decorate(){
     const nodes=[...main.querySelectorAll<HTMLElement>('[data-rk]')];
     const ok=ready();
     for(const n of nodes){
-      const t=targetOf(n);
+      // Its target is parsed when something reads it (a mark, a highlight, its card, a selection), not per sweep (1796).
       if(!wired.has(n)){wired.add(n);
-        if(!n.dataset.rkCard)hoverCard(n,()=>[el('div',{class:'hc-head'},el('span',{class:'hc-badge rk-badge'},icon('rules')),el('div',{},el('strong',{},t.label),t.sub?el('small',{},t.sub):'')),...ruleSummary(t)],400);
+        if(!n.dataset.rkCard)hoverCard(n,()=>{const t=targetOf(n);return [el('div',{class:'hc-head'},el('span',{class:'hc-badge rk-badge'},icon('rules')),el('div',{},el('strong',{},t.label),t.sub?el('small',{},t.sub):'')),...ruleSummary(t)];},400);
         if(n.dataset.rkPin){
           // In a Schedule grid it joins the roving set (planner_week.ts roving owns the one stop; arrows reach it): never a
           // Tab stop of its own, which roving, settled already and watching child lists only, would not take back (S-17).
           if(n.dataset.rkPin!=='mouse'&&!n.matches('button,a,[tabindex]'))n.tabIndex=n.closest('[role=grid]')?-1:0;
           n.classList.add('rk-pinnable');
-          // Ctrl, ⌘ or Shift adds it to (or takes it from) the selection; Shift+Enter on the keyboard.
-          n.addEventListener('click',e=>{const inner=(e.target as Element).closest('button,a,input,select,label,.pchip,.team-box');if(inner&&inner!==n)return;pin(t,undefined,'',addsToSelection(e));});
-          n.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target===n){e.preventDefault();pin(t,undefined,'',e.shiftKey||(selecting&&!!selectionOf().length));}});
         }
       }
       // Markers: something here deviates from the general rule.
       n.querySelector(':scope>.rk-mark')?.remove();
-      if(ok&&t.kind!=='rota'&&!n.dataset.rkQuiet){
+      const t=ok&&!n.dataset.rkQuiet?targetOf(n):null;
+      if(t&&t.kind!=='rota'){
         const marks=markersAt(t);
         if(marks.length){
           const words=marks.map(m=>`${markerWhat[m.kind]||'Exception'}: ${m.text}${m.by?' · '+markerWho(m):''}`);
@@ -422,7 +432,6 @@ function decorate(){
           if(n.matches('button')){const base=n.dataset.rkLabel??n.getAttribute('aria-label');if(base!==null){n.dataset.rkLabel=base;n.setAttribute('aria-label',`${base}. ${marks.length===1?words[0]:marks.length+' exceptions'}`);}}
         }
       }
-      n.classList.remove('rk-hit');
     }
     applyHighlight(nodes);
     markSelection();
@@ -436,7 +445,7 @@ function applyHighlight(nodes=[...(main?.querySelectorAll<HTMLElement>('[data-rk
   const r=activeRule();
   main.classList.toggle('rk-dim',!!r);
   if(r)for(const n of nodes)n.classList.toggle('rk-hit',!n.dataset.rkQuiet&&lit(r,targetOf(n)));
-  else for(const n of nodes)n.classList.remove('rk-hit');
+  else for(const n of main.querySelectorAll('.rk-hit'))n.classList.remove('rk-hit');
   drawSpot();
 }
 function counts(r:MapRule){return {people:Object.keys(r.people).length,sessions:r.sessions.length,days:r.days.length};}
@@ -986,6 +995,7 @@ export function mountRules(ctx:Context,data:WorkspaceData,bodyWrap:HTMLElement,m
   const keep=!pending&&(ready()&&dataNow===data||typing)&&pinned&&old&&panelOf.get(old)===pinned?old:null;
   const focused=keep&&document.activeElement instanceof HTMLElement&&keep.contains(document.activeElement)?document.activeElement:null;
   ctxNow=ctx;dataNow=data;hooksNow=hooks;host=bodyWrap;main=mainCol;
+  if(!wired.has(mainCol)){wired.add(mainCol);mainCol.addEventListener('click',pinClick);mainCol.addEventListener('keydown',pinKey);}
   if(pinned?.ticked)applyTicked();
   if(lock&&lock.workspace!==data.workspace.id)lock=null;
   observer?.disconnect();

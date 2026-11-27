@@ -708,19 +708,25 @@ def test_click_on_a_day_head_does_not_pin_the_rules_panel(browser, live_server, 
 
 def test_rule_tag_sweep_stays_within_budget_at_department_scale(browser, live_server, h):
     """SI-50: the [data-rk] sweep over 2,000 tagged places (a 500-session week's chips and heads) is measured; it stays
-    within a frame budget (CI-aware). Above it, wire the nodes lazily on first pointerover/focusin."""
+    within a frame budget (CI-aware). It is counted too: before the rule map is read (it is read on the first hover or
+    focus) a sweep parses no tag; the map's marks, a highlight, a card or a selection parse one when they read it."""
     w, _ = rota(h)
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         open_planner(page, w)
-        # The test clock fakes `performance` (its entry lists stay empty): the sweep's own measure call is recorded instead.
-        page.evaluate("""() => {window.rkSweeps=[];const measure=performance.measure.bind(performance);
-          performance.measure=(name,o)=>{if(name==='rk-decorate')window.rkSweeps.push(performance.now()-o.start);return measure(name,o);};
-          const chip=document.querySelector('.pchip[data-rk]'),host=chip.parentElement,box=document.createElement('div');
+        # The test clock fakes `performance` (its entry lists stay empty): the sweep's own measure call is recorded instead,
+        # with the parses of the cloned tag it made and whether the rule map was drawn (the view's ready signal).
+        page.evaluate("""() => {window.rkSweeps=[];const measure=performance.measure.bind(performance),parse=JSON.parse;
+          const chip=document.querySelector('.pchip[data-rk]'),host=chip.parentElement,box=document.createElement('div'),tag=chip.dataset.rk;
+          let parses=0;JSON.parse=function(s,r){if(s===tag)parses++;return parse.call(this,s,r);};
+          performance.measure=(name,o)=>{if(name==='rk-decorate'){window.rkSweeps.push({ms:performance.now()-o.start,parses,
+            ready:!!document.querySelector('.planner-main')?.dataset.rkRules});parses=0;}return measure(name,o);};
           for(let i=0;i<2000;i++)box.append(chip.cloneNode(true));host.append(box);}""")
         page.wait_for_function("() => window.rkSweeps.length > 0")
-        worst = page.evaluate("() => Math.max(...window.rkSweeps)")
+        sweeps = page.evaluate("() => window.rkSweeps")
+        worst = max(s['ms'] for s in sweeps)
         assert worst < 100, f'rk-decorate took {worst:.0f} ms for 2,000 nodes'  # 16 ms locally; CI hosts are slower
+        assert all(s['parses'] == 0 for s in sweeps if not s['ready']), sweeps
     finally:
         context.close()
 
