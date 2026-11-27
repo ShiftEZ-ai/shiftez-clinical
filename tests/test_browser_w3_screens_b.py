@@ -78,8 +78,11 @@ def test_overview_setup_card_and_attention_rows_use_svg_icons(browser, live_serv
         finish_required_steps(h, clinic_hours=False)
         page.reload()
         navigate(page,'home')
-        expect(page.locator('.setup-card')).to_have_count(0)
         expect(page.locator('.home-needs-list li').filter(has_text='Clinics without opening hours')).to_have_count(1)
+        # Only opening hours are left and Needs you offers Set hours: no card repeats it. The badge reads the same
+        # setup counts the card waits for, so the card's absence is checked after the counts are in.
+        expect(page.locator('#nav-badge-configuration')).to_have_text('7 of 8 setup steps done')
+        expect(page.locator('.setup-card')).to_have_count(0)
         assert not errors
     finally:
         context.close()

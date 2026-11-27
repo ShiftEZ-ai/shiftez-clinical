@@ -14,6 +14,9 @@ def test_offline_pages_say_what_is_true(browser, live_server, h):
         expect_loaded(page, "home")
         page.locator("#department-nav [data-route=people]").click()
         expect_loaded(page, "people")
+        # Start from People in a fresh document so Home has no retained reply when opened offline.
+        page.reload()
+        expect_loaded(page, "people")
         page.route("**/api/**", lambda route: route.abort())
         page.evaluate("window.dispatchEvent(new Event('online'))")  # a refresh: it cannot reach the server
         banner = page.locator("#main > .stale-banner")
