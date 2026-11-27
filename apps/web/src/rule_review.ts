@@ -229,9 +229,11 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
         await command('policy.decline',{reason:reason.input.value},policy.id,policy.revision);close();notify('Proposal declined.');await refresh();},'secondary'):'',unchecked));  // the button and what it has not checked, in one row
     let protectionRead:AbortController|undefined;
     let protectionPending=false,protectionFailed=false,needsReviewer=false;
+    const isProposer=(p:Row)=>p.created_by===context?.me.identity_id;
+    const ownsProposal=lines.some(p=>p.status==='proposed'&&isProposer(p));
     const stopProtection=()=>{protectionRead?.abort();protectionRead=undefined;};
     onClose(stopProtection);
-    const activationBlocked=()=>protectionPending||protectionFailed||needsReviewer||!gate.hidden;
+    const activationBlocked=()=>protectionPending||(protectionFailed&&ownsProposal)||needsReviewer||!gate.hidden;
     const updateActivation=()=>{
       if(!activate)return;
       activate.disabled=activationBlocked();
@@ -256,7 +258,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
         if(protectionRead!==read)return;
         const weakened=new Set(reviews.filter(r=>r.weakens_safety).map(r=>r.policy_id));
         protection.hidden=!weakened.size;
-        needsReviewer=proposed.some(p=>weakened.has(p.id)&&p.created_by===context?.me.identity_id);
+        needsReviewer=proposed.some(p=>weakened.has(p.id)&&isProposer(p));
         protectionStatus.replaceChildren();
       }catch(error){
         if(protectionRead!==read)return;
