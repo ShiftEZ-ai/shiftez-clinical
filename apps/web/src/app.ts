@@ -2725,10 +2725,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // A live update or check redraws the page: an open Rota tools menu stays open on the new button.
     queueMicrotask(()=>adoptPopover('rota-tools:'+w.id,tools!));
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
-    if(draft&&!w.archived_at){
-      const b=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
-      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Undo availability is unknown');
-    }
+    if(draft&&!w.archived_at)undoButton=undoBarButton(w,reading);
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).
     if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=hold(redoBarButton());
@@ -8686,13 +8683,41 @@ function newVersion(later=()=>{}){
 window.addEventListener('online',()=>{if(me)void onPulse();});
 // Offline: the live stream stops too (a late message must not say Connected); the 10-second check reopens it.
 window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
-// Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
-// The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
 const NO_UNDO='Nothing left to undo';
+type UndoEdit={id:string;revision:number;own:boolean;author:string|null;label:string;at:string};
+const undoEdit=(w:Row):UndoEdit|null=>w.undo_edit?.revision===w.revision?w.undo_edit:null;
+const undoEditWords=(edit:UndoEdit)=>`${edit.own?'You':edit.author||'Another rota editor'} ${edit.label} · ${stamp(edit.at)}`;
+function undoBarButton(w:Row,reading=false){
+  let edit=undoEdit(w);
+  const b=iconButton('Undo last edit','undo',()=>edit&&undoLast(w,edit),{class:'bare','data-undo-edit':''});
+  if(reading)return notYet(b,WHOLE_LOADING);
+  if(w.can_undo!==true)return notYet(b,w.can_undo===false?NO_UNDO:'Undo availability is unknown');
+  const show=(next:UndoEdit)=>{
+    edit=next;
+    const label=`Undo last edit, ${undoEditWords(next)}`;
+    b.setAttribute('aria-label',label);
+    b.dataset.tip=next.own?`${label} (Ctrl Z)`:label;
+    if(next.own)b.setAttribute('aria-keyshortcuts','Control+Z Meta+Z');
+    b.removeAttribute('aria-disabled');
+  };
+  if(edit)show(edit);
+  else{
+    // Live edit notifications carry the revision without the reader's edit description.
+    b.setAttribute('aria-disabled','true');b.dataset.tip='Checking Undo availability…';
+    void rotaMeta(w.id,path=>get(path,{quiet:true,fresh:true})).then(({workspace})=>{
+      if(!b.isConnected)return;
+      const next=undoEdit(workspace);
+      if(next&&next.revision===w.revision)show(next);
+      else notYet(b,workspace.can_undo===false?NO_UNDO:'Undo availability is unknown');
+    },()=>{if(b.isConnected)notYet(b,'Undo availability is unknown');});
+  }
+  return armed(b,'Confirm Undo?',()=>!!edit&&!edit.own);
+}
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
-async function undoLast(){
-  const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
-  await applyUndone(done);notifyUndone(done,'Undone. The previous arrangement is back and checked again.');
+async function undoLast(w:Row,edit:UndoEdit){
+  const done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo',undo_of:edit.id},w.id,edit.revision).catch(e=>{throw undoRefused(e);})}];
+  const author=edit.own?'you':edit.author?isolate(edit.author):'another rota editor';
+  await applyUndone(done);notifyUndone(done,`Undone. The rota is back to before ${author} ${edit.label}.`);
 }
 // Its "Redone." message (the undo registry) offers Undo again.
 async function redoLast(){await redoDraft(redoAfter?.id===workspaceId&&knownRevision(workspaceId)===redoAfter.revision?redoAfter:await draftOnScreen());}
@@ -8723,9 +8748,11 @@ window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).
   // Any other change to the rota on screen (a Redo too) takes Redo off at once.
   if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
   redoAfter={id:String(w.id),revision:Number(w.revision)};
-  const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar button[aria-label="Undo last edit"]'):null;
-  if(undo&&w.can_undo===false)notYet(undo,NO_UNDO);
-  if(undo&&!undo.parentElement!.querySelector('[data-shortcut="redo"]'))undo.after(redoBarButton());});
+  const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar [data-undo-edit]'):null;
+  if(!undo)return;
+  const focused=document.activeElement===undo,next=undoBarButton(w);
+  undo.replaceWith(next);if(focused)focusQuietly(next);
+  if(!next.parentElement!.querySelector('[data-shortcut="redo"]'))next.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
 // The page's own edit (not a run: job.* commands drop the jobs read) keeps the last jobs read current, so the redraw
 // after it does not read the jobs again (PL-03).

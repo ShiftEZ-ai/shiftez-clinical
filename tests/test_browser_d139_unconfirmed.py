@@ -39,7 +39,7 @@ def undo_route(page, first):
 
 
 def undo(page):
-    page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True).click()
+    page.locator('.planner-bar').get_by_role('button', name='Undo last edit').click()
 
 
 def test_an_undo_applied_but_unanswered_says_undone(browser, live_server, h):

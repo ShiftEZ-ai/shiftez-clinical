@@ -68,7 +68,7 @@ def test_own_save_is_not_refreshed_twice_by_the_live_pulse(browser, live_server,
         lists, sent = [], []
         page.on('request', lambda r: lists.append(r.url) if '/api/workspaces?limit=50' in r.url else None)
         page.on('request', lambda r: sent.append(r.url.split('/api/')[1]) if '/api/' in r.url and not re.search(r'/api/(pulse|events)', r.url) else None)
-        page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True).click()  # Undo lives in the top bar (S-05)
+        page.locator('.planner-bar').get_by_role('button', name='Undo last edit').click()  # Undo lives in the top bar (S-05)
         expect(page.locator('.toast').last).to_contain_text('Undone')
         page.wait_for_timeout(2500)  # long enough for the live pulse of this change to arrive and be handled
         assert lists == [], lists  # its own pulse reads nothing

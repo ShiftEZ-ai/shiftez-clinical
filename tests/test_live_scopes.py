@@ -70,11 +70,13 @@ def _workspace_edit_result(*, base=4, revision=5, stale=False, partial=False):
 
 def test_workspace_edit_delta_is_carried_only_when_revisions_match():
     workspace_id, result = _workspace_edit_result()
+    result['workspace']['undo_edit'] = {'own': True, 'author': 'Synthetic editor'}
     changes = live.command_changes('shift.update', {'workspace_id': workspace_id}, result)
     assert changes and changes[0]['scope'] == 'workspace' and changes[0]['id'] == workspace_id
     assert changes[0]['delta']['base_revision'] == 4
     assert changes[0]['delta']['revision'] == result['workspace']['revision']
     assert changes[0]['workspace']['content_revision'] == result['workspace']['content_revision']
+    assert 'undo_edit' not in changes[0]['workspace']
     assert changes[0]['health'] == result['health'] and changes[0]['fix_list_delta'] == result['fix_list_delta']
     s.LiveChange.model_validate(changes[0])
 

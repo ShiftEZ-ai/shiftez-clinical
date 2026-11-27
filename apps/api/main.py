@@ -2610,9 +2610,9 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.workspace_access import access_record
             from .services.rota_summary import workspace_validation, current_check
             from .workspace_baselines import attach as attach_baseline
-            can_undo, can_redo = edit_availability(db, actor, workspace) if actor.permits("coordinator") else (False, False)
+            undo, can_redo = edit_availability(db, actor, workspace)
             data = {"workspace": {**attach_baseline(db, workspace, record(workspace)),
-                                  "can_undo": can_undo,
+                                  **undo,
                                   "name": visible_rota_name(db, actor, workspace.id, workspace.name),
                                   "publication_id": publication_id,
                                   "allowed_actions": allowed_actions(db, actor, workspace, historical=historical,

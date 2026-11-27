@@ -196,6 +196,18 @@ def require_workspace_command(db, actor, command):
 
 
 def dispatch(db, actor, command, settings, *, github_check=None, github_export=None):
+    previous = db.info.get('_draft_edit_action')
+    db.info['_draft_edit_action'] = command.kind
+    try:
+        return _dispatch(db, actor, command, settings, github_check=github_check, github_export=github_export)
+    finally:
+        if previous is None:
+            db.info.pop('_draft_edit_action', None)
+        else:
+            db.info['_draft_edit_action'] = previous
+
+
+def _dispatch(db, actor, command, settings, *, github_check=None, github_export=None):
     require_workspace_command(db, actor, command)
     if command.kind == "department.create":
         from .services import departments

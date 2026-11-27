@@ -195,7 +195,7 @@ def test_bulk_add_sessions_offers_undo_and_rota_tools_are_sectioned(browser, liv
     try:
         navigate(page, 'planner')
         open_rota(page, w['id'])
-        expect(page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True)).to_be_visible()
+        expect(page.locator('.planner-bar').get_by_role('button', name='Undo last edit')).to_be_visible()
         page.get_by_role('button', name='Rota tools', exact=True).click()
         menu = page.get_by_role('menu', name='Rota tools', exact=True)
         expect(menu.get_by_role('group')).to_have_count(3)
