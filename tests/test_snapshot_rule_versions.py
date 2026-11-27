@@ -54,13 +54,14 @@ def test_snapshot_policy_row_count_at_department_scale(database, scale_harness, 
         record_property(f"{label}_seconds_median", median(timings))
         record_property(f"{label}_policy_rows", max(hydrated))
         assert len(data["people"]) == 163 and len(data["focus_ids"]) == 768
-        return max(hydrated)
 
     monkeypatch.setattr(snapshots, "records_many", count_policies)
-    bounded = measure("after")
+    measure("after")
+    bounded = max(hydrated)
     assert bounded <= 20
     monkeypatch.setattr(snapshots, "_snapshot_policy_where", _all_policy_rows)
-    assert measure("before") == bounded + 1300
+    measure("before")
+    assert max(hydrated) == bounded + 1300
 
 
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
