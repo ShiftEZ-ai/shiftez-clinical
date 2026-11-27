@@ -737,8 +737,10 @@ def department_swap_options(scale_harness):
                                       for row in list(data[name]) if row['person_id'] == source)
             data['shifts'] = [template]
             data['workspace']['ends_on'] = '2026-11-01'
-            for location in data['locations'].values():
+            limits = data.get('place_capacity', {}).get('limits', {})
+            for ident, location in data['locations'].items():
                 location['capacity'] = 1000
+                limits[ident] = 1000
             for person_id in people:
                 for day in range(10):
                     on = date(2026, 10, 5) + timedelta(days=day)
@@ -779,3 +781,32 @@ def test_options_with_ten_return_duties_per_recipient_stays_within_department_bu
 def test_options_with_ten_return_duties_per_recipient_stays_within_department_budget_cpu_budget(department_swap_options):
     _, _, timings = department_swap_options
     assert all(timing['cpu_seconds'] < python_budget(2) for timing in timings.values()), timings
+
+
+def test_options_say_why_nobody_can_take_a_duty_from_the_same_check(h):
+    colleague = h.seed['people'][1]
+    identity(h, 'staff_two', ['staff'], colleague)
+    w = h.shift(h.workspace())['workspace']
+    w = h.shift(w, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[colleague])['workspace']
+    w = h.shift(w, '2026-10-04T13:00:00+03:00', '2026-10-04T17:00:00+03:00', people=[colleague])['workspace']
+    _, first, _, _ = publish_pair(h, w)
+    path = '/api/swaps/options?assignment_id=' + first
+    h.policy({'kind': 'min_rest', 'hours': 12})
+    give = h.get('staff', path + '&kind=give')
+    assert recipient(give, colleague)['eligible'] is False
+    assert give['no_eligible_recipients_reason'] == recipient(give, colleague)['message'] == 'This swap leaves too little rest between duties.'
+    exchange = h.get('staff', path + '&kind=exchange')  # the colleague still has a valid duty to return
+    assert recipient(exchange, colleague)['eligible'] is True and exchange['no_eligible_recipients_reason'] is None
+
+
+@pytest.mark.parametrize('kind', ['exchange', 'give'])
+def test_the_reason_nobody_can_take_a_duty_never_names_a_colleagues_protected_time(h, kind):
+    colleague = h.seed['people'][1]
+    identity(h, 'staff_two', ['staff'], colleague)
+    w = h.shift(h.workspace())['workspace']
+    w = h.shift(w, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[colleague])['workspace']
+    _, first, _, _ = publish_pair(h, w)
+    h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'}, {'person_id': colleague})
+    options = h.get('staff', '/api/swaps/options?assignment_id=' + first + '&kind=' + kind)
+    assert 'protected time' in recipient(options, colleague)['message']
+    assert options['no_eligible_recipients_reason'] == 'Colleagues are not free at that time.'

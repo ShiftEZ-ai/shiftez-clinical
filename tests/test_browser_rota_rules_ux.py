@@ -14,6 +14,8 @@ from .rules_support import rule_action, rule_row
 
 pytestmark = pytest.mark.browser
 WHY = 'Short staffed in October'
+SAFETY_LOCK = ('Safety rule. Rota adjustments may only tighten protection. '
+               'Reducing mandatory department protection needs independent approval.')
 
 
 def test_rota_rules_change_needs_a_justification_and_safety_stays_locked(browser, live_server, h):
@@ -27,7 +29,7 @@ def test_rota_rules_change_needs_a_justification_and_safety_stays_locked(browser
         expect(panel.get_by_role('tab', name='Rules')).to_have_attribute('aria-selected', 'true')
         # A safety kind: a lock on its row (said in words to a screen reader), why it can't be loosened, never switched off.
         rest = rule_row(panel, 'Rest between duties')
-        expect(rest.locator('.rk-row-head').get_by_role('img', name='Safety rule: can only be made stricter')).to_be_visible()
+        expect(rest.locator('.rk-row-head').get_by_role('img', name=SAFETY_LOCK)).to_be_visible()
         rule_action(rest, 'Make stricter for this rota')  # never "Adjust": a safety rule only gets stricter
         expect(rest.get_by_role('form', name='Make stricter for this rota')).to_be_visible()
         expect(rest.get_by_role('button', name='Switch off for this rota', exact=True)).to_have_count(0)
@@ -132,7 +134,7 @@ def test_a_safety_rule_with_several_lines_offers_no_exception_and_says_its_numbe
         menu = page.get_by_role('menu', name='More actions')
         stricter = menu.get_by_role('menuitem', name=re.compile('^Make stricter for this rota'))
         expect(stricter).to_be_disabled()
-        expect(stricter).to_contain_text('Its lines’ numbers can only be made stricter')
+        expect(stricter).to_contain_text('Change these line numbers through a department rule proposal.')
         expect(menu.get_by_role('menuitem', name=re.compile('^Make an exception'))).to_have_count(0)
         row.locator('.rk-row-head').click()
         assert errors == []
@@ -198,8 +200,8 @@ def test_a_rule_row_is_one_sentence_with_its_status_and_the_met_rest_folds(brows
             assert re.search(r'(Met|Not met|Could be better|Not checked yet|Switched off for this rota)\.', text), text
             assert head.locator('.rk-num, .rk-safety, .rk-win, .chip, [class*="tag"]').count() == 0, text
         rest = rule_row(panel, rules['rest']['name'])
-        expect(rest.locator('.rk-row-head').get_by_role('img', name='Safety rule: can only be made stricter')).to_be_visible()
-        expect(panel.get_by_role('list', name='Key')).to_contain_text('Can only be made stricter')
+        expect(rest.locator('.rk-row-head').get_by_role('img', name=SAFETY_LOCK)).to_be_visible()
+        expect(panel.get_by_role('list', name='Key')).to_contain_text(SAFETY_LOCK)
     finally:
         context.close()
 
@@ -313,7 +315,7 @@ def test_the_rules_list_groups_by_question_with_one_sentence_per_rule(browser, l
         row = main.locator(f'li.rt-item[data-rule="{entry["id"]}"]')
         expect(row.locator('.rt-sentence')).to_have_count(0)  # the one-row Rules list drops the per-row sentence.
         expect(row.locator('.rt-meta')).to_contain_text('1 line')
-        expect(row.get_by_role('img', name='Safety rule: can only be made stricter')).to_be_visible()
+        expect(row.get_by_role('img', name=SAFETY_LOCK)).to_be_visible()
         expect(row.get_by_role('button', name=entry['name'], exact=True)).to_be_visible()  # the link to its page
         conflict = main.locator('li.rt-conflict')
         expect(conflict).to_have_count(1)
@@ -572,7 +574,7 @@ def test_schedule_rules_panel_marks_an_unexplained_safety_rule(browser, live_ser
         expect(warning).to_have_text(UNEXPLAINED)
         expect(warning.locator('.iss-mark.warning .icon')).to_have_count(1)
         expect(row.locator('.rk-status')).to_have_text(re.compile(r'\S+'))
-        expect(row.get_by_role('img', name='Safety rule: can only be made stricter')).to_be_visible()
+        expect(row.get_by_role('img', name=SAFETY_LOCK)).to_be_visible()
         summary_warning = panel.locator('.rk-head small .rule-unexplained')
         expect(summary_warning).to_have_text('1 rule can\u2019t be explained right now')
         expect(summary_warning.locator('.iss-mark.warning .icon')).to_have_count(1)
@@ -608,7 +610,7 @@ def test_rules_list_marks_an_unexplained_rule_in_each_grouping(browser, live_ser
             marker = row.locator('.rule-unexplained')
             expect(marker).to_have_text(UNEXPLAINED if grouping == 'question' else UNEXPLAINED_SHORT)
             expect(marker.locator('.iss-mark.warning .icon')).to_have_count(1)
-            lock = row.get_by_role('img', name='Safety rule: can only be made stricter')
+            lock = row.get_by_role('img', name=SAFETY_LOCK)
             if grouping == 'question':
                 expect(lock).to_be_visible()
             else:
@@ -659,7 +661,7 @@ def test_rules_list_shows_one_safety_lock_and_none_for_a_preference_in_each_grou
             expect(non_safety).to_have_count(1)
             lock = safety.locator('.rk-lockmark[role="img"]')
             expect(lock).to_have_count(1)
-            expect(lock).to_have_accessible_name('Safety rule: can only be made stricter')
+            expect(lock).to_have_accessible_name(SAFETY_LOCK)
             expect(non_safety.locator('.rk-lockmark[role="img"]')).to_have_count(0)
     finally:
         context.close()
@@ -690,11 +692,11 @@ def test_rules_key_hides_safety_lock_when_a_family_filter_shows_only_preferences
         page.route(re.compile(r'.*/api/rules-explained\?group_by=question.*'), lambda route: route.fulfill(json=projection))
         navigate(page, 'rules')
         main = page.locator('#main')
-        expect(main.get_by_role('list', name='Key').get_by_text('safety rule: can only be made stricter', exact=True)).to_have_count(1)
+        expect(main.get_by_role('list', name='Key').get_by_text(SAFETY_LOCK, exact=True)).to_have_count(1)
         filter_by(main, 'Family', ['Preferences & fairness'])
         expect(main.locator(f'li.rt-item[data-rule="{rest["id"]}"]')).to_have_count(0)
         expect(main.locator(f'li.rt-item[data-rule="{preference["id"]}"]')).to_have_count(1)
-        expect(main.get_by_role('list', name='Key').get_by_text('safety rule: can only be made stricter', exact=True)).to_have_count(0)
+        expect(main.get_by_role('list', name='Key').get_by_text(SAFETY_LOCK, exact=True)).to_have_count(0)
     finally:
         context.close()
 

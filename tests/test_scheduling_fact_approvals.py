@@ -68,7 +68,7 @@ def test_pending_fact_role_visibility_detail_and_activation(h, role):
     fact = propose(h)
     may_read = role in {"admin", "coordinator", "approver", "programme_lead", "auditor"}
     may_decide = role in {"admin", "approver"}
-    if role in {"credentialer", "operator"}:
+    if role in {"credentialer", "operator", s.INSTALLATION_ADMIN_ROLE}:
         h.get(role, "/api/requests/all", status=403)
         h.get(role, "/api/requests/all?id=" + fact["id"], status=403)
     else:

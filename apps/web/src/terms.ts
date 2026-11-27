@@ -25,7 +25,12 @@ const ROTA_COORDINATOR = 'the Rota Coordinator';
 /** The one sentence: "Only the Rota Coordinator can <action>." */
 export const onlyRotaCoordinator = (action: RotaCoordinatorAction) => `Only ${ROTA_COORDINATOR} can ${ROTA_COORDINATOR_ACTIONS[action]}.`;
 
+const safetyProtection = 'Rota adjustments may only tighten protection. Reducing mandatory department protection needs independent approval.';
+
 export const TERMS = {
+  safetyRuleProtection: 'Safety rule. '+safetyProtection,
+  safetyLineProtection: 'Safety line. '+safetyProtection,
+  reducesSafetyProtection: 'This proposal reduces mandatory safety protection and needs independent approval.',
   rota: 'Rota', rotas: 'Rotas',
   checkRota: 'Check rota', rotaCheck: 'Rota check', checked: 'Checked', needsCheck: 'Needs a check', notChecked: 'Not checked',
   backgroundCheck: 'Full rota check', runBackgroundCheck: 'Check the whole rota',
