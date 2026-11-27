@@ -63,7 +63,8 @@ export function selectionBar(o:{label?:string;id?:string}={}){
     folded=fold;
     // An armed action drawn again for the same selection (a check answering between the two presses) stays armed: its
     // second press acts, as in a redrawn menu (dom.ts menu keep). A press elsewhere or leaving it has disarmed it already.
-    const was=s.key!==undefined&&s.key===drawnKey?root.querySelector<HTMLElement>('.sel-act.armed'):null,focused=!!was&&was===document.activeElement;
+    // Read before the redraw: Chromium blurs a focused button as it is removed, and the blur disarms it.
+    const was=s.key!==undefined&&s.key===drawnKey?root.querySelector<HTMLElement>('.sel-act.armed'):null,focused=!!was&&was===document.activeElement,from=was?.dataset.armedFrom;
     drawnKey=s.key;
     const word=s.count===1?s.noun[0]:s.noun[1];
     const act=(a:SelectionAction)=>{
@@ -84,7 +85,7 @@ export function selectionBar(o:{label?:string;id?:string}={}){
       el('span',{class:'sel-sep','aria-hidden':'true'}),...inline.map(act),...(more?[more]:[]),
       ...(danger.length?[el('span',{class:'sel-sep','aria-hidden':'true'}),...danger.map(act)]:[]),
       el('span',{class:'sel-sep','aria-hidden':'true'}),clear);
-    const again=was&&[...root.querySelectorAll<HTMLElement>('.sel-act')].find(b=>b.getAttribute('aria-label')===was.dataset.armedFrom);
+    const again=from&&[...root.querySelectorAll<HTMLElement>('.sel-act')].find(b=>b.getAttribute('aria-label')===from);
     if(again){again.click();if(focused)again.focus();}
   }
   return {root,show,place};
