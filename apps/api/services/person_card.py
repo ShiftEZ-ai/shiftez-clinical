@@ -30,8 +30,11 @@ def card_etag(db, actor, person, upcoming=3):
         func.count(m.Publication.id), func.coalesce(func.sum(m.Publication.revision), 0),
         func.max(m.Publication.revision), func.max(m.Publication.created_at)
     ).where(m.Publication.department_id == actor.department_id, m.Publication.current.is_(True))).one()
+    team = actor.permits(*s.PERMISSIONS['schedule.read_team'])
+    # The previous validator covered duties for unlinked staff, so those cards must revalidate once.
+    representation = "person-card" if schedule_view.can_read_duties(actor, team=team) else "person-card-without-duties"
     return revision_etag(
-        "person-card", person.id, actor.identity_id, actor.person_id, sorted(actor.roles), upcoming,
+        representation, person.id, actor.identity_id, actor.person_id, sorted(actor.roles), upcoming,
         person.revision, tuple(contact_stamp), tuple(publication_stamp),
         department.revision, department.catalogue_revision, organisation.revision,
         m.now().astimezone(ZoneInfo(organisation.timezone)).date(), organisation.input_revision, organisation.availability_revision,
@@ -52,10 +55,12 @@ def read(db, actor, person_id, upcoming=3, *, person=None):
         ids = facts.get('current_' + field + '_ids', [])
         entry[field + 's'] = [{'id': r.id, 'name': r.name} for r in db.scalars(select(cls).where(
             cls.department_id == actor.department_id, cls.id.in_(ids)))] if ids else []
-    pubs = schedule.current_publications(db, [actor.department_id], day - timedelta(days=1), end, light=True)
+    planner = actor.permits(*s.PERMISSIONS['schedule.read_team'])
+    pubs = []
+    if schedule_view.can_read_duties(actor, team=planner):
+        pubs = schedule.current_publications(db, [actor.department_id], day - timedelta(days=1), end, light=True)
     duties = schedule_view.published_shifts(db, pubs, zone, lo, local_midnight(end, zone), person_id=person_id)
     states = {p.workspace_id: 'published' for p in pubs}
-    planner = actor.permits(*s.PERMISSIONS['schedule.read_team'])
     if planner:
         W, S, A = m.Workspace, m.Shift, m.Assignment
         drafts = list(db.execute(select(W.id, W.status).where(W.department_id == actor.department_id,
