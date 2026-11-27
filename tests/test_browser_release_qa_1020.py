@@ -6,7 +6,7 @@ import pytest
 from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, sign_in, navigate, fonts_ready, no_opening_hours  # noqa: F401
-from .test_browser import whole_list
+from .test_browser import wait_held, whole_list
 from .test_browser_overflow import adversarial, ARABIC, LONG
 from .rules_support import rule_status
 
@@ -127,15 +127,17 @@ def test_staff_phone_schedule_focus_toolbar_and_home_loading(browser, live_serve
         assert first['saved'] and first['tools'] >= 1 and first['off'] == [], first
         # Arabic-only names get a short code in their own script.
         assert page.evaluate(f"async () => (await window.importBundle('dom.js')).autoCode({ARABIC!r})") not in ('', '—', '–')
-        # Coming up shows the shared skeleton while its duties load.
+        # A fresh tab has no retained calendar reply to show before the held read finishes.
+        fresh = context.new_page()
         held = []
-        page.route(re.compile(r'/api/calendar\?'), lambda route: held.append(route))
-        navigate(page, 'home')
-        expect(page.locator('.home-duties .loading:not(.sk-wait)')).to_be_visible()
-        for route in held:
-            route.continue_()
-        page.unroute(re.compile(r'/api/calendar\?'))
-        expect(page.locator('.home-duties .loading')).to_have_count(0)
+        fresh.route(re.compile(r'/api/calendar\?.*\bperson_id='),
+                    lambda route: route.continue_() if held else held.append(route))
+        fresh.goto(live_server + '/#home', wait_until='domcontentloaded')
+        wait_held(fresh, held)
+        coming_up = fresh.get_by_role('region', name='Coming up', exact=True)
+        expect(coming_up.locator('.loading:not(.sk-wait)')).to_be_visible()
+        held[0].continue_()
+        expect(coming_up.locator('.loading')).to_have_count(0)
     finally:
         context.close()
 
