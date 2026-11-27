@@ -223,10 +223,12 @@ def _stored_findings(db, actor, start, end, ids, zone):
         check = checks[publication.id] or {}
         manifest = check.get("input_manifest") or {}
         dirty = manifest.get("dirty_hint") or {}
-        # A check without its input manifest is legacy evidence, not a current verdict.
-        if (not currency_match(dirty, {"input_revision": organisation.input_revision,
-                      "availability_revision": organisation.availability_revision,
-                      "content_revision": revisions.get(publication.workspace_id)})
+        current = {"input_revision": organisation.input_revision,
+                   "availability_revision": organisation.availability_revision,
+                   "content_revision": revisions.get(publication.workspace_id)}
+        # Compare the publication counters; the manifest also carries draft-specific evidence.
+        recorded = {key: value for key, value in dirty.items() if key in current}
+        if (not currency_match(recorded, current)
                 or manifest.get("components", {}).get("toolchain") != current_toolchain):
             continue
         for finding in check.get("findings", []):

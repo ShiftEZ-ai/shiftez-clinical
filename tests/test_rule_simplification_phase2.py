@@ -15,7 +15,8 @@ from packages.domain.conditions import active_rules, conditions_match
 from packages.domain.rule_groups import (_weekend, canonical_model, expanded, goal_conversions, overtime_switch_on, plan, same_checks,
                                          same_model)
 from packages.domain.validation import evaluate
-from .test_rule_simplification import LABELS, PERSON, PROGRAMME, SERVICE, TYPE, WEEK_START, joined, quota, rule, weeks
+from .test_rule_simplification import (LABELS, PERSON, PROGRAMME, SERVICE, TYPE, WEEK_START, configure_baseline_rehearsal,
+                                      joined, quota, rule, weeks)
 from .test_rule_templates import activate, propose
 
 ids = (f'00000000-0000-4000-9000-{n:012d}' for n in itertools.count(1))
@@ -300,12 +301,11 @@ def test_baseline_mode_refuses_a_department_in_use_and_acts_as_system_identities
     args = SimpleNamespace(propose=True, undo=False, changes=True, model=False, no_calendar=False, name=[], reason='Baseline rehearsal', only_reason=None)
     with pytest.raises(SystemExit, match='Baseline refused'):
         tool.baseline(h.app.state.engine, args)
-    # The same department with the refusals set aside (as a fresh copy would be): proposed and activated by two
-    # disabled system identities, with command receipts and audit events.
+    # In a rota-free department, two disabled system identities propose and activate with receipts and audit events.
     for name, who in (('Residents weekly duty ceiling', h.seed['people'][0]), ('Rotators weekly duty ceiling', h.seed['people'][1])):
         activate(h, propose(h, quota('2026-10-04', '2026-10-18', 1, 'maximum', 'duties', window_alignment='calendar_week'),
                             {'person_id': who}, name=name, starts_on='2026-10-04', ends_on='2026-10-18'))
-    monkeypatch.setattr(tool, 'baseline_refusals', lambda db: {})
+    configure_baseline_rehearsal(monkeypatch, tool)
     tool.baseline(h.app.state.engine, args)
     with transaction(h.app.state.engine) as db:
         made = next(p for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active')) if p.name == 'Weekly duty ceiling')
@@ -318,3 +318,6 @@ def test_baseline_mode_refuses_a_department_in_use_and_acts_as_system_identities
     tool.baseline(h.app.state.engine, undo)
     with transaction(h.app.state.engine) as db:
         assert db.get(m.Policy, made.id).status == 'retired'
+    h.workspace()
+    with pytest.raises(SystemExit, match='1 rotas'):
+        tool.baseline(h.app.state.engine, args)

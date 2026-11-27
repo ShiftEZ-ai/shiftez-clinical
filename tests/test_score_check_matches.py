@@ -62,7 +62,7 @@ def test_any_confident_match_can_be_overridden_and_undone_using_decide(h, kind):
     item = next(item for item in before['items'] if item['kind'] == kind)
     if kind == 'person':
         target = next(person['id'] for person in h.get('coordinator', '/api/catalogues')['people']
-                      if person['display_name'] == 'Jordan Lee')
+                      if person['display_name'] == 'Staff 02(test)')
     else:
         catalogue = 'assignment_types' if kind == 'duty_code' else 'services'
         extra = {'definition': {}} if kind == 'duty_code' else {}
@@ -164,6 +164,9 @@ def test_person_matches_use_duty_dates_without_a_selected_period(h):
         person.active, person.inactive_from = False, date(2026, 10, 6)
         legacy = db.get(m.Person, undated)
         legacy.active = False
+        # Keep fuzzy name suggestions separate from this test of date eligibility.
+        person.display_name = 'Synthetic cutover'
+        legacy.display_name = 'Legacy example'
         labels = {future: person.display_name, undated: legacy.display_name}
     for day, expected in (('2026-10-05', future), ('2026-10-06', None)):
         value = upload(h, [[label, day, 'Clinical review session', 'Continuity clinic', '08:00', '12:00']

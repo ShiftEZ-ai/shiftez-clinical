@@ -72,10 +72,10 @@ def acknowledge_missing(h, batch):
 
 def mixed_upload(h, **metadata):
     return csv_upload(h, [
-        ['Alex Morgan', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Jordn Lee', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 02(ttest)', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
         ['Unlisted Visitor', '2026-10-06', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Alex Morgan', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
     ], **metadata)['batch']
 
 
@@ -131,7 +131,7 @@ def test_score_check_add_permission_is_exposed_from_the_shared_catalogue(h):
 def test_score_check_add_requires_the_named_permission_for_people_and_services(h, monkeypatch, entity_kind):
     rows = ([['Unlisted Visitor', '2026-10-06', 'Clinical review session', 'Continuity clinic', '08:00', '12:00']]
             if entity_kind == 'person' else
-            [['Alex Morgan', '2026-10-06', 'Clinical review session', 'Unlisted clinic', '08:00', '12:00']])
+            [['Staff 01(test)', '2026-10-06', 'Clinical review session', 'Unlisted clinic', '08:00', '12:00']])
     batch = csv_upload(h, rows)['batch']
     gap = gap_for(batch, 'Unlisted Visitor' if entity_kind == 'person' else 'Unlisted clinic')
     replacement = {'display_name': 'Unlisted Visitor'} if entity_kind == 'person' else {
@@ -173,11 +173,11 @@ def test_upload_infers_metadata_keeps_evidence_private_and_gap_ids_stable(h):
     assert source['status'] == 'needs_review'
     assert 'content' not in source and 'extraction' not in source
     assert batch['confident_matches'] == 2  # A clinic still needs its location before automatic acceptance.
-    assert gap_for(batch, 'Alex Morgan', 'uncertain')['confidence'] == 1
-    assert gap_for(batch, 'Jordn Lee')['kind'] == 'uncertain'
+    assert gap_for(batch, 'Staff 01(test)', 'uncertain')['confidence'] == 1
+    assert gap_for(batch, 'Staff 02(ttest)')['kind'] == 'uncertain'
     assert gap_for(batch, 'Unlisted Visitor')['kind'] == 'unknown'
     assert any(g['kind'] == 'unreadable' and g['cell_refs'] == ['CSV!B6'] for g in batch['gaps'])
-    assert gap_for(batch, 'Taylor Noor')['kind'] == 'missing'
+    assert gap_for(batch, 'Staff 03(test)')['kind'] == 'missing'
     assert set(g['kind'] for g in batch['gaps']) == {'unknown', 'uncertain', 'unreadable', 'missing'}
     ids = {g['id'] for g in batch['gaps']}
     edited = change(h, batch, 'update', name='Reviewed department rota',
@@ -203,7 +203,7 @@ def test_missing_acknowledgement_is_required_and_every_decision_can_be_undone(h)
             batch = decide(h, batch, gap, 'acknowledge')
             decisions.append((gap['id'], next(g for g in batch['gaps'] if g['id'] == gap['id'])['decision']['id']))
     assert batch['counts']['missing'] == 0 and batch['can_save'] is True
-    for gap, action, extra in [(gap_for(batch, 'Jordn Lee'), 'confirm', {}),
+    for gap, action, extra in [(gap_for(batch, 'Staff 02(ttest)'), 'confirm', {}),
             (gap_for(batch, 'Unlisted Visitor'), 'exclude', {}),
             (next(g for g in batch['gaps'] if g['kind'] == 'unreadable'), 'exclude', {}),
             (gap_for(batch, 'Continuity clinic'), 'confirm', {'location_id': h.seed['locations'][0]})]:
@@ -286,7 +286,7 @@ def test_score_check_add_undo_refuses_a_referenced_record(h):
 def test_score_check_add_rejects_a_replacement_for_the_wrong_gap_kind(h, label, replacement):
     rows = ([['Unlisted Visitor', '2026-10-06', 'Clinical review session', 'Continuity clinic', '08:00', '12:00']]
             if label == 'Unlisted Visitor' else
-            [['Alex Morgan', '2026-10-06', 'Clinical review session', 'Unlisted clinic', '08:00', '12:00']])
+            [['Staff 01(test)', '2026-10-06', 'Clinical review session', 'Unlisted clinic', '08:00', '12:00']])
     batch = csv_upload(h, rows)['batch']
     gap = gap_for(batch, label)
     refused = change(h, batch, 'decide', gap_id=gap['id'], action='add', replacement=replacement, status=422)
@@ -307,7 +307,7 @@ def test_resolve_checks_original_cell_and_period_before_acceptance(h):
     batch = mixed_upload(h, starts_on='2026-10-04', ends_on='2026-10-11')
     gap = next(g for g in batch['gaps'] if g['kind'] == 'unreadable')
     replacement = {'file_ref': gap['file_ref'], 'cell_ref': gap['cell_refs'][0],
-        'person': 'Alex Morgan', 'date': '2026-10-04', 'duty_code': 'Clinical review session',
+        'person': 'Staff 01(test)', 'date': '2026-10-04', 'duty_code': 'Clinical review session',
         'clinic': 'Continuity clinic', 'start': '13:00', 'end': '17:00'}
     for field, value, code in [('cell_ref', 'CSV!Z999', 'EXTRACTION_CELL'),
                                ('date', '2026-11-01', 'EXTRACTION_PERIOD')]:
@@ -437,7 +437,7 @@ def test_decisions_and_file_edits_cannot_be_borrowed_from_another_import(h):
 
 def test_confirm_cannot_substitute_another_person_or_attach_a_location(h):
     batch = mixed_upload(h)
-    gap = gap_for(batch, 'Jordn Lee')
+    gap = gap_for(batch, 'Staff 02(ttest)')
     assert change(h, batch, 'decide', gap_id=gap['id'], action='confirm',
         target_id=h.seed['people'][0], status=422)['error']['code'] == 'GAP_MATCH'
     assert change(h, batch, 'decide', gap_id=gap['id'], action='confirm',
@@ -462,7 +462,7 @@ def test_saving_automatically_uses_confident_matches_and_leaves_uncertain_eviden
 def test_missing_coverage_acknowledgement_does_not_weaken_normal_validation(h):
     typ = h.configure('assignment_types', {'name': 'Synthetic two-person session', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 2, 'maximum': 2}]}})['record']
-    batch = csv_upload(h, [['Alex Morgan', '2026-10-04', typ['name'], 'Unlisted clinic', '08:00', '12:00']],
+    batch = csv_upload(h, [['Staff 01(test)', '2026-10-04', typ['name'], 'Unlisted clinic', '08:00', '12:00']],
         starts_on='2026-10-04', ends_on='2026-10-11')['batch']
     batch = decide(h, batch, gap_for(batch, 'Unlisted clinic'), 'match',
         target_id=h.seed['services'][0], location_id=h.seed['locations'][0])
@@ -482,7 +482,7 @@ def test_missing_coverage_acknowledgement_does_not_weaken_normal_validation(h):
 
 
 def saved_import(h, *, role='coordinator'):
-    batch = csv_upload(h, [['Alex Morgan', '2026-10-04', 'Clinical review session',
+    batch = csv_upload(h, [['Staff 01(test)', '2026-10-04', 'Clinical review session',
         'Unlisted clinic', '08:00', '12:00']], role=role,
         starts_on='2026-10-04', ends_on='2026-10-11')['batch']
     batch = decide(h, batch, gap_for(batch, 'Unlisted clinic'), 'match',
@@ -533,7 +533,7 @@ def test_import_is_an_editable_normal_draft_with_same_score_and_independent_appr
 
 
 def test_inferred_period_fully_contains_overnight_duties(h):
-    batch = csv_upload(h, [['Alex Morgan', '2026-10-04', 'Clinical review session',
+    batch = csv_upload(h, [['Staff 01(test)', '2026-10-04', 'Clinical review session',
         'Unlisted clinic', '20:00', '04:00']])['batch']
     assert (batch['starts_on'], batch['ends_on']) == ('2026-10-04', '2026-10-06')
     assert (batch['files'][0]['starts_on'], batch['files'][0]['ends_on']) == ('2026-10-04', '2026-10-06')
@@ -609,15 +609,15 @@ def test_source_and_batch_metadata_previous_value_restores_the_complete_edit(h):
 def test_missing_staff_alarms_follow_exclude_match_and_undo_decisions(h):
     batch = csv_upload(h)['batch']
     assert not any(g['kind'] == 'missing' and g['suggested_target_id'] == h.seed['people'][0] for g in batch['gaps'])
-    person = gap_for(batch, 'Alex Morgan', 'uncertain')
+    person = gap_for(batch, 'Staff 01(test)', 'uncertain')
     batch = decide(h, batch, person, 'exclude')
-    missing = gap_for(batch, 'Alex Morgan', 'missing')
+    missing = gap_for(batch, 'Staff 01(test)', 'missing')
     assert missing['suggested_target_id'] == h.seed['people'][0] and batch['can_save'] is False
-    excluded = gap_for(batch, 'Alex Morgan', 'uncertain')['decision']
+    excluded = gap_for(batch, 'Staff 01(test)', 'uncertain')['decision']
     batch = change(h, batch, 'undo', decision_id=excluded['id'])['batch']
     assert not any(g['id'] == missing['id'] for g in batch['gaps'])
-    batch = decide(h, batch, gap_for(batch, 'Alex Morgan', 'uncertain'), 'match', target_id=h.seed['people'][2])
-    assert gap_for(batch, 'Alex Morgan', 'missing')['id'] == missing['id']
+    batch = decide(h, batch, gap_for(batch, 'Staff 01(test)', 'uncertain'), 'match', target_id=h.seed['people'][2])
+    assert gap_for(batch, 'Staff 01(test)', 'missing')['id'] == missing['id']
     assert not any(g['kind'] == 'missing' and g['suggested_target_id'] == h.seed['people'][2] for g in batch['gaps'])
 
 
@@ -636,7 +636,7 @@ def test_excluding_unreadable_cell_skips_original_assignment_evidence(h, monkeyp
     batch = decide(h, batch, gap_for(batch, 'Continuity clinic'), 'confirm', location_id=h.seed['locations'][0])
     cell = next(g for g in batch['gaps'] if g['kind'] == 'unreadable')
     batch = decide(h, batch, cell, 'exclude')
-    assert gap_for(batch, 'Alex Morgan', 'missing')['suggested_target_id'] == h.seed['people'][0]
+    assert gap_for(batch, 'Staff 01(test)', 'missing')['suggested_target_id'] == h.seed['people'][0]
     batch = acknowledge_missing(h, batch)
     assert change(h, batch, 'save', status=422)['error']['code'] == 'EMPTY_IMPORT'
     with transaction(h.app.state.engine) as db:

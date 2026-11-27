@@ -541,7 +541,7 @@ VISIBLE_ROW = """names => {
 def names(h, typ):
     catalogues = h.get("admin", "/api/catalogues")
     duty = next(t for t in catalogues["assignment_types"] if t["id"] == typ)
-    # Family names: the Month view shortens given names ("A. Morgan").
+    # Family names: the Month view shortens given names ("S. 01(test)").
     people = [p["display_name"].split()[-1] for p in catalogues["people"] if p["id"] in h.seed["people"][:2]]
     return [duty["name"], *people]
 

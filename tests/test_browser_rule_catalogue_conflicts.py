@@ -16,13 +16,13 @@ pytestmark = pytest.mark.browser
 
 
 def crafted(h):
-    """A line for everyone, the demo rank, Alex Morgan and #exceptional_trainee (naming Alex): everyone gives way to
-    the three, the rank and the tag give way to Alex, and the rank and the tag both apply to Alex."""
+    """A line for everyone, the demo rank, Staff 01(test) and #exceptional_trainee (naming Staff 01): everyone gives way to
+    the three, the rank and the tag give way to Staff 01, and the rank and the tag both apply to Staff 01."""
     a = h.seed['people'][0]
     tag = tag_people(h, 'exceptional_trainee', [a])
     who = lambda field, v: {'conditions': [{'field': field, 'values': [v]}]}  # noqa: E731
     lines = [line({'max': {'value': 5}}, note='Everyone line'), line({'max': {'value': 4}}, who=who('category_ids', h.seed['category']), note='Rank line'),
-             line({'max': {'value': 3}}, who=who('person_ids', a), note='Alex line'), line({'max': {'value': 6}}, who=who('person_ids', tag), note='Tag line')]
+             line({'max': {'value': 3}}, who=who('person_ids', a), note='Staff 01 line'), line({'max': {'value': 6}}, who=who('person_ids', tag), note='Tag line')]
     return catalogue_rule(h, 'duties_per_week', lines), lines
 
 
@@ -56,7 +56,7 @@ def test_the_page_says_what_the_check_says_and_propose_asks_what_the_server_woul
         expect(pop).to_contain_text('exceptional_trainee')
         expect(pop.get_by_role('button', name='Show the other line')).to_be_visible()
         page.keyboard.press('Escape')
-        expect(row('Alex line').locator('.rc-overlap')).to_have_count(0)
+        expect(row('Staff 01 line').locator('.rc-overlap')).to_have_count(0)
         expect(page.get_by_role('button', name='That is right')).to_have_count(0)
 
         main.get_by_role('button', name=re.compile(r'^Filter\b')).click()
@@ -75,7 +75,7 @@ def test_the_page_says_what_the_check_says_and_propose_asks_what_the_server_woul
             expect(main.locator(f'li.rt-ln[data-line="{part["id"]}"] .rt-ln-flags')).to_contain_text('⚠ Overlaps')
         navigate(page, 'rules/duties_per_week')
         # The same line twice: Propose stops here, as rule.propose would (422), and sends nothing.
-        row('Alex line').locator('input.bulk-check').check()
+        row('Staff 01 line').locator('input.bulk-check').check()
         duplicate(page)
         expect(bar).to_contain_text('2 duplicate lines')
         sent = []
@@ -87,7 +87,7 @@ def test_the_page_says_what_the_check_says_and_propose_asks_what_the_server_woul
         held = []
         page.route('**/api/rules/catalogue/duties_per_week/check', lambda route: held.append(route))
         with page.expect_request('**/api/rules/catalogue/duties_per_week/check'):
-            row('Alex line').last.locator('input.bulk-check').check()
+            row('Staff 01 line').last.locator('input.bulk-check').check()
             selection(page).get_by_role('button', name='Remove lines').click()  # armed: press twice
             selection(page).get_by_role('button', name='Remove lines').click()
         expect(main.locator('tbody tr[data-row]')).to_have_count(4)
@@ -160,7 +160,7 @@ def test_ordered_overrides_need_no_acknowledgement_and_the_approver_sees_conflic
 
 
 def test_a_line_that_inherits_a_conflict_is_marked_as_you_edit(browser, live_server, h):
-    """Blank inherits, checked on effective numbers as you edit (not only once in force): Alex's "max 0" takes
+    """Blank inherits, checked on effective numbers as you edit (not only once in force): Staff 01's "max 0" takes
     everyone's min 2, min above max; None clears it and the mark goes."""
     flag(h)
     a = h.seed['people'][0]

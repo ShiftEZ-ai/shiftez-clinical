@@ -12,7 +12,7 @@ import {addDays} from './planner_logic.js';
 import {skeleton,settle} from './loading.js';
 import {HUES,timelineView,timelineAgenda,timelineSettings,timelineWindow,timelineMini,lengthWords,dayNumber,dayOf,plusMonths,type Bar,type BarLabel,type Layer,type TimelineGroup,type TimelineRow,type Zone,type Zoom} from './timeline.js';
 import type {Row} from './types.js';
-import {TABLE_CONDITION_DEFINITIONS,type RotationBoardChoices,type TableViewDefinition,type TimelineViewSettings,type TimelinePreview,type TimelineRotationInput,type TimelineRotationResult} from './generated.js';
+import {TABLE_CONDITION_DEFINITIONS,REFERENCE_ROTATION_FILE_LIMIT,type ReferenceRotationImport,type ReferenceRotationReview,type RotationBoardChoices,type TableViewDefinition,type TimelineViewSettings,type TimelinePreview,type TimelineRotationInput,type TimelineRotationResult} from './generated.js';
 import {menu,opens} from './dom.js';  // the shared menu (UX › controls S2b)
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 
@@ -26,7 +26,7 @@ import {panelSearch} from './dom.js';  // the one search box in a panel (UX › 
  * phone, as an agenda) and asks for a change. The server (GET /api/rotation-board) decides who is shown and what leave says.
  */
 type Board={start:string;end:string;people:Row[];memberships:Row[];rotations:Row[];leave:Row[];changes:Row[];
-  names:Record<'programmes'|'cohorts'|'rotation_types'|'services',Record<string,string>>;choices:RotationBoardChoices;can_plan:boolean;can_note:boolean};
+  names:Record<'programmes'|'cohorts'|'rotation_types'|'services',Record<string,string>>;choices:RotationBoardChoices;can_plan:boolean;can_note:boolean;reference_leave_conflicts?:string[]};
 type Group=''|'programme'|'cohort'|'now';
 type Density='comfortable'|'compact';
 /** `filters` + `conditions`: the shared Filter (table_view.ts conditionFilter) over the board's properties; the rest is
@@ -96,6 +96,7 @@ export async function rotationBoard(target:HTMLElement,deps:BoardDeps){
   const leaveOf=(id:string)=>leaveBy.get(id)||none;
   const external=(id:string)=>membershipsOf(id).some(m=>m.external);
   const changeOf=(rotationId:string)=>changesBy.get(rotationId);
+  const referenceConflicts=new Set(board.reference_leave_conflicts);
   const rotationName=(r:Row)=>named('rotation_types',r.rotation_type_id)||named('services',r.service_id)||'Rotation';
   // Each value of Colour by shown (a rotation type, service or cohort) gets its own hue, in name order, so neighbouring
   // blocks differ; by rotation type, a rotation with none takes its service's. A rotation with neither is slate.
@@ -264,6 +265,7 @@ export async function rotationBoard(target:HTMLElement,deps:BoardDeps){
     if(!board.can_plan)return [];
     const more=opens(iconButton('More rotation actions','dots',event=>menu(event.currentTarget as HTMLElement,'Rotation actions',[
       {label:'Copy rotations forward',icon:'copy',run:copyDialog,hint:'Recreate a year for the same trainees'},
+      {label:'Import reference rotations',icon:'upload',run:referenceImportDialog},
       {label:'Add programme members',icon:'people',run:()=>catalogueForm(ctx,'programme_memberships'),hint:'Local trainees or external rotators'},
       {label:'Rotation templates',icon:'layers',run:()=>ctx.navigate('programmes/rotation_templates'),hint:'Prebuilt plans to reuse'}],{placement:'below-end'})),'menu');
     // Plan rotations needs trainees: until then it says why (and the empty board holds the one primary). A missing
@@ -342,10 +344,13 @@ export async function rotationBoard(target:HTMLElement,deps:BoardDeps){
     const p=person(r.person_id),change=changeOf(r.id),own=!!ctx.me.person_id&&r.person_id===ctx.me.person_id,list=rotationsOf(r.person_id),i=list.findIndex(x=>x.id===r.id);
     dockPanel({key:'rotation',title:rotationName(r),sub:fullNameOf(p),width:480,mark:`[data-bar="${CSS.escape(r.id)}"]`,
       position:{index:i,total:list.length,noun:'rotation',go:k=>rotationPanel(list[k])},build:({body,close})=>{
-      const clashes=overlaps(r);
-      const conflictCards=()=>clashes.map(o=>el('section',{class:'rb-card err'},el('h3',{},icon('alert'),`Overlaps ${rotationName(o.other)} · ${plural(dayNumber(o.end)-dayNumber(o.start),'day')}`),
+      const clashes=overlaps(r),referenceConflict=referenceConflicts.has(r.id),conflictCount=clashes.length+Number(referenceConflict);
+      const conflictCards=()=>[
+        ...(referenceConflict?[el('section',{class:'rb-card err'},el('h3',{},icon('alert'),'Leave conflict at import'),
+          el('p',{},'This historical rotation was recorded for reference with an existing leave conflict.'))]:[]),
+        ...clashes.map(o=>el('section',{class:'rb-card err'},el('h3',{},icon('alert'),`Overlaps ${rotationName(o.other)} · ${plural(dayNumber(o.end)-dayNumber(o.start),'day')}`),
         el('p',{},`${span(o.start,o.end)} are in both. A trainee is on one rotation at a time: change the dates of one of them.`),
-        board.can_plan?el('div',{class:'actions'},withStar(button('Change dates',()=>{close();catalogueForm(ctx,'rotations',r);},'secondary small'))):null));
+        board.can_plan?el('div',{class:'actions'},withStar(button('Change dates',()=>{close();catalogueForm(ctx,'rotations',r);},'secondary small'))):null))];
       // Dates: the months around the rotation (one before, one after), it and the days it shares with another.
       const from=plusMonths(r.starts_on,-1),until=plusMonths(addDays(r.ends_on,-1),2);
       const overview=()=>el('div',{class:'rb-overview'},el('h3',{},'Dates'),
@@ -362,7 +367,7 @@ export async function rotationBoard(target:HTMLElement,deps:BoardDeps){
               :el('p',{class:'muted'},own?'Waiting for your programme lead.':'A programme lead decides it in Requests.'));})():null);
       const count=(text:string,n:number)=>el('span',{},text,' ',el('span',{class:'tab-count'},String(n)));
       const tabList:[string,Child,()=>Node][]=[['overview','Overview',overview],
-        ['conflicts',count('Conflicts',clashes.length),()=>clashes.length?el('div',{},...conflictCards()):emptyLine('No conflicts: this rotation shares no days with another.')]];
+        ['conflicts',count('Conflicts',conflictCount),()=>conflictCount?el('div',{},...conflictCards()):emptyLine('No conflicts: this rotation shares no days with another.')]];
       if(board.can_note&&p)tabList.push(['notes',count('Notes',Number(p.notes)||0),()=>{const host=el('section',{class:'rb-notes-list','data-private':''});drawNotes(p,host);return host;}]);  // never in a feedback screenshot
       if(!deps.mine)tabList.push(['history','History',()=>historyOf(r)]);
       body.append(tabs('Rotation',tabList));
@@ -501,6 +506,30 @@ export async function rotationBoard(target:HTMLElement,deps:BoardDeps){
         else notify(x.message);await ctx.refresh();};
     },'Plan rotations');
   }
+  function referenceImportDialog(){
+    formDialog('Import reference rotations','Choose a JSON file with a rotations list. Each row needs person_id, cohort_id, starts_on, ends_on, and a rotation_type_id or service_id. The end date is exclusive.',form=>{
+      const file=field('Reference file','file','',{required:true,accept:'.json,application/json'});
+      const reason=area('Reason','');reason.input.required=true;
+      form.append(file.wrap,reason.wrap);
+      return async()=>{
+        const picked=file.input.files?.[0];
+        if(!picked)throw new Error('Choose a reference file.');
+        if(picked.size>REFERENCE_ROTATION_FILE_LIMIT)throw new Error('Choose a file up to '+REFERENCE_ROTATION_FILE_LIMIT/1000+' KB.');
+        const payload:ReferenceRotationImport={file_text:await picked.text(),reason:reason.input.value};
+        const review=await request<ReferenceRotationReview>('/api/rotation-board/reference-preview',{
+          method:'POST',body:JSON.stringify(payload)});
+        formDialog('Review reference rotations',plural(review.count,'rotation')+' to record for reference.',confirmation=>{
+          if(review.conflicts.length)confirmation.append(el('ul',{class:'span-2'},...review.conflicts.map(conflict=>
+            el('li',{},'Rotation '+conflict.row+'. '+conflict.messages.join(' ')))));
+          return async()=>{
+            await command('rotation.import_reference',{...payload,expected_fingerprint:review.expected_fingerprint});
+            await ctx.refresh();
+          };
+        },'Import rotations');
+      };
+    },'Review file');
+  }
+
   function copyDialog(){
     formDialog('Copy rotations forward','Recreate rotations for the same trainees, moved by a number of months. Ones that would overlap an existing rotation are skipped.',form=>{
       const from=field('Rotations starting from','date',start,{required:true}),until=field('Until (included)','date',end,{required:true});lastDayIncluded(until.input);

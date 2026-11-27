@@ -88,7 +88,8 @@ def database_template(tmp_path_factory):
 
 class Harness:
     def __init__(self, url, seed):
-        self.settings = Settings(environment="test", database_url=url,
+        # Shared fixtures exercise the legacy job and rule-activation paths; CP-SAT fixtures opt in.
+        self.settings = Settings(environment="test", database_url=url, generation_engine="legacy",
                                  sqlite_synchronous=os.getenv("ROTA_SQLITE_SYNCHRONOUS") or ("OFF" if os.getenv("ROTA_ALLOW_DISPOSABLE_TEST_DB") == "yes" else "FULL"))
         self.app = create_app(self.settings)
         self.seed = copy.deepcopy(seed)

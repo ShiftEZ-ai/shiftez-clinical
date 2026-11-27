@@ -152,8 +152,9 @@ Mockup names and numbers are illustrative only; nothing from them is seeded into
   User agent control (unstyled native controls), and a box or glyph inside a larger target of the same action.
   Shared roots: a table's column grip is 24 px centred on the boundary (12 px into each heading; inside its heading at
   the table's edge), each heading stacked above the next; a resized heading clips its own button, so its text ends in
-  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Ctrl D is its
-  keyboard way, no pointer equivalent yet) and the native × of search fields.
+  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Fill down in the
+  cell bar, then a click or tap on the pattern's last cell and on the last row, is its single-pointer way, and Ctrl D
+  its keyboard way) and the native × of search fields.
 - Touch targets (WCAG 2.2 SC 2.5.5 Target Size (Enhanced), level AAA, beyond the AA target): on a phone every interactive target is at least 44 × 44 CSS px, from one block
   in `app.css` (Touch targets) for the shared controls (buttons, icon buttons, collection toolbar tools, segmented
   options, menu rows, tabs, search fields, pickers, link buttons, the skip link). A checkbox or radio keeps its 24 px box; its target is its whole label row (at least 44 px tall), or, with no visible label (row selection), the centred invisible 44 px `::after`. Pills and chips that act as buttons,
@@ -294,8 +295,9 @@ and a desktop window narrowed below it gets the same rule at once.
     The session it fixed becomes ✓ who, the focus stays on a session that is still open or moves on, and the counts are
     the delta's ("Checking…" until the complete check lands, which is the next read). One source: the footer,
     its Rota health popover and the panel all read that delta, then the next full read; no surface keeps a count of its
-    own. Its Undo (the toast's and the top bar's are one) is an edit with its own delta: the session is back in
-    its cause and its ✓ chip goes; a ✓ chip never outlives a delta or read that lists its session again.
+    own. The toast's Undo acts on that edit. The top bar takes back the latest available edit each time. Both return
+    an edit delta that puts the session back in its cause and removes its ✓ chip. A ✓ chip never outlives a delta
+    or read that lists its session again.
   - **Server fields:** a field is shown only where it replaces words or makes a choice right, never
     as an extra line.
     - `missing` is already the line (`detail_line`: "5 sessions · each has 1 of 2 <rank>"), so it is not drawn twice.
@@ -835,7 +837,8 @@ and a desktop window narrowed below it gets the same rule at once.
   on the side with room and scroll inside when taller, never past the status footer, their head and foot staying in view
   (Reset, Save as view) and the wheel or a swipe never scrolling the page behind them; a phone sheet the same. Menus are `role=menu` with `menuitemradio` for single choices.
   A closed dropdown never cuts its label silently: too long for its width, it ends in "…" with the full choice as a
-  tooltip.
+  tooltip. People lists: a single choice is one list A to Z by name with the rank on the row; a multiple choice keeps
+  rank sections (a whole rank is chosen at once) in the department's rank order, No rank last.
 - Grids (`role=grid`: Schedule Week, Month, People, Timeline, Counts through `roving()` in `planner_week.ts`; the Sheet
   its own): one Tab stop, a cell (the last focused, else today's first session, else the first cell), per the WAI-ARIA
   APG grid pattern. A column's resize grip (APG window splitter, `role=separator`, ← → resize) is no grid item: Tab

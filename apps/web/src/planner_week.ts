@@ -1431,7 +1431,13 @@ export function roving(grid:HTMLElement,scroller:HTMLElement){
   let queued=false;const later=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;settle();});};
   later();
   new MutationObserver(later).observe(grid,{childList:true,subtree:true});
-  grid.addEventListener('focusin',e=>{const t=(e.target as HTMLElement);if(t.closest('.wk-more')||grip(t))return;lastRoving=focusKey(t);if(t!==current){current=t;settle();}});
+  const reveal=(n:HTMLElement)=>n.scrollIntoView({block:'nearest',inline:'nearest'});
+  grid.addEventListener('focusin',e=>{
+    const t=e.target as HTMLElement;if(t.closest('.wk-more')||grip(t))return;
+    // Tab can return to a cell covered by a sticky heading. A redraw restoring focus keeps its scroll position.
+    if(t===current&&e.relatedTarget instanceof Node&&!grid.contains(e.relatedTarget)&&t.matches(':focus-visible'))reveal(t);
+    lastRoving=focusKey(t);if(t!==current){current=t;settle();}
+  });
   const centre=(r:DOMRect)=>[r.left+r.width/2,r.top+r.height/2];
   const rowOf=(n:HTMLElement)=>{const r=n.getBoundingClientRect();return items().filter(m=>{const q=m.getBoundingClientRect();return q.top<r.bottom-2&&q.bottom>r.top+2;})
     .sort((x,y)=>x.getBoundingClientRect().left-y.getBoundingClientRect().left);};
@@ -1452,7 +1458,7 @@ export function roving(grid:HTMLElement,scroller:HTMLElement){
       for(const b of items()){if(b===from)continue;const [bx,by]=centre(b.getBoundingClientRect()),dx=bx-ax,dy=by-ay;
         const along=dx*dir[0]+dy*dir[1],across=Math.abs(dx*dir[1])+Math.abs(dy*dir[0]);if(along<=1)continue;const d=along+across*3;if(d<score){score=d;to=b;}}
     }
-    if(to&&to!==from){e.preventDefault();to.focus();to.scrollIntoView({block:'nearest',inline:'nearest'});}
+    if(to&&to!==from){e.preventDefault();to.focus();reveal(to);}
   });
 }
 

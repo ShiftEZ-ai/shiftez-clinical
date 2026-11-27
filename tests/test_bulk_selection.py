@@ -66,7 +66,7 @@ def test_resolver_nested_and_or_conditions_use_the_selected_day(h):
 
 def test_resolver_names_parent_join_include_exclude_and_revision_token(h):
     first, second = h.seed["people"][:2]
-    selected = {"collection": "people", "names": ["Alex Morgan", "Nobody"], "include_ids": [second]}
+    selected = {"collection": "people", "names": ["Staff 01(test)", "Nobody"], "include_ids": [second]}
     found = resolve(h, selected)
     assert {r["id"] for r in found["sample"]} == {first, second}
     assert found["unmatched"] == ["Nobody"]
@@ -157,7 +157,7 @@ def test_parent_tags_and_recurring_series_and_location_descendants(h):
                "location_id": child["id"], "assignment_type_id": h.seed["type"],
                "definition": {"anchor": "2026-10-04", "days": [{"weekday": 6, "start_time": "08:00", "end_time": "12:00"}],
                               "default_person_ids": [person], "service_ids": [h.seed["services"][0]]}})["record"]
-    selected_person = {"collection": "people", "selection": {"collection": "people", "names": ["Alex Morgan"]}}
+    selected_person = {"collection": "people", "selection": {"collection": "people", "names": ["Staff 01(test)"]}}
     found = resolve(h, {"collection": "recurring_series", "parent": selected_person})
     assert series["id"] in {r["id"] for r in found["sample"]}
     selected_clinic = {"collection": "services", "selection": {"collection": "services", "where": {"filters": {"id": [h.seed["services"][0]]}}}}
@@ -172,7 +172,7 @@ def test_every_registry_collection_can_be_browsed_by_its_authorized_reader(h, co
 
 
 def test_http_resolve_and_rows_validate_and_share_the_result(h):
-    selection = {"collection": "people", "names": ["Alex Morgan"]}
+    selection = {"collection": "people", "names": ["Staff 01(test)"]}
     response = h.client("coordinator").post("/api/bulk/resolve", json=selection)
     assert response.status_code == 200, response.text
     selected = response.json()
@@ -180,7 +180,7 @@ def test_http_resolve_and_rows_validate_and_share_the_result(h):
     response = h.client("coordinator").post("/api/bulk/rows", json={"selection": selection, "columns": ["display_name"], "limit": 1})
     assert response.status_code == 200, response.text
     page = response.json()
-    assert page["token"] == selected["token"] and page["rows"][0]["display_name"] == "Alex Morgan"
+    assert page["token"] == selected["token"] and page["rows"][0]["display_name"] == "Staff 01(test)"
     response = h.client("coordinator").post("/api/bulk/rows", json={"selection": selection, "limit": 5001})
     assert response.status_code == 422
 
@@ -212,7 +212,7 @@ def test_rule_lines_from_people_match_tag_groups_through_the_shared_evaluator(h)
     rule_line = {"id": str(uuid.uuid4()), "who": {"conditions": [line("tags", tag["id"])]},
                  "starts_on": "2026-11-01", "numbers": {"max": {"value": 3}}}
     proposal = h.command("coordinator", "rule.propose", {"catalogue_id": "duties_per_week", "lines": [rule_line], "reason": "Synthetic limits"})["record"]
-    selected = {"collection": "policy_lines", "parent": {"collection": "people", "selection": {"collection": "people", "names": ["Alex Morgan"]}},
+    selected = {"collection": "policy_lines", "parent": {"collection": "people", "selection": {"collection": "people", "names": ["Staff 01(test)"]}},
         "where": {"filters": {"policy_id": [proposal["id"]]}}}
     found = resolve(h, selected)
     assert found["count"] == 1 and found["sample"][0]["id"] == rule_line["id"] and found["by_parent"] == {person: 1}
@@ -222,7 +222,7 @@ def test_rule_lines_from_people_match_tag_groups_through_the_shared_evaluator(h)
     selected["where"]["filters"]["starts_on"] = {"lt": "2026-11-01"}
     assert resolve(h, selected)["count"] == 0
     selected["where"] = {"filters": {"policy_id": [proposal["id"]]}}
-    selected["parent"]["selection"]["names"] = ["Taylor Noor"]
+    selected["parent"]["selection"]["names"] = ["Staff 03(test)"]
     assert resolve(h, selected)["count"] == 0
 
 
@@ -235,7 +235,7 @@ def test_session_conditions_bind_and_groups_to_one_assigned_person(h):
     assert resolve(h, selection)["count"] == 1
     selection["where"]["conditions"]["conditions"].append(line("person_ids", first))
     assert resolve(h, selection)["count"] == 0
-    selected = {"collection": "sessions", "parent": {"collection": "people", "selection": {"collection": "people", "names": ["Alex Morgan"]}}}
+    selected = {"collection": "sessions", "parent": {"collection": "people", "selection": {"collection": "people", "names": ["Staff 01(test)"]}}}
     assert resolve(h, selected)["by_parent"] == {first: 1}
     with transaction(h.app.state.engine) as db:
         page = bulk.rows(db, actor(db, h), {"selection": selected, "columns": ["person.display_name", "service.name"]})

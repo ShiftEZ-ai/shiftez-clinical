@@ -179,7 +179,7 @@ def test_filled_session_lead_context_is_fresh_or_visibly_unavailable(browser, li
                 expect(picker.get_by_role('button', name='Make team lead')).to_have_count(0)
                 assert h.detail(w)['shifts'] == before['shifts']
                 return
-        candidate = picker.locator('.wk-cand').filter(has_text='Jordan Lee')
+        candidate = picker.locator('.wk-cand').filter(has_text='Staff 02(test)')
         expect(candidate.get_by_role('button', name='Make team lead')).to_be_enabled()
         expect(picker).to_contain_text(re.compile('does not meet who may lead', re.I))
         candidate.get_by_role('button', name='Make team lead').click()
@@ -214,7 +214,7 @@ def test_lead_context_refreshes_after_governed_qualification_changes_without_dra
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         page.locator(gap).click()
         picker = page.locator('.wk-lead')
-        expect(picker.locator('.wk-cand').filter(has_text='Jordan Lee').get_by_role('button', name='Make team lead')).to_be_enabled()
+        expect(picker.locator('.wk-cand').filter(has_text='Staff 02(test)').get_by_role('button', name='Make team lead')).to_be_enabled()
         revision = h.detail(w)['workspace']['revision']
         updated = proposal(h, [line(typ['id'], [a])], expected_policy_id=rule['id'], expected_revision=rule['revision'])
         activate(h, updated)
@@ -227,8 +227,8 @@ def test_lead_context_refreshes_after_governed_qualification_changes_without_dra
         navigate(page, 'home')
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         page.locator(gap).click()
-        expect(picker.locator('.wk-cand').filter(has_text='Alex Morgan').get_by_role('button', name='Make team lead')).to_be_enabled()
-        expect(picker.locator('.wk-cand').filter(has_text='Jordan Lee').get_by_role('button', name='Make team lead')).to_have_count(0)
+        expect(picker.locator('.wk-cand').filter(has_text='Staff 01(test)').get_by_role('button', name='Make team lead')).to_be_enabled()
+        expect(picker.locator('.wk-cand').filter(has_text='Staff 02(test)').get_by_role('button', name='Make team lead')).to_have_count(0)
     finally:
         context.close()
 

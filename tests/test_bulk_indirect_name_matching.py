@@ -118,14 +118,14 @@ def test_multi_person_and_finding_name_matching_uses_the_projected_people(h, col
         filters = {"policy_id": [policy["id"]], "id": [record_id]}
     selection = {"collection": collection, "where": {"filters": filters}}
     if mode == "search":
-        selection["where"]["q"] = "Alex"
+        selection["where"]["q"] = "Staff 01"
     else:
-        selection["names"] = ["ALEX MORGAN"]
+        selection["names"] = ["STAFF 01(test)"]
     resolved = post(h, "resolve", selection)
     assert {row["id"] for row in resolved["sample"]} == {record_id}
     assert not resolved["unmatched"] and not resolved["ambiguous"]
     if mode == "paste":
-        assert resolved["matches"] == [{"line": "ALEX MORGAN", "ids": [record_id]}]
+        assert resolved["matches"] == [{"line": "STAFF 01(test)", "ids": [record_id]}]
     assert post(h, "rows", {"selection": selection})["count"] == 1
 
 

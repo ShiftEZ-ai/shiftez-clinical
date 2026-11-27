@@ -4,7 +4,7 @@ import {ruleReview} from './rule_review.js';
 import {draftImpact} from './draft_impact.js';
 import {helpButton,icon,popover,menuItem,multiPick,type Choice,type IconName,emptyLine,CAPABILITY} from './dom.js';
 import {WEEKDAYS,weekOrder,weekdayOptions,weekdayNames,routineReason,inlineCheck,el,field,area,select,check,multi,button,iconButton,formDialog,formInto,showDialog,note,notify,labelOf,table,dateUnits,formatDate,formatTime,toLocal,spanLabel,confirmAction,roleLabel,statusBadge,type Field} from './dom.js';
-import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES,selfApprovedBadge} from './dom.js';
+import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES} from './dom.js';
 import {command,get,instant,knownRevision,plainWords,request,rotaMeta} from './api.js';
 import {fillOptions} from './candidates.js';
 import {overlapChoice,type Overlaps} from './schedule.js';
@@ -33,6 +33,7 @@ import {BASELINE_SOURCES,GAPS_SHOWN,nearestGaps} from './draft_baseline.js';
 import {issueList,findingIssue} from './issue_marker.js';
 import {leadContext,leadState,leadNeed,type LeadState} from './planner_teams.js';
 import {menu,opens} from './dom.js';  // the shared menu (UX › controls S2b)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 
 /** `ready` resolves once the deferred catalogue lists are loaded (app.ts ensureCatalogues): await it before reading them. */
@@ -65,7 +66,6 @@ function all(ctx:Context,kind:string):Row[]{return ctx.catalogues[kind]||[];}
 const rankOptions=(ctx:Context)=>options(all(ctx,'categories')).map(c=>({...c,tone:'duty-'+rankColour(c.value)}));
 /** Dated facts apply from their start, up to (but not including) their end. */
 export const activeOn=(r:Row|undefined,day:string)=>!!r&&!r.revoked&&r.active!==false&&(!r.starts_on||r.starts_on<=day)&&(!r.ends_on||r.ends_on>day);
-/** People as picker choices, grouped by their current rank. */
 /** Why this person may not lead a session of this duty type on this day ('' = may lead, or no lead setting). Only the
  *  fallback while the server's lead context (planner_teams.ts leadContext) is unavailable: a hint mirroring
  *  packages/domain/conditions.py over the loaded catalogues (one missing is not held against anyone); the server check
@@ -88,13 +88,18 @@ export function leadBlock(ctx:Context,typeId:string,personId:string,day:string){
   const kind=(f:string)=>RULE_FIELDS.find(x=>x.key===f)?.kind;
   return 'Cannot lead · who may lead: '+conditionsText(tree,(f,v)=>kind(f)?labelOf(lookup(ctx,kind(f)!,v)||{name:v}):v);
 }
+/** People as picker choices, the one place their order is set: A to Z by name, each with today's rank as its group and
+ *  that rank's place in the department's rank order (the `categories` catalogue as served, Configuration › Ranks: the
+ *  order the People collection groups by), No rank last. The one picker draws a single choice flat with the rank on
+ *  the row and a multiple choice in rank sections in that order, so a whole rank can be picked at once (picker.ts).
+ *  A person with two current ranks takes the first in that order. */
 export function peopleChoices(ctx:Context){
-  const day=today(ctx),rank=new Map<string,string>();
-  for(const m of all(ctx,'memberships'))if(activeOn(m,day)&&!rank.has(m.person_id))rank.set(m.person_id,labelOf(lookup(ctx,'categories',m.category_id))||'');
-  // Searchable by code, staff number, rota names and tags too; grouped by today's rank so a whole rank can be picked at once.
+  const day=today(ctx),ranks=all(ctx,'categories'),place=new Map(ranks.map((r,i)=>[r.id,i])),rank=new Map<string,number>();
+  for(const m of all(ctx,'memberships')){const at=place.get(m.category_id);if(activeOn(m,day)&&at!==undefined&&at<(rank.get(m.person_id)??ranks.length))rank.set(m.person_id,at);}
+  // Searchable by code, staff number, rota names and tags too.
   const person=new Map(all(ctx,'people').map(p=>[p.id,p]));
-  return options(all(ctx,'people')).map(o=>{const p=person.get(o.value);return {...o,group:rank.get(o.value)||'No rank',hint:String(p?.short_code||''),
-    keywords:[p?.staff_number,...((p?.aliases||[]) as string[]),...((p?.tags||[]) as string[])].filter(Boolean).join(' ')};}).sort((a,b)=>a.group.localeCompare(b.group)||a.label.localeCompare(b.label,undefined,{numeric:true}));
+  return options(all(ctx,'people')).map(o=>{const p=person.get(o.value),at=rank.get(o.value)??ranks.length;return {...o,group:at<ranks.length?labelOf(ranks[at]):'No rank',groupOrder:at,hint:String(p?.short_code||''),
+    keywords:[p?.staff_number,...((p?.aliases||[]) as string[]),...((p?.tags||[]) as string[])].filter(Boolean).join(' ')};}).sort(byLabel);
 }
 function lookup(ctx:Context,kind:'people',id:string):PersonRow|undefined;
 function lookup(ctx:Context,kind:string,id:string):Row|undefined;
@@ -247,7 +252,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
     let value:()=>Record<string,unknown>=()=>({name:name.input.value,description:description.input.value,starts_on:start.input.value,ends_on:end.input.value||null,active:active.input.checked});
     if(kind==='people'){
       const title=field('Job title','text',row?.title||'',{maxlength:160}),section=field('Directory section','text',row?.directory_section||'',{maxlength:160});
-      const phone=field('Hospital phone','tel',row?.work_phone||'',{maxlength:80}),extension=field('Office extension','text',row?.work_extension||'',{maxlength:80});
+      const phone=field('Work phone','tel',row?.work_phone||'',{maxlength:80}),extension=field('Office extension','text',row?.work_extension||'',{maxlength:80});
       const number=field('Employee or student number','text',row?.staff_number||'',{maxlength:80}),pager=field('Pager number','text',row?.pager||'',{maxlength:40}),order=field('Directory order','number',row?.directory_order??1000,{min:0,max:100000,required:true});
       const initialPhone=phone.input.value,initialExtension=extension.input.value,initialPager=pager.input.value;
       const code=field('Short code','text',row?.short_code||'',{maxlength:6,pattern:'[A-Z0-9]{0,6}',autocomplete:'off'});
@@ -308,7 +313,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       const person=personField(row?.person_id||''),programme=select('Programme',options(all(ctx,'programmes')),row?.programme_id||'');
       // An external rotator: a trainee of another programme placed here, managed by this department's programme lead.
       const external=check('External rotator',row?.external===true,'A trainee from another programme, placed here for these dates.');
-      const home=field('Home programme','text',row?.home_programme||'',{maxlength:160,placeholder:'e.g. Internal medicine, another hospital'});
+      const home=field('Home programme','text',row?.home_programme||'',{maxlength:160,placeholder:'e.g. Internal medicine'});
       const syncExternal=()=>{home.wrap.hidden=!external.input.checked;};external.input.addEventListener('change',syncExternal);syncExternal();
       programme.wrap.classList.add('span-2');end.input.required=true;form.append(person.wrap,programme.wrap,dates,external.wrap,home.wrap);
       value=()=>({person_id:person.get(),programme_id:programme.input.value,starts_on:start.input.value,ends_on:end.input.value,
@@ -1096,8 +1101,8 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
     const privacy=el('small',{class:'hint',id:reason.input.id+'-hint'},'Private · no patient information');reason.wrap.append(privacy);reason.input.setAttribute('aria-describedby',privacy.id);
     if(many&&ctx.me.person_id&&mayDecide(ctx.me,'request.decide',true)){
       const own=ctx.me.person_id,reasonLabel=reason.wrap.querySelector('label')!;
-      const message='Your leave will be self-approved when recorded.';
-      const approval=el('div',{},selfApprovedBadge(),' ',el('span',{},message));approval.hidden=true;
+      const message='Your leave is self-approved only if it can be recorded without separate review.';
+      const approval=el('div',{},message);approval.hidden=true;
       const showApproval=()=>{const self=many.values().includes(own);if(approval.hidden===!self)return;
         approval.hidden=!self;reasonLabel.textContent=self?'Reason for self-approval':'Reason';
         if(self&&approval.isConnected)announce(message,true);};
@@ -1156,10 +1161,12 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
       if(clash&&await clash.duplicate(input,range))throw new Error(input.person===ctx.me.person_id?'You already asked for exactly this. Open it under Requests instead of sending it again.':'This person already has exactly this request. Open it under Requests instead of sending it again.');
       const common={...range,private_reason,kind:input.kind,leave_type_id:input.leaveType};
       if(ids.length>1){
-        await runBulk({collection:'availability',noun:['leave record','leave records'],message:'Recorded for {n} people. Review live staffing gaps and arrange cover.',onDone:()=>ctx.refresh(),
+        await runBulk({collection:'availability',noun:['leave record','leave records'],message:'Saved for {n} people. Review pending requests and staffing gaps.',onDone:()=>ctx.refresh(),
           body:{item_kind:'availability.record',common,items:ids.map(id=>({payload:{person_id:id}})),reason:'Leave recorded for several people'}});return;}
-      const result=await command<{message:string;warnings?:string[]}>(edit?'request.edit':requestOnly?'request.create':'availability.record',{person_id:ids[0],...common},edit?.id,edit?.revision);
-      notify(requestOnly?[edit?'Request updated. It is still waiting for a decision.':'Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);await ctx.refresh();};
+      const result=await command<{message:string;approval_required?:boolean;warnings?:string[]}>(edit?'request.edit':requestOnly?'request.create':'availability.record',{person_id:ids[0],...common},edit?.id,edit?.revision);
+      if(result.approval_required)notify(result.message);
+      else notify(requestOnly?[edit?'Request updated. It is still waiting for a decision.':'Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);
+      await ctx.refresh();};
 }
 
 type RequestDates={from:string;until:string;savedStart?:string;savedEnd?:string};

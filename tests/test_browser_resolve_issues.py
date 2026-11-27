@@ -112,7 +112,7 @@ def test_resolve_from_auto_schedule_replace_with_preview_undo_and_remove(browser
         bar.get_by_role('button', name='Replace…').click()
         banner = main.locator('.issues-preview')
         expect(banner).to_contain_text(re.compile(r'Replace with best available · \d of 4 have someone free who no rule stops'))
-        expect(main.locator('td[data-col=fix]').filter(has_text=re.compile('^→ (Jordan Lee|Taylor Noor)$')).first).to_be_visible()
+        expect(main.locator('td[data-col=fix]').filter(has_text=re.compile('^→ (Staff 02\\(test\\)|Staff 03\\(test\\))$')).first).to_be_visible()
         banner.get_by_role('button', name=re.compile(r'^Apply \d replacements?$')).click()
         # The run above left its proposal waiting: a draft edit asks first, as every draft edit does then.
         guard = page.get_by_role('dialog', name='Edit the draft now?')
@@ -343,10 +343,10 @@ def test_reason_groups_and_session_cards_keep_the_reason_in_its_group(browser, l
         expect(card).not_to_contain_text(reason)
         expect(card.locator('.dt-card-line')).to_contain_text(explanation)
         rest = main.locator('.dt-card').filter(has_text='1 h rest (needs 12 h)').first
-        expect(rest.locator('.dt-card-line')).to_contain_text('Alex Morgan · Minimum rest not met · 1 h rest (needs 12 h)')
+        expect(rest.locator('.dt-card-line')).to_contain_text('Staff 01(test) · Minimum rest not met · 1 h rest (needs 12 h)')
         assert rest.locator('.dt-card-line').inner_text().count('Minimum rest not met') == 1
         leave = main.locator('.dt-card').filter(has_text='Annual').first
-        expect(leave.locator('.dt-card-line')).to_contain_text('Alex Morgan Annual · 5–6 Oct · Family medicine congress')
+        expect(leave.locator('.dt-card-line')).to_contain_text('Staff 01(test) Annual · 5–6 Oct · Family medicine congress')
 
         # Changing the saved collection grouping must retain the explanation on each card.
         main.get_by_role('button', name='Group: Reason', exact=True).click()
@@ -355,7 +355,7 @@ def test_reason_groups_and_session_cards_keep_the_reason_in_its_group(browser, l
         expect(card.locator('.dt-card-title')).not_to_contain_text(reason)
         expect(card.locator('.dt-card-line')).to_contain_text(reason)
         expect(card.locator('.dt-card-line')).to_contain_text(explanation)
-        expect(rest.locator('.dt-card-line')).to_contain_text('Alex Morgan · Minimum rest · Minimum rest not met · 1 h rest (needs 12 h)')
+        expect(rest.locator('.dt-card-line')).to_contain_text('Staff 01(test) · Minimum rest · Minimum rest not met · 1 h rest (needs 12 h)')
 
         main.get_by_role('button', name='Group', exact=True).click()
         page.get_by_role('menu', name='Group by', exact=True).get_by_role('menuitemradio', name='Person', exact=True).click()
@@ -368,10 +368,10 @@ def test_reason_groups_and_session_cards_keep_the_reason_in_its_group(browser, l
         page.get_by_role('dialog', name='View settings', exact=True).get_by_role('radio', name='Board', exact=True).click()
         page.keyboard.press('Escape')
         # Boards only draw the first grouping: the cards must carry the missing second-level reason.
-        expect(main.locator('.dt-lane').filter(has_text='Alex Morgan').locator('header').first).to_contain_text('Alex Morgan')
+        expect(main.locator('.dt-lane').filter(has_text='Staff 01(test)').locator('header').first).to_contain_text('Staff 01(test)')
         expect(card.locator('.dt-card-line')).to_contain_text(reason)
         expect(card.locator('.dt-card-line')).to_contain_text(explanation)
-        expect(rest.locator('.dt-card-line')).to_contain_text('Alex Morgan · Minimum rest · Minimum rest not met · 1 h rest (needs 12 h)')
+        expect(rest.locator('.dt-card-line')).to_contain_text('Staff 01(test) · Minimum rest · Minimum rest not met · 1 h rest (needs 12 h)')
     finally:
         context.close()
 
@@ -501,7 +501,7 @@ def test_issue_words_cards_and_actions_that_do_not_apply(browser, live_server, h
         expect(main.locator('td[data-col=reason]').filter(has_text='overlaps another duty (needs 12 h between)')).not_to_have_count(0)
         expect(main.locator('td[data-col=reason]').filter(has_text=re.compile(r'-\d+ h rest'))).to_have_count(0)
         # Checkboxes are named by person, issue and session, not just "—" or a name shared by many rows.
-        expect(main.get_by_role('checkbox', name=re.compile(r'^Select Alex Morgan · On leave or away · .*Mon 5 Oct'))).not_to_have_count(0)
+        expect(main.get_by_role('checkbox', name=re.compile(r'^Select Staff 01\(test\) · On leave or away · .*Mon 5 Oct'))).not_to_have_count(0)
 
         posts = []
         page.on('request', lambda r: posts.append(r.url) if r.method == 'POST' else None)

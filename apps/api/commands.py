@@ -42,6 +42,7 @@ COMMAND_PERMISSIONS = {
     "programme_membership.withdraw": "catalogue.programmes",
     "programme_membership.restore": "catalogue.programmes",
     "rotation.restore": "rotation.remove",
+    "rotation.import_reference": "rotation.plan",
     "rotation.swap": "rotation.swap",
     "wish.override": "wish.override",
     "policy.withdraw_approval": "policy.retire",
@@ -77,7 +78,7 @@ def command_roles(command):
         return list(s.PERMISSIONS["notification.policy.update"])
     if kind in {"pwa.system.update", "pwa.provider.resume"}:
         return ["operator"]
-    if kind == "absence_report.settings":
+    if kind in {"absence_report.settings", "department.leave_balance_settings"}:
         return ["admin"]
     if kind.startswith("publication.change"):
         return ["coordinator"]
@@ -364,7 +365,7 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         from .services import independence
         return independence.permission_command(db, actor, command)
     if kind.startswith("swap."):
-        return swaps.swap_command(db, actor, command)
+        return swaps.read_command_result(actor, swaps.swap_command(db, actor, command))
     if kind in {"wish.create", "wish.update", "wish.restore"}:
         from .services import wishes
         return wishes.save(db, actor, command)
@@ -503,13 +504,15 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         return timeline_commands.apply(db, actor, command)
     if kind.startswith(("rotation.", "trainee_note.")):
         from .services import training
-        if kind in {"rotation.plan", "rotation.copy", "rotation.undo_plan", "rotation.remove", "rotation.restore", "rotation.request_change", "rotation.swap", "trainee_note.create"}:
+        if kind in {"rotation.plan", "rotation.copy", "rotation.import_reference", "rotation.undo_plan", "rotation.remove", "rotation.restore", "rotation.request_change", "rotation.swap", "trainee_note.create"}:
             require(command.target_id is None and command.expected_revision is None, "RESIDENCY_COMMAND_TARGET",
                     "This operation uses the records in its payload, with no top-level target or revision")
         if kind == "rotation.plan":
             return training.plan(db, actor, command)
         if kind == "rotation.copy":
             return training.copy_forward(db, actor, command)
+        if kind == "rotation.import_reference":
+            return training.reference_rotation_import(db, actor, command.payload)
         if kind in {"rotation.undo_plan", "rotation.remove"}:
             return training.remove(db, actor, command, own=kind == "rotation.undo_plan")
         if kind == 'rotation.restore':
@@ -520,6 +523,9 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
             return training.request_swap(db, actor, command)
         if kind in {"trainee_note.create", "trainee_note.update", "trainee_note.delete", "trainee_note.restore"}:
             return training.note_command(db, actor, command)
+    if kind == "department.leave_balance_settings":
+        from .services import leave_balances
+        return leave_balances.update(db, actor, command)
     if kind == "request.create":
         return availability.create_request(db, actor, command)
     if kind in {"request.edit", "request.undo_edit"}:
@@ -752,7 +758,7 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
             records = result.get("created", result.get("records", []))
             from .services.training import rotation_records_access
             rotation_records_access(db, actor, records, scope=(result.get("rotation_scope") or [])
-                                    if kind in {"rotation.plan", "rotation.copy"} else None)
+                                    if kind in {"rotation.plan", "rotation.copy", "rotation.import_reference"} else None)
     if kind.startswith("swap."):
         source = result.get("undone") or result.get("swap", {})
         row = swaps.get_scoped(db, actor, source.get("id"))
@@ -779,6 +785,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if db is not None:
         from .services.leave_disclosure import overlap_labels
         result = overlap_labels(db, actor, result)
+    if db is not None and kind.startswith('swap.'):
+        result = swaps.read_command_result(actor, result)
     if db is not None and kind.startswith(('person.contact.', 'catalogue.', 'bulk.', 'staff_import.')):
         from .services.contacts import redact_reply
         result = redact_reply(db, actor, result)
@@ -1168,7 +1176,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                 command_kind=command.kind, required_roles=allowed, key=idempotency_key,
                                 payload_hash=payload_hash, result=outcome))
         override_blockers = db.info.pop('_assignment_override_blockers', [])
-        reason = str(command.payload.get("reason", command.kind))[:500]
+        reason = (swaps.optional_swap_note(command.kind, command.payload.get("reason", ""))
+                  if command.kind in swaps.OPTIONAL_NOTE_COMMANDS
+                  else str(command.payload.get("reason", command.kind))[:500])
         if command.kind == 'request.create' and command.payload.get('kind') == 'absence_report':
             reason = 'Absence reported'
         if command.kind in {'workspace.approve', 'policy.activate', 'policy.activate_many'}:
@@ -1210,7 +1220,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             made = {'id': (result.get('group') or {}).get('group_id')}
         if command.kind == 'department.create':
             made = result['department']
-        if command.kind.startswith('planning.settings'):
+        if command.kind.startswith('planning.settings') or command.kind == 'department.leave_balance_settings':
             made = {'id': actor.department_id}
         listed = command.payload.get("catalogue")
         from .services.audit_log import event_action, subject_detail
@@ -1256,6 +1266,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                                        **({"catalogue": listed} if isinstance(listed, str) else {}),
                                                        **({"source_date_set_id": command.target_id}
                                                           if command.kind == 'date_set.copy_next_year' else {}),
+                                                       **({"leave_balance_overdrawn": True} if result.get("leave_balance_overdrawn") else {}),
                                                        **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
                                                         **({"entered_on_behalf_by": sorted(enterers)}
                                                            if (enterers := db.info.pop("entered_on_behalf_by", None)) else {}),

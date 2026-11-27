@@ -189,13 +189,13 @@ def test_mark_absent_asks_why_once_and_replace_does_not_ask_again(browser, live_
         pubs = []
         page.on('request', lambda r: pubs.extend(re.findall(r'/api/publications/([^/?]+)/pending-changes', r.url)))
         panel = open_session(page, h, later, person=2)
-        panel.get_by_role('button', name='Change Taylor Noor on this session').click()
-        page.get_by_role('menu', name='Change Taylor Noor').get_by_role('menuitem', name='Mark absent · Leave').click()
+        panel.get_by_role('button', name='Change Staff 03(test) on this session').click()
+        page.get_by_role('menu', name='Change Staff 03(test)').get_by_role('menuitem', name='Mark absent · Leave').click()
         expect(panel).to_contain_text('Nobody is left on this session.')
         changes = h.get('coordinator', f'/api/publications/{pubs[-1]}/pending-changes')['changes']
         assert [(c['kind'], c['absence_reason']) for c in changes] == [('absence', 'leave')]
-        panel.get_by_role('button', name='Replace Taylor Noor…').click()
-        expect(panel.get_by_role('heading', name='Replace Taylor Noor')).to_be_visible()
+        panel.get_by_role('button', name='Replace Staff 03(test)…').click()
+        expect(panel.get_by_role('heading', name='Replace Staff 03(test)')).to_be_visible()
         expect(panel.get_by_role('radiogroup')).to_have_count(0)  # the reason is not asked again
     finally:
         context.close()

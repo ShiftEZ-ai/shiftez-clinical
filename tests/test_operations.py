@@ -145,7 +145,7 @@ def test_import_row_errors_never_become_assignments(h,start,end,ot):
 
 
 def test_unknown_import_identity_is_not_inferred(h):
-    w=h.workspace();b=batch(h,w,csv_source([['a','b','c','Alex Morgan','2026-10-05T08:00:00+03:00','2026-10-05T12:00:00+03:00','false']]))
+    w=h.workspace();b=batch(h,w,csv_source([['a','b','c','Staff 01(test)','2026-10-05T08:00:00+03:00','2026-10-05T12:00:00+03:00','false']]))
     h.command('coordinator','import.apply',{'workspace_id':w['id'],'batch_id':b['id'],'mappings':mappings(h,[str(uuid.uuid4())]),'reason':REASON},revision=w['revision'],status=404)
     assert not h.detail(w)['shifts']
 
