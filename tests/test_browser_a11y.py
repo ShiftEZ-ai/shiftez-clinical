@@ -549,8 +549,18 @@ DESKTOP = {'width': 1440, 'height': 900}
 HIT_AREA = r"""nodes => nodes.map(n => {
   // The region that takes the pointer: the box, grown by an absolute ::before (a pseudo-element's clicks land on its
   // element); each corner of it must land on the control itself, never on a neighbour or a clipping parent.
-  // The middle of its scroll box, clear of a column that sticks to an edge (a table's actions on a phone).
   n.scrollIntoView({block: 'center', inline: 'center'});
+  // A table's columns that stick to an edge (its first column and its actions on a phone) cover what scrolls under
+  // them, so a target in another column is brought to the middle of the space between them.
+  const cell = n.closest('td'), scroller = cell?.closest('.table-scroll');
+  if (scroller && getComputedStyle(cell).position !== 'sticky') {
+    const stuck = [...cell.parentElement.children].filter(c => getComputedStyle(c).position === 'sticky')
+      .map(c => [getComputedStyle(c).left !== 'auto', c.getBoundingClientRect()]);
+    const s = scroller.getBoundingClientRect(), t = n.getBoundingClientRect();
+    const from = Math.max(s.left, ...stuck.filter(([l]) => l).map(([, e]) => e.right));
+    const to = Math.min(s.right, ...stuck.filter(([l]) => !l).map(([, e]) => e.left));
+    scroller.scrollLeft += (t.left + t.right) / 2 - (from + to) / 2;
+  }
   const r = n.getBoundingClientRect(), b = getComputedStyle(n, '::before');
   const grown = b.content !== 'none' && b.position === 'absolute';
   const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
@@ -616,7 +626,8 @@ def test_selection_boxes_switches_links_and_search_reach_the_target_size(browser
     def measure(locator, at_least=size):
         expect(locator.first).to_be_attached()
         found = locator.evaluate_all(HIT_AREA)
-        small = [t for t in found if min(t['width'], t['height']) < at_least - 0.01 or not t['lands']]
+        # Chromium lays boxes out in 1/64 px units, so a 24 px reach can measure one unit short.
+        small = [t for t in found if min(t['width'], t['height']) < at_least - 1 / 64 or not t['lands']]
         assert found and not small, f"{viewport['width']}: " + '; '.join(f"{t['name']} {t['width']:.0f}x{t['height']:.0f} misses {t['misses']}" for t in small)
 
     try:
