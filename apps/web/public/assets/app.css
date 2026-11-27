@@ -5456,6 +5456,7 @@ tr.dt-changed>td,article.dt-changed{background:var(--ok-soft)}
 .cellbar .cellbar-value{font-family:var(--mono);color:var(--ink-2);max-width:40ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cellbar .field{margin:0;min-width:220px}
 .cellbar .grow,.stage-bar .grow{flex:1}
+.cellbar .button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent-text);border-color:var(--accent)}
 .sheet-grid th.rel,.sheet-grid td.rel{color:var(--muted);background:var(--subtle)}
 .sheet-grid td.cell{position:relative;cursor:cell;user-select:none;white-space:nowrap;outline:none}
 .sheet-grid td.cell.mono{font-family:var(--mono);font-size:12.5px}
