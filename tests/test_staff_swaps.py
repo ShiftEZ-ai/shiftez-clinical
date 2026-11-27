@@ -205,7 +205,7 @@ def test_give_away_acceptance_requires_recipient_reason_revision_and_original_pr
     assert transition(h, row, "accept", status=403)["error"]["code"] == "FORBIDDEN"
     transition(h, row, "accept", "staff_three", status=404)
     transition(h, row, "accept", "coordinator", status=403)
-    transition(h, row, "accept", "staff_two", {"reason": ""}, status=422)
+    transition(h, row, "accept", "staff_two", {"reason": "x" * 501}, status=422)
     transition(h, row, "accept", "staff_two", {"reason": "Not a return", "assignment_id": second}, status=422)
     before = row
     key = str(uuid.uuid4())
@@ -561,6 +561,49 @@ def test_swap_notifications_say_what_happened(h):
             break
     titles = {n["title"] for who in ("staff", "staff_two") for n in h.get(who, "/api/notifications")["notifications"]}
     assert {"Swap offered", "Swap: duty offered in return", "Swap agreed"} <= titles
+
+
+def stored_reasons(h, swap_id):
+    with transaction(h.app.state.engine) as db:
+        return db.get(m.SwapRequest, swap_id).reason, {e.action: e.reason for e in db.scalars(
+            select(m.SwapEvent).where(m.SwapEvent.swap_id == swap_id))}
+
+
+def test_an_exchange_needs_no_typed_text_from_offer_to_confirmation(h):
+    pid, first, second, _ = source_pair(h)
+    offer = {"publication_id": pid, "assignment_id": first, "recipient_person_id": h.seed["people"][1],
+             "expires_at": (m.now()+timedelta(days=1)).isoformat()}
+    h.command("staff", "swap.offer", {**offer, "reason": "x" * 501}, status=422)
+    row = h.command("staff", "swap.offer", offer)["swap"]
+    h.command("staff_two", "swap.counteroffer", {"assignment_id": second, "reason": "x" * 501}, row["id"], row["revision"], status=422)
+    row = h.command("staff_two", "swap.counteroffer", {"assignment_id": second}, row["id"], row["revision"])["swap"]
+    row = h.command("staff", "swap.confirm", {}, row["id"], row["revision"])["swap"]
+    assert row["status"] == "accepted"
+    assert stored_reasons(h, row["id"]) == ("", {"offered": "", "counteroffer": "", "confirm": ""})
+
+
+def test_only_a_refusal_by_a_coordinator_or_approver_keeps_its_required_reason(h):
+    row, _ = accepted(h)
+    assert stored_reasons(h, row["id"])[0] == "Shared operational exchange request; no private medical details"
+    for payload in ({}, {"reason": ""}, {"reason": "no"}):
+        refused = h.command("coordinator", "swap.reject", payload, row["id"], row["revision"], status=422)
+        assert refused["error"]["code"] == "SCHEMA_INVALID"
+    row = h.command("coordinator", "swap.reject", {"reason": "The department cannot spare this cover"}, row["id"], row["revision"])["swap"]
+    assert row["status"] == "rejected"
+    assert stored_reasons(h, row["id"])[1]["reject"] == "The department cannot spare this cover"
+
+
+def test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text(h):
+    pid, first, _, _ = source_pair(h)
+    row = offered(h, pid, first, kind="give")
+    row = h.command("staff_two", "swap.accept", {}, row["id"], row["revision"])["swap"]
+    assert row["status"] == "counteroffered"
+    row = h.command("staff", "swap.confirm", {}, row["id"], row["revision"])["swap"]
+    assert row["status"] == "accepted"
+    row = h.command("staff", "swap.withdraw", {}, row["id"], row["revision"])["swap"]
+    assert row["status"] == "withdrawn"
+    reasons = stored_reasons(h, row["id"])[1]
+    assert (reasons["accept"], reasons["confirm"], reasons["withdraw"]) == ("", "", "")
 
 
 def extra_staff(h, count):

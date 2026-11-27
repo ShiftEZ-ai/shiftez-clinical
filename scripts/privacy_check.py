@@ -20,6 +20,8 @@ from collections import Counter
 import ipaddress
 import json
 import math
+import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -214,6 +216,22 @@ def scan_all(hits):
         scan_blob(path, content, hits)
 
 
+def scan_pr_opener(user, hits):
+    # CI runs this script from the trusted checkout while scanning the candidate.
+    policy = Path(__file__).resolve().parents[1] / ".github" / "privacy-pr-openers.json"
+    try:
+        allowed = json.loads(policy.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        allowed = None
+    if not isinstance(allowed, list) or not allowed or any(
+        not isinstance(login, str) or not re.fullmatch(r"[a-z0-9]+(?:-+[a-z0-9]+)*\[bot\]", login)
+        for login in allowed
+    ):
+        hits.append("pull_request.user.login:1: invalid-pr-opener-allowlist")
+    elif not isinstance(user, dict) or user.get("type") != "Bot" or user.get("login") not in allowed:
+        hits.append("pull_request.user:1: unapproved-pr-opener")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("revisions", nargs="*", metavar="base head")
@@ -234,9 +252,14 @@ def main(argv=None):
             scan_text(name, handle.read(), hits)
     if args.event:
         with open(args.event, encoding="utf-8") as handle:
-            pull_request = json.load(handle).get("pull_request") or {}
-        for field in ("title", "body"):
-            scan_text("pull_request." + field, pull_request.get(field) or "", hits)
+            event = json.load(handle)
+        pull_request = event.get("pull_request")
+        event_name = os.environ.get("GITHUB_EVENT_NAME")
+        if event_name == "pull_request" or (not event_name and "pull_request" in event):
+            scan_pr_opener(pull_request.get("user") if isinstance(pull_request, dict) else None, hits)
+        if isinstance(pull_request, dict):
+            for field in ("title", "body"):
+                scan_text("pull_request." + field, pull_request.get(field) or "", hits)
     for hit in hits:
         print(hit)
     print(f"privacy check: {len(hits)} hit(s)", file=sys.stderr)

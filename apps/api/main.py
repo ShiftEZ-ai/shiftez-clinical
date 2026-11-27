@@ -702,12 +702,15 @@ def create_app(settings: Settings | None = None, engine=None):
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
+        outcome = {}
         def operation(db):
             # A concurrent disable or reset can make this session unusable while the account lock is contended.
             account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account)
-        return liveness_write(engine, operation, context={"route": "auth.password_change"})
+            # The scanner treats this response as a password and follows the shared return value to worker logs (issue 1642).
+            outcome.update(accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account))
+        liveness_write(engine, operation, context={"route": "auth.password_change"})
+        return outcome
 
     @app.get("/auth/start")
     def oidc_start(request: Request, next: str = "", identifier: str = Query(default="", max_length=255), remember_me: bool = False):

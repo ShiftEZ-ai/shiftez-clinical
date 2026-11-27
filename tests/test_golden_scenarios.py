@@ -1,7 +1,10 @@
 """The reviewed golden scenarios; fixtures share executed coverage receipts."""
+from contextlib import contextmanager
+
 import pytest
 
 from scripts.golden_scenarios import load_pack
+from tests.conftest import sqlite_harness
 from .test_autoschedule_budget_api import budget_h  # noqa: F401
 
 
@@ -12,32 +15,42 @@ def test_golden_scenario(scenario_id, golden_case):
 
 
 @pytest.fixture
-def golden_bulk_h(budget_h):
+def golden_harness(tmp_path_factory, database_template):
     from dataclasses import replace
     from apps.api.main import create_app
 
-    h = budget_h
-    # Bulk replays share a command window; rate-limit behavior has its own tests.
-    h.app.state.engine.dispose()
-    h.settings = replace(h.settings, rate_commands_per_minute=10_000)
-    h.app = create_app(h.settings)
-    return h
+    @contextmanager
+    def isolated():
+        # Department-wide rules must not check drafts seeded by another scenario.
+        fixture = sqlite_harness(tmp_path_factory.mktemp('golden-compiler'), database_template)
+        h = next(fixture)
+        try:
+            h.app.state.engine.dispose()
+            h.settings = replace(h.settings, generation_engine='cp_sat', rate_commands_per_minute=10_000)
+            h.app = create_app(h.settings)
+            yield h
+        finally:
+            next(fixture, None)
+
+    return isolated
 
 
-def test_golden_compiler_is_idempotent(golden_bulk_h):
+def test_golden_compiler_is_idempotent(golden_harness):
     from scripts.golden_scenarios import compile_scenario, command_key
-
-    h = golden_bulk_h
-    specs = load_pack()
     from apps.worker.main import process_one
-    def compile(spec):
+
+    def compile(h, spec):
         return compile_scenario(h.command, spec, read=h.get, committed=h.committed,
             work=lambda: process_one(h.app.state.engine, solver_workers=1))
-    first = [compile(spec) for spec in specs]
-    before = [h.snapshot(row['workspace']) for row in first]
-    second = [compile(spec) for spec in specs]
-    assert first == second
-    assert [h.snapshot(row['workspace']) for row in second] == before
+
+    specs = load_pack()
+    for spec in specs:
+        with golden_harness() as h:
+            first = compile(h, spec)
+            before = h.snapshot(first['workspace'])
+            second = compile(h, spec)
+            assert first == second
+            assert h.snapshot(second['workspace']) == before
     spec = specs[0]
     assert command_key(spec, 'rest') == command_key(spec, 'rest')
     assert command_key(spec, 'rest') != command_key({**spec, 'revision': spec['revision'] + 1}, 'rest')
@@ -66,33 +79,34 @@ def test_golden_replayed_activation_still_rejects_changed_content(budget_h):
                          work=lambda: pytest.fail('Replayed activation created another check'))
 
 
-def test_golden_configuration_reaches_api_generation_snapshots(golden_bulk_h):
+def test_golden_configuration_reaches_api_generation_snapshots(golden_harness):
     import copy
     from scripts.golden_scenarios import compile_scenario
     from tests.test_staff_wishes import department_settings
 
-    h = golden_bulk_h
     from apps.worker.main import process_one
+
     for spec in load_pack():
-        compiled = compile_scenario(h.command, spec, read=h.get, committed=h.committed,
-            work=lambda: process_one(h.app.state.engine, solver_workers=1))
-        weights = [0, 100] if spec['id'] == 'A-PREF-01' else [None]
-        for weight in weights:
-            options = copy.deepcopy(compiled['generation_options'])
-            if weight is not None:
-                options['scoring']['weights']['preferences'] = weight
-            me = h.get('admin', '/api/me')
-            h.command('admin', 'department.settings', {
-                **department_settings(h), 'generation_defaults': options},
-                me['department']['id'], me['organisation']['revision'])
-            workspace = h.refresh_draft_baseline(h.detail(compiled['workspace'])['workspace'])
-            reply = h.command('coordinator', 'job.create', {
-                'workspace_id': workspace['id'], 'kind': 'generation', 'generation_options': options},
-                workspace['id'], workspace['revision'])
-            assert reply['job']['effective_options'] == options
-            assert h.snapshot(workspace)['generation_options'] == options
-            h.command('operator', 'job.cancel', {'reason': 'Synthetic configuration proof; do not solve'},
-                      reply['job']['id'], reply['job']['revision'])
+        with golden_harness() as h:
+            compiled = compile_scenario(h.command, spec, read=h.get, committed=h.committed,
+                work=lambda: process_one(h.app.state.engine, solver_workers=1))
+            weights = [0, 100] if spec['id'] == 'A-PREF-01' else [None]
+            for weight in weights:
+                options = copy.deepcopy(compiled['generation_options'])
+                if weight is not None:
+                    options['scoring']['weights']['preferences'] = weight
+                me = h.get('admin', '/api/me')
+                h.command('admin', 'department.settings', {
+                    **department_settings(h), 'generation_defaults': options},
+                    me['department']['id'], me['organisation']['revision'])
+                workspace = h.refresh_draft_baseline(h.detail(compiled['workspace'])['workspace'])
+                reply = h.command('coordinator', 'job.create', {
+                    'workspace_id': workspace['id'], 'kind': 'generation', 'generation_options': options},
+                    workspace['id'], workspace['revision'])
+                assert reply['job']['effective_options'] == options
+                assert h.snapshot(workspace)['generation_options'] == options
+                h.command('operator', 'job.cancel', {'reason': 'Synthetic configuration proof; do not solve'},
+                          reply['job']['id'], reply['job']['revision'])
 
 
 @pytest.fixture
