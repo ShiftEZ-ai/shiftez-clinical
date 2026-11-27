@@ -1903,7 +1903,9 @@ html:has(#main.page-planner){overflow-anchor:none}
 .page-planner .wk-content:has(.table-scroll){align-self:stretch;min-height:0;display:flex;flex-direction:column}
 .page-planner .wk-content :is(.panel:has(.table-scroll),.cov,.sd-day,.dt,.dt-body){display:flex;flex-direction:column;min-height:0}
 .page-planner .wk-layout{flex:1;min-height:0;align-items:flex-start}
-.page-planner .wk-scroller{overflow:auto;max-height:100%}
+/* The grid's scroll across a redraw is put back by app.ts plannerScroll, which stops once anything else moves it. Scroll
+   anchoring (per scroller: the html rule above does not reach it) moved it as the fitting grew rows above: no anchoring. */
+.page-planner .wk-scroller{overflow:auto;max-height:100%;overflow-anchor:none}
 /* The Schedule grid (Timeline, Counts, any axes) and People fill the view under the toolbar like the Week grid; few rows keep their height. */
 .page-planner :is(.wk,.wk-content):has(>:is(.tl,.ppl)){display:flex;flex-direction:column}
 .page-planner :is(.wk,.wk-content)>:is(.tl,.ppl){flex:0 1 auto;min-height:0;max-height:none}
