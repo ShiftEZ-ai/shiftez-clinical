@@ -141,9 +141,9 @@ def run_browser_install(tmp_path, *, image="matching", with_debs=True, dpkg_stat
     tar() {{ :; }}
     sudo() {{
       case "$1 $2" in
-        'dpkg -i') test "$3" = "$RUNNER_TEMP/public-ci-apt/browser.deb" || return 2
-                   echo 'dpkg -i'; return {dpkg_status};;
-        'dpkg --configure') test "$3" = -a && echo 'dpkg --configure -a';;
+        'apt-get install') test "$3 $4 $5 $6" = "-y --no-download --no-install-recommends $RUNNER_TEMP/public-ci-apt/browser.deb" \
+                             && test "$#" = 6 || return 2
+                           echo 'apt-get install'; return {dpkg_status};;
         'tee /etc/apt/apt.conf.d/80-ci-retries') cat;;
         *) return 2;;
       esac
@@ -155,7 +155,7 @@ def run_browser_install(tmp_path, *, image="matching", with_debs=True, dpkg_stat
 
 def test_browser_uses_offline_packages_for_a_matching_image(tmp_path):
     assert run_browser_install(tmp_path) == [
-        "dpkg -i", "dpkg --configure -a", "::notice::browser system packages: offline (1 debs, image matching)",
+        "apt-get install", "::notice::browser system packages: offline (1 debs, image matching)",
     ]
 
 
@@ -171,10 +171,19 @@ def test_browser_falls_back_when_no_packages_were_bundled(tmp_path):
     ]
 
 
-def test_browser_falls_back_when_dpkg_fails(tmp_path):
+def test_browser_falls_back_when_the_offline_install_fails(tmp_path):
     assert run_browser_install(tmp_path, dpkg_status=1) == [
-        "dpkg -i", "::warning::browser system packages: fallback (dpkg failed)", "online install",
+        "apt-get install", "::warning::browser system packages: fallback (offline install failed)", "online install",
     ]
+
+
+def test_the_offline_set_is_planned_by_apt_not_raw_dpkg():
+    # Issue 1842: raw dpkg unpacked a bundled runtime package upgrade after refusing its paired data package, and the
+    # half-configured pair broke the online fallback too. APT orders the pair or refuses the set untouched.
+    script = install_script()
+    offline = script[:script.index("for attempt in 1 2 3; do")]
+    assert "dpkg -i" not in offline and "--auto-deconfigure" not in offline
+    assert 'sudo apt-get install -y --no-download --no-install-recommends "${debs[@]}"' in offline
 
 
 @pytest.mark.parametrize("behaviour, repairs, code", [
