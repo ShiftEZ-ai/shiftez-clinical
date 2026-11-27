@@ -159,11 +159,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -302,11 +303,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -3010,7 +3012,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -3610,7 +3613,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -11983,11 +11987,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Approver Roles",
             "type": "array"
           }
@@ -12720,6 +12725,19 @@
         "pattern": "^[a-f0-9]{64}$",
         "title": "Source Fingerprint",
         "type": "string"
+      },
+      "assignment_stamp": {
+        "anyOf": [
+          {
+            "pattern": "^assign:[a-f0-9]{64}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Assignment Stamp"
       },
       "evaluated_at": {
         "format": "date-time",
@@ -20856,7 +20874,7 @@
       "expected_fingerprint": {
         "anyOf": [
           {
-            "pattern": "^[a-f0-9]{64}$",
+            "pattern": "^(?:assign:)?[a-f0-9]{64}$",
             "type": "string"
           },
           {
@@ -21068,7 +21086,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -22226,6 +22245,35 @@
     "title": "DraftEditDelta",
     "type": "object"
   },
+  "WorkspaceUndoInput": {
+    "additionalProperties": false,
+    "properties": {
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      },
+      "undo_of": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Undo Of"
+      }
+    },
+    "required": [
+      "reason"
+    ],
+    "title": "WorkspaceUndoInput",
+    "type": "object"
+  },
   "MembershipInput": {
     "additionalProperties": false,
     "properties": {
@@ -22839,6 +22887,14 @@
         },
         "title": "Note Person Ids",
         "type": "array"
+      },
+      "reference_leave_conflicts": {
+        "items": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "title": "Reference Leave Conflicts",
+        "type": "array"
       }
     },
     "required": [
@@ -22856,6 +22912,222 @@
       "note_person_ids"
     ],
     "title": "RotationBoard",
+    "type": "object"
+  },
+  "ReferenceRotationFile": {
+    "$defs": {
+      "RotationInput": {
+        "additionalProperties": false,
+        "description": "A mentor writes a preferred attachment for the rotation dates and clinic; the retired mentor column is unused.",
+        "properties": {
+          "rotation_type_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "bulk": true,
+            "default": null,
+            "title": "Rotation Type Id"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "cohort_id": {
+            "bulk": true,
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Cohort Id",
+            "type": "string"
+          },
+          "service_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "bulk": true,
+            "default": null,
+            "title": "Service Id"
+          },
+          "mentor_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "bulk": true,
+            "default": null,
+            "title": "Mentor Id"
+          },
+          "department_available": {
+            "bulk": true,
+            "default": true,
+            "title": "Department Available",
+            "type": "boolean"
+          },
+          "starts_on": {
+            "bulk": true,
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "bulk": true,
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "cohort_id",
+          "starts_on",
+          "ends_on"
+        ],
+        "title": "RotationInput",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "rotations": {
+        "items": {
+          "$ref": "#/$defs/RotationInput"
+        },
+        "maxItems": 1000,
+        "minItems": 1,
+        "title": "Rotations",
+        "type": "array"
+      }
+    },
+    "required": [
+      "rotations"
+    ],
+    "title": "ReferenceRotationFile",
+    "type": "object"
+  },
+  "ReferenceRotationImport": {
+    "additionalProperties": false,
+    "properties": {
+      "file_text": {
+        "maxLength": 500000,
+        "minLength": 1,
+        "title": "File Text",
+        "type": "string"
+      },
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      },
+      "expected_fingerprint": {
+        "anyOf": [
+          {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Expected Fingerprint"
+      }
+    },
+    "required": [
+      "file_text",
+      "reason"
+    ],
+    "title": "ReferenceRotationImport",
+    "type": "object"
+  },
+  "ReferenceRotationConflict": {
+    "additionalProperties": false,
+    "properties": {
+      "row": {
+        "title": "Row",
+        "type": "integer"
+      },
+      "messages": {
+        "items": {
+          "type": "string"
+        },
+        "title": "Messages",
+        "type": "array"
+      }
+    },
+    "required": [
+      "row",
+      "messages"
+    ],
+    "title": "ReferenceRotationConflict",
+    "type": "object"
+  },
+  "ReferenceRotationReview": {
+    "$defs": {
+      "ReferenceRotationConflict": {
+        "additionalProperties": false,
+        "properties": {
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          },
+          "messages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Messages",
+            "type": "array"
+          }
+        },
+        "required": [
+          "row",
+          "messages"
+        ],
+        "title": "ReferenceRotationConflict",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "count": {
+        "title": "Count",
+        "type": "integer"
+      },
+      "conflicts": {
+        "items": {
+          "$ref": "#/$defs/ReferenceRotationConflict"
+        },
+        "title": "Conflicts",
+        "type": "array"
+      },
+      "expected_fingerprint": {
+        "pattern": "^[a-f0-9]{64}$",
+        "title": "Expected Fingerprint",
+        "type": "string"
+      }
+    },
+    "required": [
+      "count",
+      "conflicts",
+      "expected_fingerprint"
+    ],
+    "title": "ReferenceRotationReview",
     "type": "object"
   },
   "RotationBlock": {
@@ -26483,7 +26755,8 @@
           "admin",
           "auditor",
           "programme_lead",
-          "operator"
+          "operator",
+          "installation_admin"
         ],
         "title": "Role",
         "type": "string"
@@ -27348,8 +27621,8 @@
         "type": "string"
       },
       "reason": {
+        "default": "",
         "maxLength": 500,
-        "minLength": 3,
         "title": "Reason",
         "type": "string"
       }
@@ -27357,8 +27630,7 @@
     "required": [
       "publication_id",
       "assignment_id",
-      "expires_at",
-      "reason"
+      "expires_at"
     ],
     "title": "SwapOfferInput",
     "type": "object"
@@ -27367,8 +27639,8 @@
     "additionalProperties": false,
     "properties": {
       "reason": {
+        "default": "",
         "maxLength": 500,
-        "minLength": 3,
         "title": "Reason",
         "type": "string"
       },
@@ -27379,7 +27651,6 @@
       }
     },
     "required": [
-      "reason",
       "assignment_id"
     ],
     "title": "SwapCounterofferInput",
@@ -28105,11 +28376,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -28949,7 +29221,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -29931,11 +30204,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Roles",
         "type": "array"
       },
@@ -36389,7 +36663,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
@@ -37079,6 +37354,19 @@
             ],
             "title": "Source",
             "type": "string"
+          },
+          "balance_confirmation": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Balance Confirmation"
           }
         },
         "required": [
@@ -37162,6 +37450,450 @@
       "reason"
     ],
     "title": "RequestUndo",
+    "type": "object"
+  },
+  "RequestEditUndo": {
+    "additionalProperties": false,
+    "properties": {
+      "receipt_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Receipt Id",
+        "type": "string"
+      }
+    },
+    "required": [
+      "receipt_id"
+    ],
+    "title": "RequestEditUndo",
+    "type": "object"
+  },
+  "LeaveAllowanceLine": {
+    "additionalProperties": false,
+    "properties": {
+      "leave_type_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Leave Type Id",
+        "type": "string"
+      },
+      "days": {
+        "maximum": 366,
+        "minimum": 0,
+        "title": "Days",
+        "type": "integer"
+      },
+      "person_id": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Person Id"
+      },
+      "starts_on": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Starts On"
+      }
+    },
+    "required": [
+      "leave_type_id",
+      "days"
+    ],
+    "title": "LeaveAllowanceLine",
+    "type": "object"
+  },
+  "LeaveBalanceConfiguration": {
+    "$defs": {
+      "LeaveAllowanceLine": {
+        "additionalProperties": false,
+        "properties": {
+          "leave_type_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Leave Type Id",
+            "type": "string"
+          },
+          "days": {
+            "maximum": 366,
+            "minimum": 0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Person Id"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          }
+        },
+        "required": [
+          "leave_type_id",
+          "days"
+        ],
+        "title": "LeaveAllowanceLine",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "year_start_month": {
+        "default": 1,
+        "maximum": 12,
+        "minimum": 1,
+        "title": "Year Start Month",
+        "type": "integer"
+      },
+      "year_start_day": {
+        "default": 1,
+        "maximum": 31,
+        "minimum": 1,
+        "title": "Year Start Day",
+        "type": "integer"
+      },
+      "carry_over_days": {
+        "default": 0,
+        "maximum": 366,
+        "minimum": 0,
+        "title": "Carry Over Days",
+        "type": "integer"
+      },
+      "allowances": {
+        "items": {
+          "$ref": "#/$defs/LeaveAllowanceLine"
+        },
+        "maxItems": 2000,
+        "title": "Allowances",
+        "type": "array"
+      }
+    },
+    "title": "LeaveBalanceConfiguration",
+    "type": "object"
+  },
+  "LeaveBalanceSettingsChange": {
+    "$defs": {
+      "LeaveAllowanceLine": {
+        "additionalProperties": false,
+        "properties": {
+          "leave_type_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Leave Type Id",
+            "type": "string"
+          },
+          "days": {
+            "maximum": 366,
+            "minimum": 0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Person Id"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          }
+        },
+        "required": [
+          "leave_type_id",
+          "days"
+        ],
+        "title": "LeaveAllowanceLine",
+        "type": "object"
+      },
+      "LeaveBalanceConfiguration": {
+        "additionalProperties": false,
+        "properties": {
+          "year_start_month": {
+            "default": 1,
+            "maximum": 12,
+            "minimum": 1,
+            "title": "Year Start Month",
+            "type": "integer"
+          },
+          "year_start_day": {
+            "default": 1,
+            "maximum": 31,
+            "minimum": 1,
+            "title": "Year Start Day",
+            "type": "integer"
+          },
+          "carry_over_days": {
+            "default": 0,
+            "maximum": 366,
+            "minimum": 0,
+            "title": "Carry Over Days",
+            "type": "integer"
+          },
+          "allowances": {
+            "items": {
+              "$ref": "#/$defs/LeaveAllowanceLine"
+            },
+            "maxItems": 2000,
+            "title": "Allowances",
+            "type": "array"
+          }
+        },
+        "title": "LeaveBalanceConfiguration",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      },
+      "configuration": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/LeaveBalanceConfiguration"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "reason",
+      "configuration"
+    ],
+    "title": "LeaveBalanceSettingsChange",
+    "type": "object"
+  },
+  "LeaveBalanceSettings": {
+    "$defs": {
+      "LeaveAllowanceLine": {
+        "additionalProperties": false,
+        "properties": {
+          "leave_type_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Leave Type Id",
+            "type": "string"
+          },
+          "days": {
+            "maximum": 366,
+            "minimum": 0,
+            "title": "Days",
+            "type": "integer"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Person Id"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          }
+        },
+        "required": [
+          "leave_type_id",
+          "days"
+        ],
+        "title": "LeaveAllowanceLine",
+        "type": "object"
+      },
+      "LeaveBalanceConfiguration": {
+        "additionalProperties": false,
+        "properties": {
+          "year_start_month": {
+            "default": 1,
+            "maximum": 12,
+            "minimum": 1,
+            "title": "Year Start Month",
+            "type": "integer"
+          },
+          "year_start_day": {
+            "default": 1,
+            "maximum": 31,
+            "minimum": 1,
+            "title": "Year Start Day",
+            "type": "integer"
+          },
+          "carry_over_days": {
+            "default": 0,
+            "maximum": 366,
+            "minimum": 0,
+            "title": "Carry Over Days",
+            "type": "integer"
+          },
+          "allowances": {
+            "items": {
+              "$ref": "#/$defs/LeaveAllowanceLine"
+            },
+            "maxItems": 2000,
+            "title": "Allowances",
+            "type": "array"
+          }
+        },
+        "title": "LeaveBalanceConfiguration",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "revision": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Revision"
+      },
+      "configuration": {
+        "$ref": "#/$defs/LeaveBalanceConfiguration"
+      }
+    },
+    "required": [
+      "configuration"
+    ],
+    "title": "LeaveBalanceSettings",
+    "type": "object"
+  },
+  "LeaveBalance": {
+    "additionalProperties": false,
+    "properties": {
+      "leave_type_id": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Leave Type Id"
+      },
+      "leave_type_name": {
+        "title": "Leave Type Name",
+        "type": "string"
+      },
+      "starts_on": {
+        "format": "date",
+        "title": "Starts On",
+        "type": "string"
+      },
+      "ends_on": {
+        "format": "date",
+        "title": "Ends On",
+        "type": "string"
+      },
+      "allowance_days": {
+        "title": "Allowance Days",
+        "type": "integer"
+      },
+      "carried_days": {
+        "title": "Carried Days",
+        "type": "integer"
+      },
+      "used_days": {
+        "title": "Used Days",
+        "type": "integer"
+      },
+      "remaining_days": {
+        "title": "Remaining Days",
+        "type": "integer"
+      },
+      "projected_days": {
+        "anyOf": [
+          {
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Projected Days"
+      }
+    },
+    "required": [
+      "leave_type_id",
+      "leave_type_name",
+      "starts_on",
+      "ends_on",
+      "allowance_days",
+      "carried_days",
+      "used_days",
+      "remaining_days"
+    ],
+    "title": "LeaveBalance",
     "type": "object"
   },
   "OvertimeAvailabilityInput": {
@@ -37516,11 +38248,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -37802,11 +38535,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -38153,11 +38887,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Role Names",
             "type": "array"
           },
@@ -40601,11 +41336,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -41203,11 +41939,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -42034,11 +42771,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -45784,7 +46522,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -46739,7 +47478,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -47151,7 +47891,7 @@
           "expected_fingerprint": {
             "anyOf": [
               {
-                "pattern": "^[a-f0-9]{64}$",
+                "pattern": "^(?:assign:)?[a-f0-9]{64}$",
                 "type": "string"
               },
               {
@@ -49551,7 +50291,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -54011,7 +54752,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -54996,7 +55738,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -65534,6 +66277,152 @@
     "title": "FixListDelta",
     "type": "object"
   },
+  "AccountOnboardingRow": {
+    "additionalProperties": false,
+    "properties": {
+      "person_id": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        "title": "Person Id",
+        "type": "string"
+      },
+      "username": {
+        "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$",
+        "title": "Username",
+        "type": "string"
+      },
+      "email": {
+        "maxLength": 254,
+        "pattern": "^[^@\\s\\\"]+@[^@\\s\\\"]+\\.[^@\\s\\\"]+$",
+        "title": "Email",
+        "type": "string"
+      }
+    },
+    "required": [
+      "person_id",
+      "username",
+      "email"
+    ],
+    "title": "AccountOnboardingRow",
+    "type": "object"
+  },
+  "AccountOnboarding": {
+    "$defs": {
+      "AccountOnboardingRow": {
+        "additionalProperties": false,
+        "properties": {
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "username": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$",
+            "title": "Username",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "pattern": "^[^@\\s\\\"]+@[^@\\s\\\"]+\\.[^@\\s\\\"]+$",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "username",
+          "email"
+        ],
+        "title": "AccountOnboardingRow",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "rows": {
+        "items": {
+          "$ref": "#/$defs/AccountOnboardingRow"
+        },
+        "maxItems": 200,
+        "minItems": 1,
+        "title": "Rows",
+        "type": "array"
+      },
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      }
+    },
+    "required": [
+      "rows",
+      "reason"
+    ],
+    "title": "AccountOnboarding",
+    "type": "object"
+  },
+  "AccountOnboardingApply": {
+    "$defs": {
+      "AccountOnboardingRow": {
+        "additionalProperties": false,
+        "properties": {
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "username": {
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,62}$",
+            "title": "Username",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "pattern": "^[^@\\s\\\"]+@[^@\\s\\\"]+\\.[^@\\s\\\"]+$",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_id",
+          "username",
+          "email"
+        ],
+        "title": "AccountOnboardingRow",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "rows": {
+        "items": {
+          "$ref": "#/$defs/AccountOnboardingRow"
+        },
+        "maxItems": 200,
+        "minItems": 1,
+        "title": "Rows",
+        "type": "array"
+      },
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      },
+      "expected_fingerprint": {
+        "pattern": "^[a-f0-9]{64}$",
+        "title": "Expected Fingerprint",
+        "type": "string"
+      }
+    },
+    "required": [
+      "rows",
+      "reason",
+      "expected_fingerprint"
+    ],
+    "title": "AccountOnboardingApply",
+    "type": "object"
+  },
   "ObservedRuleEffect": {
     "$defs": {
       "FindingRecitation": {
@@ -66193,7 +67082,7 @@
           "expected_fingerprint": {
             "anyOf": [
               {
-                "pattern": "^[a-f0-9]{64}$",
+                "pattern": "^(?:assign:)?[a-f0-9]{64}$",
                 "type": "string"
               },
               {
@@ -80118,7 +81007,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
@@ -81799,7 +82689,7 @@
         "additionalProperties": {
           "$ref": "#/$defs/PwaEventChannels"
         },
-        "maxProperties": 14,
+        "maxProperties": 15,
         "title": "Event Defaults",
         "type": "object"
       },
@@ -81900,7 +82790,7 @@
         "additionalProperties": {
           "$ref": "#/$defs/PwaEventChannels"
         },
-        "maxProperties": 14,
+        "maxProperties": 15,
         "title": "Event Overrides",
         "type": "object"
       },

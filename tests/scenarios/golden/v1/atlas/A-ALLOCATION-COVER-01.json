@@ -1,0 +1,142 @@
+{
+  "id": "A-ALLOCATION-COVER-01",
+  "revision": 3,
+  "title": "Allocation balance stays within requested cover",
+  "intent": "Balancing two service modes does not add staff to filled duties.",
+  "pressure": "Extra staffing on the ordinary duties improves mode balance. The supervised duty also has a quota that cannot count the ordinary duties.",
+  "covers": {
+    "kind.allocation_preference": ["staffing", "pressure", "seed_robustness"],
+    "kind.allocation_preference.balance_by": ["staffing", "pressure", "staffing_with_supervision"]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "categories", "value": {"name": "Allocation cover rank", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "physical", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "services", "value": {"name": "Physical service", "mode": "physical", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "virtual", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "services", "value": {"name": "Virtual service", "mode": "virtual", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "location_kind", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "location_types", "value": {"name": "Allocation cover location type", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "location", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "locations", "value": {"name": "Allocation cover room", "starts_on": "2020-01-01",
+        "location_type_id": "$location_kind", "capacity": 4},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "people", "value": {"display_name": "Allocation cover participant A", "tags": ["golden"]},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "people", "value": {"display_name": "Allocation cover participant B", "tags": ["golden"]},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "member0", "role": "admin", "kind": "membership.create", "payload": {
+      "person_id": "$p0", "category_id": "$rank", "starts_on": "2020-01-01"
+    }},
+    {"key": "member1", "role": "admin", "kind": "membership.create", "payload": {
+      "person_id": "$p1", "category_id": "$rank", "starts_on": "2020-01-01"
+    }},
+    {"key": "physical0", "role": "admin", "kind": "eligibility.create", "payload": {
+      "person_id": "$p0", "service_id": "$physical", "starts_on": "2020-01-01"
+    }},
+    {"key": "physical1", "role": "admin", "kind": "eligibility.create", "payload": {
+      "person_id": "$p1", "service_id": "$physical", "starts_on": "2020-01-01"
+    }},
+    {"key": "virtual0", "role": "admin", "kind": "eligibility.create", "payload": {
+      "person_id": "$p0", "service_id": "$virtual", "starts_on": "2020-01-01"
+    }},
+    {"key": "virtual1", "role": "admin", "kind": "eligibility.create", "payload": {
+      "person_id": "$p1", "service_id": "$virtual", "starts_on": "2020-01-01"
+    }},
+    {"key": "type", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "assignment_types", "value": {"name": "Allocation cover duty", "starts_on": "2020-01-01",
+        "definition": {"requirements": [{"minimum": 1}]}},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "trainee_rank", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "categories", "value": {"name": "Allocation trainee rank", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "trainee_member", "role": "admin", "kind": "membership.create", "payload": {
+      "person_id": "$p0", "category_id": "$trainee_rank", "starts_on": "2020-01-01"
+    }},
+    {"key": "skill", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "capabilities", "value": {"name": "Allocation supervision skill", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "supervision_grant", "role": "credentialer", "kind": "grant.create", "payload": {
+      "person_id": "$p1", "capability_id": "$skill", "starts_on": "2020-01-01", "evidence": "Synthetic qualification"
+    }},
+    {"key": "supervised_type", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "assignment_types", "value": {"name": "Allocation supervised duty", "starts_on": "2020-01-01",
+        "definition": {"requirements": [{"minimum": 1}], "supervision": {
+          "trainee_category_ids": ["$trainee_rank"], "capability_id": "$skill", "trainees_per_supervisor": 1,
+          "require_pairing": true}}},
+      "reason": "Synthetic scenario setup"
+    }},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create", "payload": {
+      "name": "Allocation cover rota", "starts_on": "2027-02-07", "ends_on": "2027-02-09"
+    }},
+    {"key": "s0", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$type", "location_id": "$location",
+      "service_ids": ["$physical"], "start": "2027-02-07T08:00:00+03:00", "end": "2027-02-07T12:00:00+03:00",
+      "participants": [{"person_id": "$p0", "start": "2027-02-07T08:00:00+03:00", "end": "2027-02-07T12:00:00+03:00"}]
+    }},
+    {"key": "s1", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$type", "location_id": "$location",
+      "service_ids": ["$virtual"], "start": "2027-02-08T08:00:00+03:00", "end": "2027-02-08T12:00:00+03:00",
+      "participants": [{"person_id": "$p1", "start": "2027-02-08T08:00:00+03:00", "end": "2027-02-08T12:00:00+03:00"}]
+    }},
+    {"key": "supervised", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$supervised_type", "location_id": "$location",
+      "service_ids": ["$physical"], "start": "2027-02-07T13:00:00+03:00", "end": "2027-02-07T17:00:00+03:00",
+      "participants": [
+        {"person_id": "$p0", "start": "2027-02-07T13:00:00+03:00", "end": "2027-02-07T17:00:00+03:00",
+          "participation": "trainee", "fixed": true, "supervisor_person_id": "$p1"},
+        {"person_id": "$p1", "start": "2027-02-07T13:00:00+03:00", "end": "2027-02-07T17:00:00+03:00",
+          "participation": "supervisor"}
+      ]
+    }},
+    {"key": "balance", "role": "coordinator", "kind": "policy.create", "payload": {
+      "name": "Service mode balance", "owner": "Scenario reviewer", "source": "Synthetic scenario",
+      "starts_on": "2020-01-01", "definition": {
+        "rule": {"kind": "allocation_preference", "priority": 0, "balance_by": "service_mode",
+          "balance_window": "rota", "balance_target_share": 0.5},
+        "scope": {}, "severity": "advisory", "workspace_id": "$workspace"
+      }
+    }},
+    {"key": "activate_balance", "role": "approver", "kind": "policy.activate", "target": "$balance",
+      "revision": "$balance.revision", "payload": {"reason": "Synthetic scenario review"}},
+    {"key": "quota", "role": "coordinator", "kind": "policy.create", "payload": {
+      "name": "Supervised duty quota", "owner": "Scenario coordinator", "source": "Synthetic scenario",
+      "starts_on": "2020-01-01", "definition": {
+        "rule": {"kind": "block_quota", "metric": "duties", "comparison": "minimum", "amount": 1,
+          "starts_on": "2027-02-07", "ends_on": "2027-02-09", "assignment_type_ids": ["$supervised_type"]},
+        "scope": {"person_id": "$p1"}, "severity": "mandatory", "workspace_id": "$workspace"
+      }
+    }},
+    {"key": "activate_quota", "role": "approver", "kind": "policy.activate", "target": "$quota",
+      "revision": "$quota.revision", "payload": {"reason": "Synthetic scenario review"}}
+  ],
+  "inputs": {
+    "generation_options": {
+      "mode": "fill_gaps", "shortlist_width": 0,
+      "scoring": {"weights": {"coverage": 0, "rules": 0, "fairness": 0, "preferences": 100, "stability": 0}}
+    }
+  },
+  "expect": {
+    "binding_rules": ["balance"],
+    "pressure": {"overfilled_preference_score_is_higher": true},
+    "staffing": {"s0": ["p0"], "s1": ["p1"]},
+    "staffing_with_supervision": {"duty": "supervised", "trainee": "p0", "supervisor": "p1"},
+    "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
+  }
+}

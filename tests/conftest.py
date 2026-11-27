@@ -25,6 +25,7 @@ from apps.api.settings import Settings
 from apps.api.services.planning import MANUAL_PLACEMENT_BLOCKERS
 from apps.api.db import make_engine, transaction
 from apps.api import models as m
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE
 
 from argon2 import PasswordHasher
 import scripts.manage
@@ -87,7 +88,8 @@ def database_template(tmp_path_factory):
 
 class Harness:
     def __init__(self, url, seed):
-        self.settings = Settings(environment="test", database_url=url,
+        # Shared fixtures exercise the legacy job and rule-activation paths; CP-SAT fixtures opt in.
+        self.settings = Settings(environment="test", database_url=url, generation_engine="legacy",
                                  sqlite_synchronous=os.getenv("ROTA_SQLITE_SYNCHRONOUS") or ("OFF" if os.getenv("ROTA_ALLOW_DISPOSABLE_TEST_DB") == "yes" else "FULL"))
         self.app = create_app(self.settings)
         self.seed = copy.deepcopy(seed)
@@ -95,6 +97,10 @@ class Harness:
 
     def client(self, role):
         if role not in self.clients:
+            if role == INSTALLATION_ADMIN_ROLE and role not in self.seed['identities']:
+                # The role matrices need a pure holder. Historical and last-holder fixtures start without one.
+                from tests.governance_support import identity
+                identity(self, role, [role])
             client = TestClient(self.app, base_url=self.settings.public_origin)
             client.headers["origin"] = self.settings.public_origin
             response = client.post("/auth/login", json={"username": role, "password": TEST_PASSWORD})
@@ -307,6 +313,20 @@ def h(tmp_path, database_template, request):
         yield harness
 
 
+def grant_branding_editor(h):
+    from datetime import date
+
+    with transaction(h.app.state.engine, write=True) as db:
+        db.add(m.RoleBinding(identity_id=h.seed['identities']['admin'], department_id=h.seed['department_id'],
+                             role=INSTALLATION_ADMIN_ROLE, starts_on=date(2020, 1, 1)))
+    return h
+
+
+@pytest.fixture
+def branding_editor(h):
+    return grant_branding_editor(h)
+
+
 def pytest_generate_tests(metafunc):
     if 'score_check_enabled' in metafunc.fixturenames:
         metafunc.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
@@ -445,7 +465,7 @@ def scale_harness(tmp_path_factory, database_template, request):
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Each phase's report on the test item (rep_setup, rep_call): with PW_TRACE_DIR, browser traces are kept only on failure."""
+    """Keep each phase's report on the test item for failure diagnostics."""
     report = yield
     setattr(item, "rep_" + report.when, report)
     return report

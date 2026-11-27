@@ -46,21 +46,24 @@ export function runError(code:string,issues?:unknown,total?:number):{head:string
   return {head:RUN_ERROR_WORDS.unknown.head,body:RUN_ERROR_WORDS.unknown.body,action:'feedback',lines:[]};
 }
 // shortcut: the server's generic refusal sentences, matched at the end of its message (planning.py, swaps.py); a reworded
-// one is kept as a prefix, only longer. Patterns, not text: they are only ever removed, never shown (test_web_copy reads text).
-const GENERIC=[/This edit introduces a conflict that a manual reason cannot override$/,/The move introduces a mandatory problem; no assignment was moved$/,
-  /The complete swap failed validation; neither side was saved$/,/The complete duty transfer failed validation; no change was saved$/,/The edit introduces a blocking issue$/];
+// one is kept as a prefix, only longer. The patterns are only ever removed, never shown; each one's words say what was not done.
+const GENERIC:[RegExp,string][]=[[/This edit introduces a conflict that a manual reason cannot override$/,'Not saved'],
+  [/The move introduces a mandatory problem; no assignment was moved$/,'Not moved'],[/The complete swap failed validation; neither side was saved$/,'Not exchanged'],
+  [/The complete duty transfer failed validation; no change was saved$/,'Not transferred'],[/The edit introduces a blocking issue$/,'Not saved']];
 /** DL-048: a refusal says what is wrong and what to do. When its findings (details.findings) carry a code with both, each
  *  distinct one says them in place of the generic server sentence; a specific server prefix (the blocker it names) stays.
- *  With no such code the server's message is unchanged. */
+ *  With none, a generic sentence still names what is wrong: what was not done, then the first mandatory finding's words
+ *  (the checks under it say who and when). Otherwise the server's message is unchanged. */
 export function refusalText(message:string,details:unknown):string{
-  const found=(details as {findings?:{code?:unknown;message?:unknown}[]}|null|undefined)?.findings,list=Array.isArray(found)?found:[];
+  const found=(details as {findings?:{code?:unknown;message?:unknown;severity?:unknown}[]}|null|undefined)?.findings,list=Array.isArray(found)?found:[];
   // What is wrong: the client's words, else the finding's own message (a lead gap is also "more leads than allowed").
   const wrong=(c:string)=>FINDING_WORDS[c]||String(list.find(f=>String(f?.code)===c)?.message||'');
+  const said=message.trim().replace(/\.$/,''),generic=GENERIC.map(([g,lead])=>{const m=g.exec(said);return m?{index:m.index,lead}:null;}).find(Boolean);
+  const prefix=generic?said.slice(0,generic.index).trim():message.trim(),end=(s:string)=>/[.!?]$/.test(s)?s:s+'.';
   const codes=[...new Set(list.map(f=>String(f?.code)))].filter(c=>FINDING_NEXT[c]&&wrong(c));
-  if(!codes.length)return message;
-  const said=message.trim().replace(/\.$/,''),generic=GENERIC.map(g=>g.exec(said)).find(Boolean);
-  const prefix=generic?said.slice(0,generic.index).trim():message.trim();
-  return [prefix,...codes.flatMap(c=>[wrong(c),FINDING_NEXT[c]])].filter(Boolean).map(s=>/[.!?]$/.test(s)?s:s+'.').join(' ');
+  if(codes.length)return [prefix,...codes.flatMap(c=>[wrong(c),FINDING_NEXT[c]])].filter(Boolean).map(end).join(' ');
+  const first=generic&&list.filter(f=>f?.severity==='error').map(f=>wrong(String(f?.code))).find(Boolean);
+  return first&&generic?[prefix,generic.lead,first].filter(Boolean).map(end).join(' '):message;
 }
 
 /** How leave shows (Configuration › Department settings): the server only sends `leave` as far as the setting allows

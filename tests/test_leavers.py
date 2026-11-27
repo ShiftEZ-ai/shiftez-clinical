@@ -1,12 +1,13 @@
 """person.anonymise: a leaver's personal details are removed; rotas, publications and the audit log stay intact."""
 import json
+from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 from apps.api import models as m
 from apps.api.auth import CATALOGUE_READ_ROLES
 from apps.api.db import transaction
 from apps.api.services import leavers
-from packages.contracts.schemas import DEFAULT_CONTACT_TYPES, PersonInput, ROLE_NAMES
+from packages.contracts.schemas import DEFAULT_CONTACT_TYPES, INSTALLATION_ADMIN_ROLE, PersonInput, ROLE_NAMES
 from tests.governance_support import identity
 from tests.test_accounts import invite, users_file, with_users_file
 
@@ -64,9 +65,36 @@ def test_anonymised_leaver_is_absent_from_other_directory_and_people_reads(reque
     assert all(admin_row.get(field, "") == "" for field in leavers.ANONYMISED_FIELDS)
 
 
+def test_anonymising_a_leaver_preserves_the_last_installation_admin(h):
+    person_id = h.seed["people"][0]
+    grant = {"role": INSTALLATION_ADMIN_ROLE, "starts_on": "2020-01-01", "reason": "Synthetic installation grant"}
+    h.command("operator", "role.grant", {**grant, "identity_id": h.seed["identities"]["staff"]})
+    other = h.command("operator", "role.grant", {**grant, "identity_id": h.seed["identities"]["coordinator"]})["record"]
+    person = next(p for p in h.get("admin", "/api/catalogues")["people"] if p["id"] == person_id)
+    person = h.configure("people", {"display_name": person["display_name"], "active": False},
+                         person_id, person["revision"])["record"]
+    reason = {"reason": "Remove synthetic leaver details"}
+    refused = h.command("admin", "person.anonymise", reason, person_id, person["revision"], status=403)
+    assert refused["error"]["code"] == "FORBIDDEN"
+
+    h.command("operator", "role.revoke", {"reason": "End synthetic access"}, other["id"], other["revision"])
+    h.command("operator", "role.grant", {**grant, "identity_id": h.seed["identities"]["admin"],
+        "ends_on": (date.today() + timedelta(days=30)).isoformat()})
+    refused = h.command("admin", "person.anonymise", reason, person_id, person["revision"], status=409)
+    assert refused["error"]["code"] == "LAST_INSTALLATION_ADMIN"
+    assert h.get("staff", "/api/admin/branding")["can_edit"]
+
+
 def test_anonymise_a_leaver(h, tmp_path):
     acc = with_users_file(h, tmp_path)
     person_id = acc.get("staff", "/api/me")["person_id"]
+    waiting = {"person_id": person_id, "kind": "meeting", "start": "2026-10-07T08:00:00+03:00",
+               "end": "2026-10-07T12:00:00+03:00", "private_reason": "Synthetic previous request note"}
+    request = acc.command("staff", "request.create", waiting)["record"]
+    acc.command("staff", "request.edit", {**waiting, "private_reason": "Synthetic current request note"},
+                request["id"], request["revision"])
+    with transaction(acc.app.state.engine) as db:
+        assert db.get(m.RequestRecord, request["id"]).private_undo_note == waiting["private_reason"]
     acc.command("coordinator", "availability.record", {"person_id": person_id, "kind": "recorded_leave", "start": "2026-10-06T08:00:00+03:00",
                                                        "end": "2026-10-06T12:00:00+03:00", "private_reason": "Hospital appointment (test)"})
     feed = acc.command("staff", "calendar_feed.create", {})["path"]
@@ -99,6 +127,8 @@ def test_anonymise_a_leaver(h, tmp_path):
     assert TestClient(acc.app, base_url=acc.settings.public_origin).get(feed).status_code != 200
     with transaction(acc.app.state.engine) as db:
         assert db.scalar(select(m.Availability.private_reason).where(m.Availability.person_id == person_id)) == ""
+        request_row = db.get(m.RequestRecord, request["id"])
+        assert request_row.private_reason == "" and request_row.private_undo_note is None
         identity = db.get(m.Identity, account["record"]["id"])
         assert identity.disabled and identity.display_name == record["display_name"]
         assert db.scalar(select(m.Account.email).where(m.Account.identity_id == identity.id)) == ""

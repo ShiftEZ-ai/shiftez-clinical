@@ -8,7 +8,7 @@ from playwright.sync_api import expect
 from packages.contracts import schemas as s
 from apps.api import models as m
 from apps.api.db import transaction
-from .test_browser import (auto_setup, browser, live_server, new_context, sign_in, navigate, open_rota,
+from .test_browser import (auto_setup, browser, live_server, new_context, open_app, sign_in, navigate, open_rota,
                            open_scheduling, add_filter, close_popover,
                            toolbar, view_settings, save_dialog)
 from .test_browser_cp_sat import cp_server, _check_after_apply, _joins, _review
@@ -137,6 +137,7 @@ def test_rule_level_tag_reference_matches_the_real_rules_tree(browser, live_serv
 
 
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
+@pytest.mark.usefixtures('branding_editor')
 def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_server, h, width, scheme):
     original = h.get('staff', '/api/branding')
     context, page = sign_in(browser, live_server, 'admin', {'width': width, 'height': 900}, color_scheme=scheme)
@@ -144,7 +145,9 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         navigate(page, 'configuration/department')
         panel = page.locator('.brand-settings')
         panel.get_by_role('button', name='Edit', exact=True).click()
+        expect(panel.locator('.brand-preview-wordmark img')).to_have_count(0)
         dialog = page.get_by_role('dialog', name='Name and logo', exact=True)
+        expect(dialog.locator('.brand-preview-wordmark img')).to_have_count(0)
         dialog.get_by_label('App name', exact=True).fill('Cedar clinical rota')
         dialog.get_by_label('Short name', exact=True).fill('Cedar')
         dialog.get_by_label('Reason for the change', exact=True).fill('Fictional acceptance branding')
@@ -205,6 +208,26 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         page.reload()
         expect(panel).to_contain_text('Cedar clinical rota')
         assert h.get('staff', '/api/branding')['short_name'] == 'Cedar'
+        for device, name in [('iPhone', 'Cedar'), ('Android', 'Cedar'), ('Computer', 'Cedar clinical rota')]:
+            tile = panel.locator('.icon-previews figure').filter(has=page.get_by_text(device, exact=True))
+            expect(tile.locator('b')).to_have_text(name)
+        expect(panel.locator('.splash-mini')).to_have_text(['Cedar clinical rota'] * 2)
+        page.get_by_role('button', name=re.compile(r'^Account menu, ')).click()
+        expect(page.get_by_role('dialog', name='Account').get_by_role('menuitem', name='About Cedar', exact=True)).to_be_visible()
+        close_popover(page)
+        guest = new_context(browser, {'width': width, 'height': 900}, color_scheme=scheme)
+        try:
+            # Finish the anonymous branding read only after the sign-in form has cleared session state.
+            pending = []
+            guest.route('**/api/branding', lambda route: pending.append(route))
+            login = open_app(guest, live_server)
+            expect(login.get_by_role('heading', name='Sign in', exact=True)).to_be_visible()
+            assert len(pending) == 1
+            pending[0].continue_()
+            expect(login.locator('.login-brand [data-brand-name]')).to_have_text('Cedar clinical rota')
+            expect(login).to_have_title('Sign in · Cedar clinical rota')
+        finally:
+            guest.close()
         panel.get_by_role('button', name='History', exact=True).click()
         history = page.get_by_role('dialog', name='Name and logo history', exact=True)
         expect(history).to_contain_text('Fictional acceptance branding')
@@ -216,6 +239,57 @@ def test_branding_raster_save_history_undo_and_invalid_guard(browser, live_serve
         page.reload()
         assert {k: v for k, v in h.get('staff', '/api/branding').items() if k != 'revision'} == {
             k: v for k, v in original.items() if k != 'revision'}
+    finally:
+        context.close()
+
+
+@pytest.mark.usefixtures('branding_editor')
+def test_operator_can_edit_branding_when_department_admin_cannot(browser, live_server, h):
+    from .test_department_create import name_test_administrators, payload, token
+
+    name_test_administrators(h)
+    spec = payload(h, first_admin_identity_id=h.seed['identities']['coordinator'])
+    h.command('operator', 'department.create', spec, expected_fingerprint=token(h, spec))
+    role = 'installation_admin'
+    access = h.get('admin', '/api/access')
+    original = next(b for b in access['bindings'] if b['identity_id'] == h.seed['identities']['admin'] and b['role'] == role)
+    h.command('operator', 'role.grant', {'identity_id': h.seed['identities']['approver'],
+        'role': role, 'starts_on': '2020-01-01', 'reason': 'Give installation access for this scenario'})
+    h.command('operator', 'role.revoke', {'reason': 'Exercise a department-only administrator'}, original['id'], original['revision'])
+
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        navigate(page, 'configuration/department')
+        panel = page.locator('.brand-settings')
+        expect(panel.get_by_text('Ask an Installation admin to change the name and logo', exact=True)).to_be_visible()
+        expect(panel.get_by_role('button', name='Edit', exact=True)).to_have_count(0)
+    finally:
+        context.close()
+
+    assert h.get('operator', '/api/admin/branding')['can_edit']
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, 'access/people')
+        main = page.locator('#main')
+        expect(main.get_by_role('columnheader', name='Person', exact=True)).to_be_visible()
+        for label in ('Signs in with', 'Last sign-in'):
+            expect(main.get_by_role('columnheader', name=label, exact=True)).to_have_count(0)
+        navigate(page, 'configuration/name-and-logo')
+        panel = page.locator('.brand-settings')
+        panel.get_by_role('button', name='Edit', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Name and logo', exact=True)
+        dialog.get_by_label('App name', exact=True).fill('Rota name (test)')
+        dialog.get_by_label('Reason for the change', exact=True).fill('Update shared branding')
+        dialog.get_by_label('Emblem image', exact=True).set_input_files(
+            {'name': 'emblem.png', 'mimeType': 'image/png', 'buffer': raster()})
+        expect(dialog.locator('.brand-preview-emblem img').first).to_have_attribute('src', re.compile('^data:image/png'))
+        dialog.get_by_role('button', name='Save', exact=True).click()
+        expect(dialog).to_have_count(0)
+        page.reload()
+        expect(panel).to_contain_text('Rota name (test)')
+        expect(panel.locator('.brand-preview-emblem img').first).to_have_attribute(
+            'src', re.compile('^/api/branding/images/'))
+        expect(panel.get_by_role('button', name='Undo last change', exact=True)).to_be_visible()
     finally:
         context.close()
 

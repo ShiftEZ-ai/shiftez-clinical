@@ -8,7 +8,7 @@ import {tableColumnMenus} from './table_menu.js';
 import {recordError,unisolated} from './feedback_context.js';
 import {BULK_COLLECTIONS,CAPABILITIES,PERMISSIONS,ROLE_NAMES,ROLE_LABELS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS} from './generated.js';
 import {staleFault} from './stale_bundle.js';
-import {brand,brandSize,suppliedLogo} from './brand.js';
+import {brand,brandImage,paintWordmark} from './brand.js';
 const iconPaths = {
   // Something deviates from the general rule here (an exception, an override, a rota-only change).
   fork:'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm12-12a9 9 0 0 1-9 9',
@@ -453,6 +453,10 @@ export const hostLegend=<T extends Element>(root:T,key:Legend):T=>{hosts.set(roo
 /** The key of the view `node` is drawn in (its nearest hosting ancestor), or null outside any keyed view. */
 export const legendAt=(node:Element):Legend|null=>{for(let n:Element|null=node;n;n=n.parentElement){const k=hosts.get(n);if(k)return k;}return null;};
 export const text = (value: unknown) => value == null ? '—' : String(value);
+/** One collator for every list's sort and value order (numbers in text compare as numbers: "Room 2" before "Room 10"). */
+export const collator = new Intl.Collator(undefined, {numeric: true});
+/** Choices by name: the order of every list of people, the same as a collection's sort by Name. */
+export const byLabel = (a: {label: string}, b: {label: string}) => collator.compare(a.label, b.label);
 /** A record's name (a place, service, rank, rule…). A person is not a record: their row's type is refused here, so
  *  names go through person_label.ts (`personName`, `fullNameOf`, `nameText`); tests/test_name_guard.py covers the paths
  *  the compiler cannot see. */
@@ -660,8 +664,8 @@ export function fitRow(row:HTMLElement,steps=['tight','tighter'],clipped=()=>row
   // forcing a layout of the page that is still being built.
   // Relabelled or newly visible actions must refit too; ignore the fitting classes to avoid observing our own work.
   const unsize=observeSize(row.parentElement||row,()=>{row.dataset.fitted='1';if(row.isConnected)fit();});kids.observe(row,{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['hidden']});
-  const entry={born:now,seen:false,stop:()=>{unsize();kids.disconnect();}};fitting.get(row)?.stop();fitting.set(row,entry);fittedRows.add(new WeakRef(row));
-  setTimeout(()=>{entry.seen=row.isConnected;},0);
+  const entry={born:now,seen:row.isConnected,stop:()=>{unsize();kids.disconnect();}};fitting.get(row)?.stop();fitting.set(row,entry);fittedRows.add(new WeakRef(row));
+  if(!entry.seen)setTimeout(()=>{entry.seen=row.isConnected;},0);
 }
 /** The latest reading of a typed or pasted text (Paste names, Paste from Excel): `start()` begins one and outdates
  *  every earlier one at once (call it on each input, before any debounce, and when a reading begins); `current(t)`
@@ -703,18 +707,18 @@ export function iconButton(label: string, name: IconName, action: (event: MouseE
   b.addEventListener('click',event=>{try{const r=action(event);if(r instanceof Promise)r.catch(e=>{reportError(e);});}catch(e){reportError(e);}});
   return b;
 }
-/** The app's and institution's brand as currently applied (brand.ts: the deployment's branding, else the generated
- *  defaults): the emblem (compact: the navigation) and the wordmark (sign-in). New branding repaints these in place. */
-const brandImage=(cls:string,url:string,alt:string)=>{const size=brandSize(url);
-  return el('img',{class:cls+(suppliedLogo(url)?' brand-supplied':''),src:url,alt,...(size?{width:size[0],height:size[1]}:{}),decoding:'async'});};
 /** Decorative beside the app's name (the link or heading it sits in names it). */
 export const brandEmblem=()=>brandImage('brand-mark brand-emblem',brand().emblem_url,brand().emblem_alt);
 /** The product's short name in a heading drawn before the branding may have answered: it follows the branding. */
 export const brandShort=()=>el('span',{'data-brand-short':''},brand().short_name);
 /** The start-up screen's mark (index.html draws the same before the app runs; failures keep it): the emblem, centred. */
 export const bootEmblem=()=>brandImage('boot-emblem brand-emblem',brand().emblem_url,brand().emblem_alt);
-/** The sign-in and account-link screens' brand: the institution's wordmark over the app's name. */
-export const brandRow=()=>el('div',{class:'brand login-brand'},brandImage('brand-wordmark',brand().wordmark_url,brand().wordmark_alt),el('strong',{'data-brand-name':''},brand().app_name));
+/** The app's name with an optional wordmark on sign-in, account linking and department selection. */
+export const brandRow=()=>{
+  const row=el('div',{class:'brand login-brand'},el('strong',{'data-brand-name':''},brand().app_name));
+  paintWordmark(row);
+  return row;
+};
 /** Production or test, as an icon (the footer, sign-in): keyed on the deployment, not ROTA_ENV (DEV runs ROTA_ENV=production
  *  for strict security but is a test deployment). `text` is its name and tooltip; test is gold, production plain.
  *  Not a Tab stop: it does nothing (maintenance, WCAG 2.4.3); its name is read with the footer. */
@@ -983,6 +987,8 @@ function because<T extends HTMLButtonElement>(b:T,why:string,more:Child[]=[],at?
   ensureReasonObserver();
   reasons.set(b,{why,more,at});sayReason(b);return b;
 }
+/** Each held control's reason now: a press says the words it is described with at that moment. */
+const heldWhy=new WeakMap<HTMLElement,string>();
 /** A control in place but not usable yet (DL-007; D59: the whole rota still loading): aria-disabled, so it keeps its
  *  focus and its tip, with `why` as its description; a press only says why again and never runs later. A field is
  *  read-only meanwhile. Drawn again once usable, so it is never released here. */
@@ -990,8 +996,10 @@ export function notYet<T extends HTMLElement>(n:T,why:string):T{
   n.setAttribute('aria-disabled','true');n.dataset.tip=why;if(n instanceof HTMLInputElement)n.readOnly=true;
   // A menu item's reason is its tip and its press (a menu holds only items).
   if(!n.matches('[role^=menuitem]')){sayWhy(n,why);whyOf.get(n)!.classList.add('sr-only');}
+  // Held again (its reason moved on, e.g. the check started): the words change, the one press listener stays.
+  const held=heldWhy.has(n);heldWhy.set(n,why);if(held)return n;
   // Capture, on the control itself: before its own click handler (and the footer's delegated one), which never runs.
-  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(why,'info');},true);  // visible, and said (a toast is a status)
+  n.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();notify(heldWhy.get(n)!,'info');},true);  // visible, and said (a toast is a status)
   return n;
 }
 /** A disabled button's reason is visible beside it and referenced by aria-describedby. */
@@ -1384,7 +1392,8 @@ export function notify(message: string, tone = 'success', action?: {label:string
   if (!tray.hasAttribute('role')) { tray.setAttribute('role','region'); tray.setAttribute('aria-label','Messages'); }
   placeTray(tray as HTMLElement);
   const item = el('div',{class:`toast ${tone}${action||next?' with-action':''}`,role: tone === 'error' ? 'alert' : 'status'},tone === 'error' || tone === 'warning' ? icon('alert') : null,el('span',{},message));
-  const done=()=>{item.remove();stackToasts(tray);};
+  // WCAG 2.4.3: a message closing (Undo, Dismiss, its timeout) with focus in it gives focus back to where it came from.
+  const done=()=>{const had=item.contains(document.activeElement);item.remove();stackToasts(tray);if(had)backFromTray();};
   // Report this problem captures the page with this message still on it, then the message goes.
   // maintenance: an action that saves (`saves`; every Undo and Redo) keeps its message open, saying what the footer says
   // (savingWords), until the save settles; its outcome is then said by the message that follows. Never closed first.
@@ -1393,7 +1402,8 @@ export function notify(message: string, tone = 'success', action?: {label:string
   if(action){const run=action.run,first=action.label===REPORT_PROBLEM,b=button(action.label,()=>{if(first){const r=run();done();return r;}
     if(!(action!.saves??['Undo','Redo'].includes(action!.label))){done();return run();}
     const r=run();if(!(r instanceof Promise)){done();return r;}
-    working=true;window.clearTimeout(timer);b.remove();item.classList.add('working');
+    const had=item.contains(document.activeElement);
+    working=true;window.clearTimeout(timer);b.remove();item.classList.add('working');if(had)backFromTray();
     const said=item.querySelector(':scope>span')!,word=()=>{said.textContent=savingWords();};word();
     said.before(el('span',{class:'spinner','aria-hidden':'true'}));
     for(const t of SAVE_EVENTS)window.addEventListener(t,word);
@@ -1460,7 +1470,8 @@ export function settledWords(e:unknown):string|null{
 function stackToasts(tray:Element){
   const max=phoneQuery.matches?2:3,items=[...tray.children] as HTMLElement[];
   let shown=0;
-  for(const t of items){if(shown<max){t.hidden=false;shown++;}else if(t.classList.contains('with-action'))t.hidden=true;else t.remove();}
+  // The message focus is in stays shown (WCAG 2.2.1), even when newer ones arrive.
+  for(const t of items){if(shown<max||t.contains(document.activeElement)){t.hidden=false;shown++;}else if(t.classList.contains('with-action'))t.hidden=true;else t.remove();}
   // Only the bars of the tray's own host count: in a dialog its footer, on the page the page's bars (not a dialog's).
   const host=tray.parentElement||document.body,inDialog=host!==document.body;
   let lift=0;
@@ -1498,6 +1509,36 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   if(!b)return;
   e.preventDefault();announce(redo?'Redoing the last undone change':'Undoing the last change');b.click();
 });
+/** The messages' key (issue 1408; WCAG 2.1.1, 2.4.3): from anywhere it focuses the newest message's action (its Undo),
+ *  else the newest message's Dismiss; Escape in the messages, Undo or Dismiss go back to the control focus came from.
+ *  Not F6 (the browser's own move to its address bar) nor Ctrl Shift with a letter (taken by browsers). In a text field
+ *  only a key that types nothing (Alt M on Windows and Linux; Option M types µ on a Mac, so there it works outside one). */
+export const MESSAGES_KEY='Alt M';
+/** Where focus was before it entered the messages (by this key or by Tab). */
+let trayFrom:Opener|null=null;
+function backFromTray(){const o=trayFrom;trayFrom=null;if(o)returnFocus(o);else if(focusLost())document.querySelector<HTMLElement>('#main')?.focus({preventScroll:true});}
+if(typeof window!=='undefined'&&typeof document!=='undefined'&&typeof document.addEventListener==='function'){
+  document.addEventListener('focusin',e=>{const tray=document.querySelector('#toast-tray'),from=e.relatedTarget as HTMLElement|null;
+    if(!tray||!from)return;const inside=tray.contains(e.target as Node);
+    // Only a keyboard arrival (:focus-visible): a click on Undo never scrolls the page back to a control focused earlier.
+    if(inside&&!tray.contains(from))trayFrom=(e.target as Element).matches(':focus-visible')?openerOf(from):null;
+    else if(!inside&&tray.contains(from))trayFrom=null;});
+  window.addEventListener('keydown',e=>{
+    const tray=document.querySelector('#toast-tray');
+    // Before a dialog's or panel's own Escape: the person leaves the messages, not the dialog.
+    if(e.key==='Escape'&&trayFrom&&tray?.contains(e.target as Node)){e.preventDefault();e.stopImmediatePropagation();backFromTray();return;}
+    if(!e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.defaultPrevented||e.code!=='KeyM'&&e.key.toLowerCase()!=='m')return;
+    if((e.target as HTMLElement|null)?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable=true]')&&e.key.toLowerCase()!=='m')return;
+    e.preventDefault();
+    const to=tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-action')||tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-close');
+    if(!to){announce('No messages');return;}
+    // Chromium does not count a key with Alt as keyboard use for :focus-visible, so the key shows the ring and keeps
+    // where focus came from itself (focusin above only sees a plain focus here).
+    const from=document.activeElement as HTMLElement|null;
+    const ring:FocusOptions&{focusVisible?:boolean}={focusVisible:true};to.focus(ring);
+    if(from&&!tray!.contains(from))trayFrom=openerOf(from);
+  },true);
+}
 /** The screen's own status for the footer (left side): rota health, counts, a score. A page puts it anywhere in its
  *  content; the shell moves it into the footer when that page is shown, so a page that finished loading after you left
  *  never writes into another page's footer. Keep the node to update it later. An empty one keeps the footer clear.
@@ -1949,8 +1990,11 @@ export function select(label: string, choices: Choice[], value = '', required = 
   if(required&&!value&&!choices.some(c=>c.value===''))input.append(el('option',{value:'',disabled:true,hidden:true,selected:true},'Choose…'));
   const groups=new Map<string,HTMLElement>();
   for(const c of choices){
-    const option=el('option',{value:c.value,selected:c.value===value,disabled:!!c.disabled,...(c.hint?{'data-hint':c.hint}:{}),...(c.divider?{'data-divider':''}:{})},c.label);
-    if(!c.group){input.append(option);continue;}
+    // A group with a configured place (a person's rank) is carried on the option, never a section: one flat list.
+    const placed=c.group&&c.groupOrder!==undefined;
+    const option=el('option',{value:c.value,selected:c.value===value,disabled:!!c.disabled,...(c.hint?{'data-hint':c.hint}:{}),...(c.divider?{'data-divider':''}:{}),
+      ...(placed?{'data-group':c.group!,'data-group-order':String(c.groupOrder)}:{})},c.label);
+    if(!c.group||placed){input.append(option);continue;}
     if(!groups.has(c.group)){const g=el('optgroup',{label:c.group});groups.set(c.group,g);input.append(g);}
     groups.get(c.group)!.append(option);
   }
@@ -1996,6 +2040,9 @@ export function check(label: string, checked=false, hint=''): Field {
 }
 /** One option of any dropdown: `hint` shows beside it, `keywords` are searched but not shown. */
 export type Choice={value:string;label:string;group?:string;hint?:string;keywords?:string;disabled?:boolean;
+  /** The group is a fact about the row with a configured place (a person's rank, in the department's rank order): a
+   *  single choice lists such rows flat in their own order with the group beside each; a multiple choice sections
+   *  them in this order (picker.ts). */groupOrder?:number;
   /** Chip colour in a multiple-choice field, by kind (`.rp`): person, group (rank, programme…), place (clinic, duty
    *  type), all (grey, the default), or a tag's duty-<hue>. */tone?:string;
   /** An icon before the label (a relative value's clock). */glyph?:IconName;
@@ -2446,7 +2493,7 @@ export type RoleName=typeof ROLE_NAMES[number];
 export const CAPABILITY={
   STAFF:'ui.staff',COORDINATOR:'ui.coordinator',APPROVER:'ui.approver',CREDENTIALER:'ui.credentialer',
   ADMIN:'ui.admin',AUDITOR:'ui.auditor',PROGRAMME_LEAD:'ui.programme_lead',OPERATOR:'ui.operator',
-  PUBLICATIONS_READ_TEAM:'publications.read_team',ACCESS_SYSTEM_ROLES:'access.system_roles',
+  PUBLICATIONS_READ_TEAM:'publications.read_team',ACCESS_SYSTEM_ROLES:'access.system_roles',ACCESS_INSTALLATION_ADMIN:'access.installation_admin',
   SYSTEM_OPERATIONS:'system.operations',AUDIT_READ:'audit.read',FEEDBACK_READ_ALL:'feedback.read_all',CATALOGUE_READ:'catalogue.read',
   RULES_PAGE:'ui.rules',RULES_READ:'rules.read',
 } as const satisfies Record<string,Capability>;

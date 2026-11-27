@@ -170,7 +170,8 @@ def test_catalogue_approval_checks_an_overlapping_rota_before_activation(browser
         navigate(page, 'rules/duties_per_week')
         page.locator('.rc-waiting').get_by_role('button', name='Review and approve', exact=True).click()
         # The panel is named after the change: the one added or changed line, else the rule.
-        title = {'new': 'Add a line for everyone · turns the rule on', 'revision': 'Change a line for everyone', 'off': 'Change to Duties per week'}[origin]
+        title = {'new': 'Add a line for everyone · turns the rule on', 'revision': 'Change a line for everyone',
+                 'off': 'Change to Duties per week · turns the rule off'}[origin]
         check_and_approve_in_panel(page, h, workspace, proposal, title)
         page.reload()
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'rules')
@@ -294,7 +295,7 @@ def test_standalone_proposal_stays_discoverable_and_can_be_checked_in_catalogue_
     try:
         if scope == 'person':
             navigate(page, 'people')
-            page.get_by_role('button', name=re.compile('^More actions for Alex Morgan')).click()
+            page.get_by_role('button', name=re.compile('^More actions for Staff 01\\(test\\)')).click()
             page.get_by_role('menuitem', name='Add a rule for this person', exact=True).click()
             form = page.get_by_role('dialog', name='Add rule', exact=True)
             form.get_by_label('Rule title', exact=True).fill(title)

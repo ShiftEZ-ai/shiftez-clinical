@@ -10,6 +10,7 @@ at the time, except accidentally retained private leave reasons are removed from
 staged payloads involving the person are cleared. The change is audited; old values are not copied anywhere.
 """
 from sqlalchemy import func, inspect, select
+from sqlalchemy.orm import undefer
 from packages.contracts import schemas as s
 from packages.domain.time import aware
 from apps.api import models as m
@@ -18,7 +19,7 @@ from apps.api.errors import require
 from apps.api.identity_store import store_for
 from apps.api.serialization import record
 from .accounts import written
-from .access import keep_developer
+from .access import keep_developer, keep_installation_admin
 from .common import bump_inputs, expected, materialise_defaults
 from . import tags
 
@@ -35,7 +36,10 @@ def _current_rows(db, model, query, matches):
 
 
 def _person_rows(db, model, person_id):
-    return _current_rows(db, model, select(model).where(model.person_id == person_id),
+    query = select(model).where(model.person_id == person_id)
+    if model is m.RequestRecord:
+        query = query.options(undefer(m.RequestRecord.private_undo_note))
+    return _current_rows(db, model, query,
                          lambda row: row.person_id == person_id)
 
 
@@ -69,7 +73,10 @@ def anonymise(db, actor, command, settings):
     expected(person, command.expected_revision)
     require(not person.active, "PERSON_ACTIVE", "Mark the person as left (inactive) first, then remove their details", 409)
     identities = _person_rows(db, m.Identity, person.id)
-    keep_developer(db, {identity.id for identity in identities})
+    if identities:
+        retiring = {identity.id for identity in identities}
+        keep_developer(db, retiring)
+        keep_installation_admin(db, actor, identity_ids=retiring)
     affected = 1
     name = f"Former staff member {person.id[:8]}"
     person.display_name, person.tags, person.rota_aliases = name, [], []
@@ -83,21 +90,25 @@ def anonymise(db, actor, command, settings):
     erased[person.id] = record(person)
     scrubbed = {}
     availability_ids = set()
-    for model, column in ((m.Availability, "private_reason"), (m.RequestRecord, "private_reason"),
-                          (m.AvailabilityPattern, "note"), (m.StaffWish, "note")):
+    for model, fields in ((m.Availability, {"private_reason": ""}),
+                          (m.RequestRecord, {"private_reason": "", "private_undo_note": None}),
+                          (m.AvailabilityPattern, {"note": ""}), (m.StaffWish, {"note": ""})):
         rows = _person_rows(db, model, person.id)
         if model is m.Availability:
             availability_ids = {row.id for row in rows}
-        changed = [row for row in rows if getattr(row, column)]
+        changed = [row for row in rows if any(getattr(row, field) for field in fields)]
         for row in changed:
-            setattr(row, column, "")
+            for field, empty in fields.items():
+                setattr(row, field, empty)
         erased.update((row.id, record(row, exclude=("private_reason",))) for row in rows)
         scrubbed[model.__tablename__] = len(changed)
         affected += len(changed)
     scrubbed["availability_history"] = _scrub_availability_history(db, person.id, availability_ids)
     from .bulk_staged import scrub_for_person
     scrubbed["bulk_staged"] = scrub_for_person(db, person.id)
-    affected += scrubbed["bulk_staged"]
+    from . import leave_balances
+    scrubbed["leave_allowances"] = leave_balances.scrub_for_person(db, actor.organisation_id, person.id)
+    affected += scrubbed["bulk_staged"] + scrubbed["leave_allowances"]
     feeds = [row for row in _person_rows(db, m.CalendarFeed, person.id) if not row.revoked]
     for row in feeds:
         row.revoked = True
@@ -114,7 +125,9 @@ def anonymise(db, actor, command, settings):
     affected += len(deliveries)
     users = store_for(settings)
     # Stage all sign-in removals before touching the file so rollback can preserve the final recovery admin.
+    from .accounts import lock_link_account
     for identity in identities:
+        lock_link_account(db, identity.id)
         identity.disabled = True
     from .auth_configuration import protect_break_glass, remove_identity_bindings
     protect_break_glass(db, settings)

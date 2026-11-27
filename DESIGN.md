@@ -1,12 +1,16 @@
 # Design
 
-The Design Lead owns this file, and edits land through a PR on green CI without review under the review policy in AGENTS.md.
+The Design Lead owns this file, and edits land through a PR on green CI without review under the review policy in AGENTS.md. Engineering rules are in AGENTS.md, delivery rules in DELIVERY.md.
 Mockup names and numbers are illustrative only; nothing from them is seeded into the application.
 
 ## Visual contract
 
 - Cool neutral surfaces (#F8FAFC page, white cards, slate text), one teal accent.
   Light, dark and system themes from the same tokens (`app.css` `:root`).
+- Forced colours (Windows contrast themes): system colours only (Canvas, CanvasText, ButtonText, Highlight,
+  HighlightText, GrayText). A background or a shadow never carries a state alone, because both are removed: every
+  switch, dot, bar and mark keeps an edge, a shape or a word. `forced-color-adjust:none` only on a control that then
+  draws itself in system colours (the switch, the highlighted search option). Focus is a solid Highlight outline.
 - Colour carries meaning: each duty type has a hue (teal, sky, violet, amber, slate,
   coral, indigo, pink) shown as a soft tint plus a dot. A chosen colour stays; the others get the free hues one each
   in creation order (`setTypeColours`, the one assignment every view and key reads). Automatic colours never use
@@ -148,15 +152,16 @@ Mockup names and numbers are illustrative only; nothing from them is seeded into
   User agent control (unstyled native controls), and a box or glyph inside a larger target of the same action.
   Shared roots: a table's column grip is 24 px centred on the boundary (12 px into each heading; inside its heading at
   the table's edge), each heading stacked above the next; a resized heading clips its own button, so its text ends in
-  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Ctrl D is its
-  keyboard way, no pointer equivalent yet) and the native × of search fields.
+  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Fill down in the
+  cell bar, then a click or tap on the pattern's last cell and on the last row, is its single-pointer way, and Ctrl D
+  its keyboard way) and the native × of search fields.
 - Touch targets (WCAG 2.2 SC 2.5.5 Target Size (Enhanced), level AAA, beyond the AA target): on a phone every interactive target is at least 44 × 44 CSS px, from one block
   in `app.css` (Touch targets) for the shared controls (buttons, icon buttons, collection toolbar tools, segmented
-  options, menu rows, tabs, search fields, pickers, link buttons, the skip link). Pills and chips that act as buttons,
+  options, menu rows, tabs, search fields, pickers, link buttons, the skip link). A checkbox or radio keeps its 24 px box; its target is its whole label row (at least 44 px tall), or, with no visible label (row selection), the centred invisible 44 px `::after`. Pills and chips that act as buttons,
   issue markers, and the one-line footer keep their look and take a centred invisible 44 px `::after` as their target. A person's name in running
   text is exempt (SC 2.5.8 Inline). `tests/test_browser_icon_alignment.py` measures every visible target at 390.
   The phone footer row is 44 px (the target height); items keep their size (≤ 26 px, one line), and the bottom
-  safe-area inset sits below that row, never inside it.
+  safe-area inset sits below that row, never inside it. A view's key line on a phone is 44 px tall in the same way (still one line), so its "+N" is a full target and is never clipped.
 - Nothing overflows: long or unbreakable words wrap (`overflow-wrap` on `body`); a chip, a badge or a one-line label
   that must stay on one line ends in an ellipsis (`.chip-text`, `.truncate`, `.clamp-2` for two lines) with its full
   wording in the shared hover tip while it is cut, never a screen's own title (so no content is lost: WCAG 2.2 SC 1.4.12
@@ -290,8 +295,9 @@ and a desktop window narrowed below it gets the same rule at once.
     The session it fixed becomes ✓ who, the focus stays on a session that is still open or moves on, and the counts are
     the delta's ("Checking…" until the complete check lands, which is the next read). One source: the footer,
     its Rota health popover and the panel all read that delta, then the next full read; no surface keeps a count of its
-    own. Its Undo (the toast's and the top bar's are one) is an edit with its own delta: the session is back in
-    its cause and its ✓ chip goes; a ✓ chip never outlives a delta or read that lists its session again.
+    own. The toast's Undo acts on that edit. The top bar takes back the latest available edit each time. Both return
+    an edit delta that puts the session back in its cause and removes its ✓ chip. A ✓ chip never outlives a delta
+    or read that lists its session again.
   - **Server fields:** a field is shown only where it replaces words or makes a choice right, never
     as an extra line.
     - `missing` is already the line (`detail_line`: "5 sessions · each has 1 of 2 <rank>"), so it is not drawn twice.
@@ -395,10 +401,12 @@ and a desktop window narrowed below it gets the same rule at once.
   refuses (403) says "Not available for your role." as information, with no Retry; any other failure is an error with
   Retry inside the message. One builder: `readFailed()` in `dom.ts` (`tests/test_web_ssot_guards.py` keeps it so).
 - Ctrl/⌘ K opens the command menu from anywhere (each typed word matches a word start, in any order); `?` lists
-  keyboard shortcuts.
+  keyboard shortcuts. Alt M (`MESSAGES_KEY`) goes to the newest message's Undo (else its Dismiss) from anywhere;
+  a message stays while focus or the pointer is in it, and Esc, Undo or Dismiss hand focus back to the control it came
+  from, as does an Undo that turns its message into a saving note. Not F6 (the browser's move to its address bar).
 - A failed refresh (server error or offline) never presents saved data as current: a page showing data keeps its header,
-  toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message) with Retry inside it (app.ts
-  `showStale`); a page that showed nothing says only "This page didn't load", Retry inside the message. In a tab still
+  toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message when it is a sentence for people, its problem detail, never a bare status phrase such as "Service unavailable") with Retry inside it (app.ts
+  `showStale`); a page that showed nothing shows `readFailed()` (above): "Couldn’t load <page>." with the same server-message rule and Retry inside it, plus Report this problem on a 5xx or lost connection. In a tab still
   running an older bundle than the pulse's `build`, that failure reloads once onto the new one ("Updated to the latest
   version"), or, with anything unsaved open, offers "Reload to update" instead and keeps the update bar. An
   error message, an error notice or an uncaught error there (a bug or server fault) takes the same one step
@@ -553,8 +561,19 @@ and a desktop window narrowed below it gets the same rule at once.
   a "!" to decode; a number inherited from a broader line is muted with "↰" and its tooltip names
   that line. The Rules list and database, a rule's lines table, the line panel title, Needs
   attention, Which rule applies?, the rule sheet's cards and range bar and the planner's rule list all use it.
-- Rules as the rule catalogue (`rules_tree.ts`, `rule_catalogue.ts`): one
-  database, families › rules (Show lines, switch, "N lines") › numbered lines. Who and where are pills by kind — everyone grey,
+- Rules as the rule catalogue (`rules_tree.ts`, `rule_catalogue.ts`), the default Rules page; the Rules list above shows
+  only while a department has the catalogue switched off. A list, not a table: families › rules › lines. A rule row is
+  select · switch · the catalogue name · its badges (strength, safety lock, "Off") over one count line,
+  "N lines · who: … · where: …". There is no per-line sentence and no column, so nothing is empty and nothing scrolls
+  sideways at 1440 or 390.
+  Lines show when a rule is opened, grouped by where (lines with a different where all apply). In each group the broadest
+  line is the anchor, and the more specific lines sit indented under it as its exceptions, most specific first
+  (person › rank/programme/tag/skill › everyone, the order in which they win). An exception names what it replaces,
+  "≤ 3 (instead of ≤ 5)", only when exactly one broader line is replaced. No anchor: flat, most specific first; a chosen
+  line sort keeps its own flat order. Safety kinds (every line applies, the strictest binds) stay flat under
+  "Always applies" with the lock, never "instead of". A line reads who › when › numbers, and the rule's page lists its
+  lines the same way. View settings keeps one layout setting: Open all rules or Collapsed.
+  Who and where are pills by kind — everyone grey,
   each rank its own rank tint (`rankColour`), groups violet, people blue, clinics teal, #tags their own colour (`.rp`, `tagRef`) — first N then "+N".
   Tri-state boxes roll up to select-all; one selection bar. A rule's page opens a line in the docked item panel (`dockPanel`) and
   outlines the line it edits. Needs attention: issues grouped by kind, each with a ★ recommended fix and Apply.
@@ -820,7 +839,8 @@ and a desktop window narrowed below it gets the same rule at once.
   on the side with room and scroll inside when taller, never past the status footer, their head and foot staying in view
   (Reset, Save as view) and the wheel or a swipe never scrolling the page behind them; a phone sheet the same. Menus are `role=menu` with `menuitemradio` for single choices.
   A closed dropdown never cuts its label silently: too long for its width, it ends in "…" with the full choice as a
-  tooltip.
+  tooltip. People lists: a single choice is one list A to Z by name with the rank on the row; a multiple choice keeps
+  rank sections (a whole rank is chosen at once) in the department's rank order, No rank last.
 - Grids (`role=grid`: Schedule Week, Month, People, Timeline, Counts through `roving()` in `planner_week.ts`; the Sheet
   its own): one Tab stop, a cell (the last focused, else today's first session, else the first cell), per the WAI-ARIA
   APG grid pattern. A column's resize grip (APG window splitter, `role=separator`, ← → resize) is no grid item: Tab

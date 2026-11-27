@@ -50,7 +50,7 @@ def test_workload_cards_do_not_wait_for_opportunity_calculations(browser, live_s
         expect(shown.locator('.ov-stat-label')).to_have_text(['Duties', 'Hours', 'Weekends', 'Fairness'])
         page.unroute(pattern)
         shown.get_by_role('button', name='Retry loading open places', exact=True).click()
-        expect(shown.get_by_role('heading', name='Open places Alex Morgan could fill', exact=True)).to_be_visible()
+        expect(shown.get_by_role('heading', name='Open places Staff 01(test) could fill', exact=True)).to_be_visible()
     finally:
         for route in held:
             route.abort()

@@ -228,7 +228,7 @@ def preview_import(db, actor, command):
 
 
 def reference_rota_rows(db, source, starts_on, ends_on):
-    if not _IMPORT_MAPPING:
+    if source.manifest.get('format') == s.ROTATION_REFERENCE_FORMAT or not _IMPORT_MAPPING:
         return []
     exports = {r[_IMPORT_MAPPING['literals'][14]]: r[_IMPORT_MAPPING['literals'][32]] for f in source.manifest[_IMPORT_MAPPING['literals'][34]] for r in f.get(_IMPORT_MAPPING['literals'][27], []) if r[_IMPORT_MAPPING['literals'][38]] == _IMPORT_MAPPING['literals'][39]}
     mappings = {r.source_key: r for r in db.scalars(select(m.SourceMapping).where(m.SourceMapping.department_id == source.department_id, m.SourceMapping.source_name == source.source_name))}

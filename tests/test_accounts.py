@@ -1,5 +1,7 @@
 """Managed accounts: invitation, acceptance, one-time links, password change and reset, sessions, session limits."""
+from concurrent.futures import ThreadPoolExecutor
 import json
+from threading import Event
 import uuid
 from datetime import date, datetime, timedelta
 import pytest
@@ -81,6 +83,37 @@ def sign_in(h, username, password):
 
 def users_file(h):
     return json.loads(h.users.read_text(encoding="utf-8"))["users"]
+
+
+def race_account_writes(monkeypatch, first, second):
+    """Start the competing write only after the first has taken the shared account lock."""
+    from apps.api.services import accounts
+
+    locked, competing = Event(), Event()
+    lock = accounts.lock_link_account
+
+    def coordinate(db, identity_id):
+        if locked.is_set():
+            competing.set()
+            return lock(db, identity_id)
+        account = lock(db, identity_id)
+        locked.set()
+        assert competing.wait(10)
+        return account
+
+    with monkeypatch.context() as patch, ThreadPoolExecutor(max_workers=2) as pool:
+        patch.setattr(accounts, "lock_link_account", coordinate)
+        earlier = pool.submit(first)
+        assert locked.wait(10)
+        later = pool.submit(second)
+    return earlier, later
+
+
+def race_link_acceptance(monkeypatch, *, acceptance_first, accept, write):
+    if acceptance_first:
+        return race_account_writes(monkeypatch, accept, write)
+    earlier, later = race_account_writes(monkeypatch, write, accept)
+    return later, earlier
 
 
 def test_invite_accept_and_sign_in(acc, monkeypatch):
@@ -197,7 +230,8 @@ def test_change_own_password(acc, monkeypatch):
     same = client.post("/api/account/password", json={"current_password": PASSWORD, "new_password": PASSWORD})
     assert same.status_code == 422
     changed = client.post("/api/account/password", json={"current_password": PASSWORD, "new_password": "fresh passphrase 56"})
-    assert changed.status_code == 200 and changed.json()["sessions_ended"] == 1
+    assert changed.status_code == 200
+    assert changed.json() == {"changed": True, "sessions_ended": 1}
     assert client.get("/api/me").status_code == 200  # this session stays
     assert other.get("/api/me").status_code == 401  # the other one ended
     with transaction(acc.app.state.engine) as db:
@@ -212,6 +246,54 @@ def test_change_own_password(acc, monkeypatch):
     for _ in range(4):
         client.post("/api/account/password", json={"current_password": "wrong", "new_password": "fresh passphrase 78"})
     assert client.post("/api/account/password", json={"current_password": "wrong", "new_password": "fresh passphrase 78"}).status_code == 429
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize("mutation", ["disable", "reset"])
+@pytest.mark.parametrize("change_first", [False, True])
+def test_password_change_serializes_with_managed_account_writes(pg, tmp_path, monkeypatch, mutation, change_first):
+    acc = with_users_file(pg, tmp_path)
+    identity = accepted(acc)
+    client, status = sign_in(acc, "new.person", PASSWORD)
+    assert status == 200
+    fresh, reset_password = "fresh passphrase 56", "reset passphrase 78"
+    reset_path = None
+    acc.client("admin")
+    with transaction(acc.app.state.engine) as db:
+        revision = db.get(m.Identity, identity).revision
+    if mutation == "reset":
+        link = acc.command("admin", "account.reset_link", {"reason": "Replace password"}, identity)
+        reset_path = f"/api/account-links/{token_of(link)}"
+
+    def change():
+        return client.post("/api/account/password", json={"current_password": PASSWORD, "new_password": fresh})
+
+    def mutate():
+        if reset_path is None:
+            acc.command("admin", "identity.disable", {"reason": "Disable sign-in"}, identity, revision)
+        else:
+            result = anonymous(acc).post(reset_path, json={"password": reset_password})
+            assert result.status_code == 200
+
+    first, second = (change, mutate) if change_first else (mutate, change)
+    earlier, later = race_account_writes(monkeypatch, first, second)
+    changed, mutated = (earlier, later) if change_first else (later, earlier)
+    mutated.result()
+    response = changed.result()
+    if change_first:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == ("ACCESS_REVOKED" if mutation == "disable" else "SESSION_EXPIRED")
+
+    with transaction(acc.app.state.engine) as db:
+        assert db.get(m.Identity, identity).disabled == (mutation == "disable")
+        change_audit = db.scalar(select(m.AuditEvent.id).where(
+            m.AuditEvent.action == "account.password_change", m.AuditEvent.target_id == identity))
+        assert (change_audit is not None) == change_first
+    assert users_file(acc)["new.person"]["disabled"] == (mutation == "disable")
+    if mutation == "reset":
+        assert sign_in(acc, "new.person", reset_password)[1] == 200
 
 
 def test_permissions_duplicates_and_unconfigured_environment(acc, h):

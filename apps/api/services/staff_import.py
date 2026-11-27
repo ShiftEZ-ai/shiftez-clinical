@@ -33,7 +33,7 @@ from . import catalogue
 COLUMNS = ("display_name", "short_code", "staff_number", "pager", "title", "tags", "email", "work_email", "rank", "rank_from",
            "clinics", "clinics_from", "skills", "skill_evidence", "skills_from", "programme", "programme_from", "programme_last_day",
            "rota_name", "rota_aliases")
-EXAMPLE = ("Dr Keiko Keller", "SMP", "000000", "0000", "Consultant", "Night team; Teaching", "keiko.example@hospital.example",
+EXAMPLE = ("Dr Keiko Keller", "SMP", "000000", "0000", "Consultant", "Night team; Teaching", "keiko.example@example.org",
            "", "Consultant", "2026-10-01", "Continuity clinic; Review clinic", "2026-10-01", "Supervision",
            "Credentialing committee minutes 2026-09", "2026-10-01", "", "", "", "", '["Alternate label", "Label; with punctuation"]')
 PEOPLE_ROLES = ("admin", "coordinator")

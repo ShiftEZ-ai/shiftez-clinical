@@ -458,6 +458,33 @@ def test_all_change_authors_remain_excluded_from_independent_review(h):
     assert h.lifecycle(sent['workspace'], 'approve', 'first_editor', status=403)['error']['code'] == 'SELF_APPROVAL'
 
 
+def test_a_resubmitted_amendment_needs_its_resubmitters_reason(h):
+    """Whoever sends a returned amendment again builds its new candidate, so approving it is their own work whatever the
+    client sends: refused without a permission, refused without a real reason, then recorded under the permission."""
+    from .test_self_approval import grant
+    identity(h, 'both', ['coordinator', 'approver'])
+    pub, shifts = issued(h)
+    sent = h.command('coordinator', 'publication.changes.submit', {'reason': 'Send the cover for review'}, target=pub,
+                     revision=change(h, pub, shifts[0])['workspace']['revision'])['workspace']
+    h.command('approver', 'workspace.reopen', {'reason': 'Name the cover first'}, target=sent['id'], revision=sent['revision'])
+    pending = h.get('coordinator', f'/api/publications/{pub}/pending-changes')['workspace']
+    taken = h.command('both', 'publication.changes.withdraw', {'reason': 'Taken back to edit after it was returned'},
+                      target=pub, revision=pending['revision'])['workspace']
+    again = h.command('both', 'publication.changes.submit', {'reason': 'Send the cover again'}, target=pub,
+                      revision=taken['revision'])['workspace']
+    assert again['id'] != sent['id']
+    assert h.command('both', 'workspace.approve', {}, again['id'], again['revision'], status=403)['error']['code'] == 'SELF_APPROVAL'
+    permission = grant(h, identity_id=h.seed['identities']['both'])
+    for payload in ({}, {'note': 'ok'}, {'reason': 'Routine update'}):
+        refused = h.command('both', 'workspace.approve', payload, again['id'], again['revision'], status=422)
+        assert refused['error']['code'] == 'SELF_APPROVAL_REASON'
+    reason = 'Checked the cover with the duty lead'
+    assert h.command('both', 'workspace.approve', {'reason': reason}, again['id'], again['revision'])['workspace']['status'] == 'approved'
+    with transaction(h.app.state.engine) as db:
+        decision = db.scalar(select(m.ReviewDecision).where(m.ReviewDecision.workspace_id == again['id']))
+        assert (decision.self_approval_id, decision.reason) == (permission['id'], reason)
+
+
 def test_absence_document_setting_retains_versions_and_supports_undo(h):
     result = h.command('admin', 'absence_report.settings', {'document_required': True, 'reason': 'Require evidence for reports'}, revision=1)
     undo = result['undo']

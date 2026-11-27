@@ -1,7 +1,8 @@
 # Delivery
 
-Follows engineering standard v1.22. Owned by the Delivery Lead. Engineering rules are in AGENTS.md and the design
-contract is in DESIGN.md.
+Follows engineering standard v1.22. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
+The QA Lead owns the Test policy section, nightly-test triage, `tests/quarantine.json`, known failures, known skips, the
+frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.md and the design contract is in DESIGN.md.
 
 ## Branching and merging
 - One trunk, `main`, with temporary release branches. The repository rulesets and workflows protect `main` and
@@ -41,9 +42,14 @@ contract is in DESIGN.md.
 
 ## Checks
 - A pull request runs static checks plus the tests its diff against the target base can reach, proven by hiding a
-  change on purpose. Merge groups and pushes to `main` or a release branch run the full unit and browser suites.
+  change on purpose. The protected affected-unit pilot verifies a qualifying unit fixture change and its node coverage
+  without the static or browser jobs. Merge groups and release-branch pushes run the full unit and browser suites.
+  A queue push to `main` reuses the successful merge-group reports only after verifying the exact commit, tree, base,
+  full test coverage and protected CI controls. A push without that proof runs both suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
-  reports. If the nightly capacity check defers the suites, the gate records the deferral.
+  reports. On a qualifying main push it independently verifies the queue proof, retains the qualification reports
+  with their original run identity, and links to that run for the shard reports. If the nightly capacity check
+  defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
   guard fails any workflow whose `runs-on` is not a GitHub-hosted label.
 - Jobs run in parallel; independent jobs never wait on each other; suites are sharded and shard counts follow
@@ -53,6 +59,7 @@ contract is in DESIGN.md.
   `pull_request_target` on untrusted code. Workflows from forks get no secrets and need approval to run.
 - One fast privacy check of secrets, names and hosts runs as a pre-push hook and as a required check. Issue and
   pull-request text gets the same screen before posting. A failed check means nothing is sent; never work around it.
+  On pull requests, the trusted checker also requires a bot opener listed in `.github/privacy-pr-openers.json`.
 - The policy guard and trusted verdict run from `main`'s copy. They read policy data from the event's target base
   for pull requests and merge groups, and from the previous commit on a branch push. A newly created release
   branch uses its starting commit, and reader changes land before the policy or ruleset changes they support.
@@ -110,8 +117,11 @@ contract is in DESIGN.md.
   minutes. Full suites run on hosted runners.
 - Wait for states (`expect`, `wait_for`), never fixed times; `tests/test_timing_guard.py` rejects new
   `wait_for_timeout`/`sleep` calls. Browser tests use `sign_in` unless the sign-in form is under test, and create
-  data through `h.command(...)` unless the creating UI is under test. To diagnose, set `PW_TRACE_DIR` (a failed test
-  keeps its traces); `PW_CPU_THROTTLE=4` and `PW_API_DELAY_MS=800` reproduce a loaded runner.
+  data through `h.command(...)` unless the creating UI is under test. Hosted shards set `PW_TRACE_MODE=off` and
+  save failure screenshots in `PW_SCREENSHOT_DIR`. The protected runner sets `PW_TRACE_MODE=on` only for the
+  focused browser retry, which saves traces in `PW_TRACE_DIR` even when the node recovers. For local diagnostics,
+  setting `PW_TRACE_DIR` alone keeps traces on failure and saves screenshots in a sibling directory with a
+  `-screenshots` suffix. `PW_CPU_THROTTLE=4` and `PW_API_DELAY_MS=800` reproduce a loaded runner.
 - Tests use local services and mocks only: never a remote or paid service, never a real secret.
 
 ## Environments
@@ -130,11 +140,12 @@ contract is in DESIGN.md.
 - Versions are `vX.Y.Z`; release candidates are `vX.Y.Z-rc.N`, tested on staging.
 - Version tags build, scan and publish the image for their exact commit. The published build contains public code only.
 - Before tagging, qualify the exact release tree with the full checks and require zero failed or skipped tests.
-- Before creating either tag, run `python scripts/check_release_version.py TAG COMMIT` from the repository root and require it to pass.
+- The release tag tool runs `scripts/check_release_version.py` for the exact tag and commit.
+  It refuses to create the tag if the check fails.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
-- Before every final tag (not an `-rc.N`), sweep the whole product: every page for every role (`ROLE_NAMES`),
+- Before every final release tag, the QA Lead sweeps every page for every role (`ROLE_NAMES`),
   desktop 1440 and phone 390, light and dark, the states in § Test policy and the critical journeys, looking at the
   screenshots. Fix the real blockers it finds first.
 - Engine/compiler, validator, greedy, score and fairness version constants are bumped once per release, in release

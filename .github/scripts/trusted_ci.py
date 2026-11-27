@@ -24,6 +24,7 @@ from quarantine_registry import QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
+TOP_LEVEL_TEST = policy.re.compile(r"tests/test_[\w-]+\.py")
 
 
 def settings(*, plan=None):
@@ -117,7 +118,7 @@ def pr_scope(data, git, trusted_sha, base, candidate):
 def ordinary_test_module(path, before, after, inventory):
     """Allow ordinary top-level test modules while keeping Working Policy's tiers."""
     if (after is None or path in inventory["product_imports"]
-            or not policy.re.fullmatch(r"tests/test_[\w-]+\.py", path)):
+            or not TOP_LEVEL_TEST.fullmatch(path)):
         return False
     try:
         if "\0" in (before or b"").decode("utf-8") or "\0" in after.decode("utf-8"):
@@ -129,7 +130,10 @@ def ordinary_test_module(path, before, after, inventory):
 
 def affected_files(changed, files):
     required = PR_SMOKE | (changed & files)
-    if not PR_SMOKE <= files:
+    # The guard scans top-level Python tests without importing them.
+    if any(TOP_LEVEL_TEST.fullmatch(path) for path in changed):
+        required.add("tests/test_cpu_budget.py")
+    if not required <= files:
         return None
     if not changed:
         return required
@@ -140,6 +144,14 @@ def affected_files(changed, files):
         print("::warning::PR selector failed (" + type(error).__name__ + "); running the full suite")
         return None
     return required | owners if isinstance(owners, set) and owners <= files else None
+
+
+def test_inventory():
+    files = sorted(p for p in hosted.git("ls-files", "tests").splitlines()
+                   if policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py", p))
+    if not files or any(Path(p).is_symlink() or not Path(p).is_file() for p in files):
+        raise ValueError("Invalid candidate file inventory")
+    return files
 
 
 def plan(base, measurement):
@@ -164,10 +176,7 @@ def plan(base, measurement):
         replicas = context["replicas"]
     durations = TRUSTED / "ci/hosted-durations.json"
     data = hosted.load_durations(durations)
-    files = sorted(p for p in hosted.git("ls-files", "tests").splitlines()
-                   if policy.re.fullmatch(r"tests/(?:[\w-]+/)*test_[\w-]+\.py", p))
-    if not files or any(Path(p).is_symlink() or not Path(p).is_file() for p in files):
-        raise ValueError("Invalid candidate file inventory")
+    files = test_inventory()
     result = {"schema": 1, "sha": candidate, "tree": candidate_tree, "base_sha": base,
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
@@ -194,6 +203,31 @@ def plan(base, measurement):
     return result
 
 
+def runner_plan(base, measurement, suite, shard, seal):
+    path = os.getenv("CI_CHECKS_PLAN")
+    # The first unit shard independently checks the entire plan on every PR.
+    if (not path or measurement or os.getenv("GITHUB_EVENT_NAME") != "pull_request"
+            or os.getenv("TRUSTED_BOOTSTRAP") == "true" or (suite == "unit" and shard == 1)):
+        return plan(base, measurement)
+    event = policy.event()
+    branch = event["pull_request"]["base"]["ref"]
+    # Legacy promotion plans may use the integration branch as their baseline.
+    if branch != policy.default_branch(event) and not policy.release_branch(branch):
+        return plan(base, measurement)
+    candidate = policy.decode(Path(path).read_bytes())
+    if hosted.digest(candidate) != seal:
+        raise ValueError("Runner plan identity differs from the trusted plan")
+    sha, tree = hosted.git("rev-parse", "HEAD", "HEAD^{tree}").splitlines()
+    if (candidate["sha"], candidate["tree"], candidate["base_sha"]) != (sha, tree, base):
+        raise ValueError("Checks plan differs from the shard candidate or base")
+    if candidate["base_sha"] != policy.pr_test_base(event, sha):
+        raise ValueError("Checks plan differs from the verified target parent")
+    if candidate["inventory_sha256"] != hosted.digest(test_inventory()):
+        raise ValueError("Checks plan differs from the shard test inventory")
+    print("Using the sealed Checks plan")
+    return candidate
+
+
 def census_files(plan, files):
     if "selection" in plan:
         scope = {path for row in plan["suites"].values() for shard in row["shards"] for path in shard["files"]}
@@ -201,7 +235,7 @@ def census_files(plan, files):
     return set(files)
 
 
-def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False):
+def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False, trace=False):
     """Keep raw deliberate FAIL/ERROR; normalization removes only verified random sentinels."""
     flags=hardening.load()
     config_file = Path.cwd() / "pyproject.toml"
@@ -269,6 +303,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             collected = json.loads(census.read_text(encoding="utf-8"))
         # The parent retains the collection snapshot; the test process cannot change this in-memory copy.
         env.pop("TRUSTED_COLLECTION_OUTPUT")
+        env["PW_TRACE_MODE"] = "on" if trace else "off"
         code = subprocess.call([*command, "-n", workers, "--dist", "worksteal", "--hosted-deselected-output=" + str(deselected),
                                 "--junitxml=" + str(raw)], env=env)
         if flags['canaries'] and code != 1:
@@ -304,8 +339,8 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
 
 
 def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, candidate, partial=False, listed=frozenset()):
-    def attempt(selected, path, options, parallelism, before, *, partial=False):
-        code = invocation(selected, suite, path, options, parallelism, before, partial=partial)
+    def attempt(selected, path, options, parallelism, before, *, partial=False, trace=False):
+        code = invocation(selected, suite, path, options, parallelism, before, partial=partial, trace=trace)
         files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
         return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
 
@@ -315,7 +350,7 @@ def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, 
         failures = maker.retry_nodes(original, listed)
         if failures:
             path = report.with_name(report.stem + "-retry.xml")
-            first["retry"] = attempt(failures, path, [], "0", None)
+            first["retry"] = attempt(failures, path, [], "0", None, trace=suite == "browser")
             canaries.recovered_nodes(report, first, failures, allow_retry=True)
     return first
 
@@ -381,7 +416,12 @@ def main():
         else:
             policy.ci_context()
         return
-    candidate = plan(policy.commit(args.base_sha), args.measurement == "true")
+    base = policy.commit(args.base_sha)
+    measurement = args.measurement == "true"
+    if args.mode == "plan":
+        candidate = plan(base, measurement)
+    else:
+        candidate = runner_plan(base, measurement, args.suite, args.shard, args.plan_sha256)
     reports = Path(".run/reports")
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "shard-plan.json").write_text(json.dumps(candidate, indent=2) + "\n", encoding="utf-8")

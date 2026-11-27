@@ -55,6 +55,8 @@ def _apply(db, actor, items, reason, decision, batch_id, approval_context=None):
         payload = {"reason": reason}
         if decision:
             payload["decision"] = "decline" if pattern and decision == "reject" else decision
+            if not pattern and item.balance_confirmation:
+                payload["balance_confirmation"] = item.balance_confirmation
         command = s.Command(kind=kind + ("decide" if decision else "undo"), payload=payload,
                             target_id=item.id, expected_revision=item.expected_revision)
         handler = (availability_patterns.decide if pattern else availability.decide_request) if decision else (
@@ -83,6 +85,7 @@ def _apply(db, actor, items, reason, decision, batch_id, approval_context=None):
         db.add(m.AuditEvent(department_id=actor.department_id, actor_id=actor.identity_id,
                             action=command.kind, target_id=item.id, reason=reason,
                             detail={"batch_id": batch_id, "receipt_id": db.info.get("receipt_id"),
+                                    **({"leave_balance_overdrawn": True} if reply.get("leave_balance_overdrawn") else {}),
                                     **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
                                     **({"entered_on_behalf_by": sorted(enterers)}
                                        if (enterers := db.info.pop("entered_on_behalf_by", None)) else {})},

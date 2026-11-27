@@ -101,16 +101,16 @@ def test_fairness_drill_explains_failed_read_keeps_focus_and_can_retry(browser, 
     try:
         navigate(page,"insights/fairness")
         october(page)
-        alex = section(page, "distribution").get_by_role("button", name=re.compile(r"^Alex Morgan: 3 duties"))
+        alex = section(page, "distribution").get_by_role("button", name=re.compile(r"^Staff 01\(test\): 3 duties"))
         pattern = "**/api/fairness/sessions?*"
         page.route(pattern, lambda route: route.abort())
         alex.click()
         expect(page.locator(".toast.error")).to_contain_text("Sessions unavailable")
         expect(alex).to_be_focused()
-        expect(page.get_by_role("region", name="Duties · Alex Morgan", exact=True)).to_have_count(0)
+        expect(page.get_by_role("region", name="Duties · Staff 01(test)", exact=True)).to_have_count(0)
         page.unroute(pattern)
         alex.click()
-        expect(page.get_by_role("region", name="Duties · Alex Morgan", exact=True).locator("tbody tr")).to_have_count(3)
+        expect(page.get_by_role("region", name="Duties · Staff 01(test)", exact=True).locator("tbody tr")).to_have_count(3)
         assert not errors
     finally:
         context.close()

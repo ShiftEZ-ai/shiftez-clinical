@@ -204,11 +204,18 @@ export const forgetActiveChoices=()=>{active=null;};
 
 // ---- The approver's decision (B5) ----
 /** A proposal's relation and effect, only for drafts whose dates overlap its changed lines (rule_effects.review). */
-export type Review={policy_id:string;relations:Record<string,Relation>;effect:Effect[];ready:boolean;
+export type Review={policy_id:string;relations:Record<string,Relation>;effect:Effect[];ready:boolean;weakens_safety?:boolean;
   /** A decision may be made when no check is running and there is no hard blocker. Added problems or an uncertain
    *  effect need the approver's explicit acknowledgement and reason. */can_decide?:boolean;requires_acknowledgement?:boolean;
   /** Why no check was needed (maintenance: lines only of people who left before them), said instead of an empty effect. */summary?:string|null};
-export const proposalReview=(policyId:string)=>get<Review>(`/api/policies/${encodeURIComponent(policyId)}/review`);
+const proposalReviewPath=(policyId:string)=>`/api/policies/${encodeURIComponent(policyId)}/review`;
+export const proposalReview=(policyId:string)=>get<Review>(proposalReviewPath(policyId));
+export async function proposalProtection(policyId:string,replaces:readonly string[],signal:AbortSignal){
+  const result=await request<Required<Pick<Review,'policy_id'|'weakens_safety'>>>(proposalReviewPath(policyId),
+    {method:'POST',question:true,body:JSON.stringify({replaces_ids:replaces}),signal});
+  if(result?.policy_id!==policyId||typeof result.weakens_safety!=='boolean')throw new Error('Safety protection result unavailable.');
+  return result;
+}
 /** Starts the effect check of one overlapping draft (the existing feasibility job, this rule's change only). */
 export const checkEffect=(policyId:string,revision:number,x:Effect)=>command('job.create',
   {workspace_id:x.workspace_id,kind:'feasibility',rule_changes:[{policy_id:policyId,expected_revision:revision}]},undefined,x.revision);
@@ -222,8 +229,8 @@ export const approveAndActivate=(policyId:string,revision:number,reason:string|n
  *  (a check's finding counts are another unit than the footer's causes, so none stand in). A provisional check
  *  (scope command_changes) with its job listed says that job's words (`provisional`); with none listed it is "Waiting to
  *  check" until the rota's job list is read (`partial`, `jobsRead`); read with no live check job in it, nothing proves a
- *  check (D-062) and it is not current. `ended`: this page saw the rota's check end (stopped, refused, or its take-over
- *  failed): no job is waited for, so the pill says that end (Check now's words), never "Waiting to check".
+ *  check (D-062) and it is not current. `ended`: this page saw the rota's check end (stopped, refused, cancelled, or its
+ *  take-over failed): no job is waited for, so the pill says that end (Check now's words), never "Waiting to check".
  *  `whole`: the whole rota is read (a window keeps its counts). */
 export type FooterCheck='stalled'|'checking'|'provisional'|'not-checked'|'counts'|'waiting'|'checked'|'stale'|'check-now'|'needs-check';
 export function footerCheck(s:{stalled:boolean;checking:boolean;provisional:boolean;checked:boolean;counts:boolean;

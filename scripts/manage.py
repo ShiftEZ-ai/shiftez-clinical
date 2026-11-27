@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Explicit operator entry points. No migrations or demo seeding on normal reads."""
 import argparse
+from collections import defaultdict
+from contextlib import suppress
 from dataclasses import replace
 from datetime import date
 import json
@@ -16,14 +18,17 @@ from alembic.script import ScriptDirectory
 from alembic.script.revision import ResolutionError
 from pydantic import ValidationError
 from sqlalchemy import func, inspect, select
+from sqlalchemy.exc import SQLAlchemyError
 from apps.api.settings import (Settings, new_department_display_settings, new_department_session_limits,
                                refuse_test_flags, secret_from_env)
 from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import AccountInvite, TypeDefinition
+from packages.contracts.schemas import AccountInvite, Decision, INSTALLATION_ADMIN_ROLE, PERMISSIONS, ROLE_LABELS, TypeDefinition
 from migrations import safety
+from migrations.source_safety import assigned, preflight_analyzer
+from migrations.sql_safety import CURRENT_SCHEMA, duplicate_precheck_tokens
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +44,76 @@ def migrate(url):
     command.upgrade(alembic_config(url), "head")
 
 
+def check_duplicate_prechecks(db, pending, fresh):
+    """DUPLICATE_PRECHECKS contains literal SELECTs that return a row on conflict."""
+    fills = defaultdict(lambda: defaultdict(set))
+
+    def name_key(name):
+        return name.lower() if db.dialect.name == 'sqlite' else name
+
+    def relation_key(table):
+        schema, _, name = name_key(table).rpartition('.')
+        return name, '' if schema == CURRENT_SCHEMA else schema
+
+    def record_fill(table, columns):
+        name, schema = relation_key(table)
+        fills[name][schema].update({None} if columns is None else map(name_key, columns))
+
+    unproved = False
+    for step in pending:
+        indexes = []
+
+        def record_precheck(query, new_table, table, columns):
+            name, schema = relation_key(table)
+            inputs = None if columns is None else set(map(name_key, columns))
+            # Unqualified relations can resolve to an explicitly named schema.
+            affected = any((not schema or not scope or schema == scope)
+                           and (inputs is None or None in writes or not inputs.isdisjoint(writes))
+                           for scope, writes in fills.get(name, {}).items())
+            indexes.append((query, new_table, affected))
+
+        analyzer = preflight_analyzer(step.path, record_fill=record_fill, record_duplicate_precheck=record_precheck)
+        kind = analyzer.run()['class']
+        unproved |= kind == 'destructive'
+        declared = assigned(analyzer.tree, 'DUPLICATE_PRECHECKS')
+        if 'DUPLICATE_PRECHECKS' not in analyzer.globals:
+            declared = ()
+        try:
+            if not isinstance(declared, (list, tuple)) or not all(isinstance(query, str) for query in declared):
+                raise ValueError('DUPLICATE_PRECHECKS must be a literal sequence of queries')
+            # A newly created table is empty only when the revision is proven additive.
+            required, empty = set(), set()
+            affected = False
+            for query, new_table, inputs_changed in indexes:
+                tokens = duplicate_precheck_tokens(query)
+                if new_table and kind == 'additive':
+                    empty.add(tokens)
+                else:
+                    required.add(tokens)
+                    affected |= inputs_changed
+            queries = [(duplicate_precheck_tokens(query), query) for query in declared]
+            if required - {tokens for tokens, _ in queries}:
+                raise ValueError('missing duplicate pre-check matching the unique expression index')
+            if affected:
+                raise ValueError('pending fill may change unique expression index inputs before creation')
+            if required and unproved and not fresh:
+                raise ValueError('unproved pending migration may change unique expression index inputs before creation')
+        except ValueError as exc:
+            raise SystemExit(f'Refusing migration {step.revision}: {exc}') from None
+        if fresh:
+            continue  # There are no retained rows to check on a fresh database.
+        for tokens, query in queries:
+            if tokens in empty and tokens not in required:
+                continue
+            try:
+                with db.exec_driver_sql(query) as result:
+                    duplicate = result.fetchone() is not None
+            except SQLAlchemyError:
+                raise SystemExit(f'Refusing migration {step.revision}: could not run duplicate pre-check') from None
+            if duplicate:
+                raise SystemExit(f'Refusing migration {step.revision}: duplicate rows found by pre-check')
+
+
 def check_migrations(url, confirmed=()):
     """Read-only deploy gate, run before any backup, writer stop or upgrade.
 
@@ -51,10 +126,16 @@ def check_migrations(url, confirmed=()):
     engine = make_engine(url)
     try:
         with engine.connect() as db:
-            current = MigrationContext.configure(db).get_current_heads()
-            fresh = not current and not (set(inspect(db).get_table_names()) - {"alembic_version"})
+            db.exec_driver_sql('SET TRANSACTION READ ONLY' if db.dialect.name == 'postgresql'
+                               else 'PRAGMA query_only=ON')
+            return _check_pending_migrations(db, script, confirmed)
     finally:
         engine.dispose()
+
+
+def _check_pending_migrations(db, script, confirmed):
+    current = MigrationContext.configure(db).get_current_heads()
+    fresh = not current and not (set(inspect(db).get_table_names()) - {"alembic_version"})
     if len(current) > 1:
         raise SystemExit(f"Refusing: the database records several migration heads {list(current)}; repair it first")
     base = current[0] if current else None
@@ -78,6 +159,7 @@ def check_migrations(url, confirmed=()):
         raise SystemExit(f"Refusing: {missing} are reviewed DESTRUCTIVE migrations. Confirm a fresh verified backup, read "
                          f"their DESTRUCTIVE_REVIEWED notes, then rerun with --confirm-destructive {','.join(missing)} "
                          f"(deploy: FMUC_CONFIRM_DESTRUCTIVE={','.join(missing)})")
+    check_duplicate_prechecks(db, pending, fresh)
     print(f"Database head: {base or 'empty'}; image head: {script.get_current_head()}; pending: {len(pending)}")
     for r in pending:
         print(f"  {r.revision}  {safety.classification(r.path)}" +
@@ -101,8 +183,10 @@ def demo_data(db, passwords=None, empty=False):
     from apps.api.services.contacts import seed as seed_contacts
     seed_contacts(db, department.id)
     people = []
-    for name in ("Alex Morgan", "Jordan Lee", "Taylor Noor"):
-        row = m.Person(organisation_id=organisation.id, display_name=name)
+    for number in range(1, 4):
+        # Keep the number with its marker so it is visible in short labels too.
+        label = f"{ROLE_LABELS['staff']} {number:02}(test)"
+        row = m.Person(organisation_id=organisation.id, display_name=label)
         db.add(row); db.flush(); people.append(row)
     identities = {}
     hashes = {}
@@ -157,9 +241,126 @@ def demo_data(db, passwords=None, empty=False):
     return result
 
 
+BOOTSTRAP_AUDIT_ACTION = "installation.bootstrap"
+UNVERIFIED_BOOTSTRAP = ("No unique pending first administrator with verifiable setup evidence. "
+                        "Use the original setup link if it still works. Otherwise ask the installation "
+                        "owner for verified recovery before upgrading.")
+
+
+def first_admin_invitation(db):
+    """Find the original pending bootstrap invitation from its receipt, audit and stored link."""
+    from apps.api.auth import held_roles
+    from apps.api.services.accounts import LOCAL_ISSUER, lock_link_account
+    from scripts.system_command import MAINTENANCE_ISSUER, MAINTENANCE_SUBJECT
+
+    maintenance = db.scalar(select(m.Identity).where(m.Identity.issuer == MAINTENANCE_ISSUER,
+        m.Identity.subject == MAINTENANCE_SUBJECT, m.Identity.disabled.is_(True)))
+    if maintenance is None:
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    events = list(db.scalars(select(m.AuditEvent).where(
+        m.AuditEvent.actor_id == maintenance.id, m.AuditEvent.action == BOOTSTRAP_AUDIT_ACTION).limit(2)))
+    if len(events) != 1:
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    event, = events
+    receipt_id = event.detail.get("receipt_id")
+    receipt = db.get(m.CommandReceipt, receipt_id) if receipt_id is not None else None
+    if (not event.detail.get("maintenance") or receipt is None or receipt.actor_id != maintenance.id
+            or receipt.department_id != event.department_id or receipt.command_kind != "account.invite"):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    target_id = receipt.result.get("record", {}).get("id")
+    link_id = receipt.result.get("link", {}).get("id")
+    if not target_id or target_id != event.target_id or not link_id or link_id != event.detail.get("link_id"):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    # Acceptance and disable can change eligibility while recovery waits for the account.
+    if lock_link_account(db, target_id) is None:
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    link = db.get(m.AccountLink, link_id)
+    if (link is None or link.identity_id != target_id or link.department_id != event.department_id
+            or link.created_by != maintenance.id or link.purpose != "invite" or link.used_at is not None):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    pending = db.scalar(select(m.Account).join(m.Identity, m.Identity.id == m.Account.identity_id).where(
+        m.Account.identity_id == target_id, m.Account.accepted_at.is_(None), m.Identity.disabled.is_(False),
+        m.Identity.issuer == LOCAL_ISSUER, m.Identity.subject == m.Account.username))
+    department = db.get(m.Department, event.department_id)
+    if pending is None or department is None or "admin" not in held_roles(db, target_id, department.id):
+        raise RuntimeError(UNVERIFIED_BOOTSTRAP)
+    return maintenance, department, pending
+
+
+def reissue_first_admin(settings, reason, output):
+    from apps.api.auth import Actor
+    from apps.api.schema import require_current_schema
+    from apps.api.services.accounts import issue_link, store
+
+    if os.name != "posix":
+        raise RuntimeError("First administrator recovery needs a POSIX host and a private output directory")
+    directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    engine = None
+    created = None
+    prepared = False
+    try:
+        parent = os.fstat(directory)
+        if parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+            raise RuntimeError("Use an existing output directory accessible only to its owner")
+        engine = make_engine(settings.database_url, settings=settings)
+        with transaction(engine, write=True) as db:
+            require_current_schema(db)
+            maintenance, department, account = first_admin_invitation(db)
+            target_id = account.identity_id
+            user = store(settings).get(account.username)
+            if not user or user.get("disabled") is not True or user.get("email") != account.email:
+                raise RuntimeError("The pending first administrator is missing or changed in the sign-in store")
+            # Keep the requested name free until the private inode is known and its contents are durable.
+            staging = f".first-admin-{m.uid()}"
+            staged_link = f"{staging}/link"
+            os.mkdir(staging, mode=0o700, dir_fd=directory)
+            try:
+                with open(staged_link, "x", encoding="utf-8",
+                          opener=lambda name, flags: os.open(name, flags, 0o600, dir_fd=directory)) as private:
+                    created = os.fstat(private.fileno())
+                    if created.st_uid != os.geteuid() or created.st_mode & 0o077:
+                        raise RuntimeError("The output filesystem did not create a private file")
+                    actor = Actor(maintenance.id, department.id, department.organisation_id, maintenance.display_name,
+                                  frozenset(PERMISSIONS["access.system_roles"]), None, "maintenance")
+                    link = issue_link(db, actor, target_id, "invite", settings)
+                    db.add(m.AuditEvent(department_id=department.id, actor_id=maintenance.id, action="account.resend",
+                        target_id=target_id, reason=reason, detail={"link_id": link["id"], "maintenance": True},
+                        correlation_id=m.uid()))
+                    db.flush()
+                    private.write(db.info.pop("one_time_link") + "\n")
+                    private.flush()
+                    os.fsync(private.fileno())
+                os.link(staged_link, output.name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
+                if not os.path.samestat(os.stat(output.name, dir_fd=directory, follow_symlinks=False), created):
+                    raise RuntimeError("The private output file changed during recovery")
+            finally:
+                with suppress(FileNotFoundError):
+                    os.unlink(staged_link, dir_fd=directory)
+                os.rmdir(staging, dir_fd=directory)
+            os.fsync(directory)
+            prepared = True
+    except BaseException as exc:
+        if prepared:
+            raise RuntimeError("Could not confirm the recovery transaction. Keep the output private. "
+                               "If the link does not work, retry recovery to a new file.") from exc
+        if created is not None:
+            try:
+                current = os.stat(output.name, dir_fd=directory, follow_symlinks=False)
+                if os.path.samestat(current, created):
+                    os.unlink(output.name, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+        raise
+    finally:
+        os.close(directory)
+        if engine is not None:
+            engine.dispose()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["migrate", "check-migrations", "init-demo", "init-institution", "init-production-seed", "rebuild-fairness"])
+    parser.add_argument("action", choices=["migrate", "check-migrations", "init-demo", "init-institution",
+                        "reissue-first-admin", "init-production-seed", "rebuild-fairness"])
     parser.add_argument("--confirm-destructive", default="", metavar="REV[,REV]",
                         help="Production: allow these exact reviewed destructive revisions to run")
     parser.add_argument("--database-url", default=secret_from_env("DATABASE_URL", "sqlite:///./var/rota.db"))
@@ -171,6 +372,7 @@ def main():
     parser.add_argument("--display-name", help="First administrator's display name")
     parser.add_argument("--seed-version", type=int, choices=[1])
     parser.add_argument("--reason", help="Recorded owner reason for the initial seed or administrator invitation")
+    parser.add_argument("--output", type=Path, help="New file in a private directory for the replacement setup link")
     parser.add_argument("--timezone", default="Asia/Riyadh")
     parser.add_argument("--week-start", type=int, choices=range(7), default=6, help="Institution calendar: Monday=0 through Sunday=6")
     args = parser.parse_args()
@@ -188,7 +390,7 @@ def main():
         ZoneInfo(args.timezone)
         try:
             invite = AccountInvite(username=args.username, email=args.email, display_name=args.display_name,
-                                   roles=["admin"], reason=args.reason)
+                                   roles=["admin", INSTALLATION_ADMIN_ROLE], reason=args.reason)
             settings = replace(Settings.from_env(), database_url=args.database_url)
             if not settings.identity_users_file:
                 parser.error("Institution bootstrap requires a managed sign-in users file")
@@ -199,6 +401,19 @@ def main():
             parser.error(str(exc))
     if os.getenv("ROTA_ENV") == "production" and not args.database_url.startswith("postgresql+psycopg://"):
         parser.error("Production migration/bootstrap requires an explicit PostgreSQL psycopg URL")
+    if args.action == "reissue-first-admin":
+        if args.output is None:
+            parser.error("First administrator recovery requires --output and --reason")
+        try:
+            decision = Decision(reason=args.reason)
+            settings = replace(Settings.from_env(), database_url=args.database_url)
+            if not settings.identity_users_file:
+                parser.error("First administrator recovery requires a managed sign-in users file")
+            settings.check()
+        except ValidationError:
+            parser.error("Enter a valid reason for replacing the first administrator invitation")
+        reissue_first_admin(settings, decision.reason, args.output)
+        return
     if args.action == "init-production-seed":
         if args.seed_version is None or not args.reason:
             parser.error("Initial seed requires --seed-version 1 and --reason; it never runs automatically")
@@ -230,6 +445,8 @@ def main():
                 raise RuntimeError("Demo bootstrap is prohibited in production")
             with transaction(engine, write=True) as db:
                 values = demo_data(db, empty=args.empty)
+                db.add(m.RoleBinding(identity_id=values["identities"]["admin"], department_id=values["department_id"],
+                                     role=INSTALLATION_ADMIN_ROLE, starts_on=date(2020, 1, 1)))
             directory = ROOT / ".run"
             directory.mkdir(exist_ok=True)
             path = directory / "demo-credentials.json"
@@ -255,8 +472,12 @@ def main():
                 from apps.api.services.scoring_defaults import seed as seed_scoring_defaults
                 seed_scoring_defaults(db, dept.id)
                 actor = maintenance_identity(db, m, select)
+                correlation_id = m.uid()
                 [receipt] = apply(db, actor, dept, [{"kind": "account.invite", "payload": invite.model_dump(mode="json")}],
-                                  m.uid(), settings)
+                                  correlation_id, settings)
+                db.add(m.AuditEvent(department_id=dept.id, actor_id=actor.id, action=BOOTSTRAP_AUDIT_ACTION,
+                    target_id=receipt["record"]["id"], reason=invite.reason, correlation_id=correlation_id,
+                    detail={"receipt_id": receipt["receipt_id"], "link_id": receipt["link"]["id"], "maintenance": True}))
             print("Institution initialized. Give this private one-time setup link to the first administrator:")
             print(receipt["one_time_link"])
     finally:

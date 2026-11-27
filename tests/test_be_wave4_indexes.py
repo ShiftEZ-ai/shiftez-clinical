@@ -13,7 +13,7 @@ from apps.api import models as m
 from apps.api.db import make_engine, transaction
 from migrations import safety
 from scripts.manage import alembic_config, migrate
-from tests.migration_support import historical_seed
+from tests.migration_support import historical_seed, without_installation_admin_backfill
 from tests.test_audit_worker_indexes import measure
 from tests.test_performance_budget import python_budget
 
@@ -42,12 +42,17 @@ def test_single_additive_migration_preserves_retained_evidence(tmp_path):
             db.add(event)
             db.flush()
             event_id = event.id
+        def snapshot(db):
+            return {table.name: db.execute(select(table).order_by(table.c.id)).all()
+                    for table in (m.AuditEvent.__table__, m.RoleBinding.__table__)}
+
         with engine.connect() as db:
-            before = db.execute(select(m.AuditEvent.__table__)).all()
+            before = snapshot(db)
         migrate(url)
         with engine.connect() as db:
-            assert db.execute(select(m.AuditEvent.__table__)).all() == before
-            assert db.scalar(select(m.AuditEvent.id)) == event_id
+            retained = without_installation_admin_backfill(snapshot(db))
+            assert retained == before
+            assert [event.id for event in retained['audit_events']] == [event_id]
             assert db.scalar(select(m.Department.catalogue_revision)) == 1
             assert INDEX_NAMES <= {index['name'] for table in ('shifts', 'audit_events')
                                    for index in inspect(db).get_indexes(table)}

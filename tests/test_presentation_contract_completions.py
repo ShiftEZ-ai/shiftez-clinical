@@ -39,6 +39,7 @@ def test_optional_layers_omit_legacy_null_and_preserve_explicit_settings():
             s.PlannerViewSettings(layers=invalid)
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_saved_short_name_survives_omitted_input_and_undo(h):
     payload = {'app_name':'Rota','institution_name':'Hospital','reason':'Choose presentation'}
     h.command('admin','branding.update',{**payload,'short_name':'Clinic'}, revision=1)

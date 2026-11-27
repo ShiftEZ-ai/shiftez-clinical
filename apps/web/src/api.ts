@@ -1,5 +1,5 @@
 import type {WorkspaceData} from './types.js';
-import type {Command,IdentifierResponse,OIDCContinuation,OIDCDepartmentChoice,OIDCDepartmentChoices,OIDCDepartmentSession,LiveScope,LiveChange,CatalogueUpdating,WorkspaceDetailView} from './generated.js';
+import type {Command,IdentifierResponse,OIDCContinuation,OIDCDepartmentChoice,OIDCDepartmentChoices,OIDCDepartmentSession,LiveScope,LiveChange,CatalogueUpdating,WorkspaceDetailView,WorkspaceUndoInput} from './generated.js';
 import {WEB_KEPT_READS,UNAVAILABLE_OUTCOME,GENERATION_TIME_FIELDS,GENERATION_STOP_FIELDS,WISH_PRIORITY_FIELDS} from './generated.js';
 import {plainFindings,refusalText} from './findings.js';
 import {track,setRetryAfresh,readTimeout,timedOutWords} from './loading.js';
@@ -34,14 +34,16 @@ let serverDown=false,health='ok';
 // The request path also runs without a page (Node checks of api.ts): the event only where a window is.
 function sayHealth(){const now=serverDown?'down':'ok';if(now!==health){health=now;if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('server-health',{detail:now}));}}
 export const serverHealth=()=>health;
-export function request<T>(path:string, options:RequestInit = {}, renewed=false):Promise<T> {
+type RequestOptions=RequestInit & {question?:true};
+const readMethod=(method?:string)=>!method||method==='GET'||method==='HEAD';
+export function request<T>(path:string, options:RequestOptions = {}, renewed=false):Promise<T> {
   // DL-045: every read ends. One with no answer by READ_TIMEOUT is aborted (the server stops sending) and rejects
   // READ_TIMEOUT, which readFailed shows as "Didn’t load in 1:00." with Retry. Slow is not down: no health change.
   // A 202 "updating" is an answer: maintenance's own wait (projectionReady) pauses the clock; each re-read gets a full limit.
   const stop=new AbortController(),own=options.signal,limit=readTimeout(path);let late=false,timer:ReturnType<typeof setTimeout>|undefined;
   const arm=(on:boolean)=>{clearTimeout(timer);timer=on?setTimeout(()=>{late=true;stop.abort();},limit):undefined;};
   const health=(down:boolean|null,waiting?:boolean)=>{if(down!==null){serverDown=down;sayHealth();}if(waiting!==undefined)arm(!waiting);};
-  if(options.method&&!['GET','HEAD'].includes(options.method))return sent<T>(path,options,renewed,health);
+  if(!options.question&&!readMethod(options.method))return sent<T>(path,options,renewed,health);
   arm(true);
   if(own){if(own.aborted)stop.abort();else own.addEventListener('abort',()=>stop.abort(),{once:true});}
   return sent<T>(path,{...options,signal:stop.signal},renewed,health)
@@ -73,18 +75,19 @@ async function projectionReady(path:string,busy:CatalogueUpdating,header:string|
     const t=window.setTimeout(end,catalogueRetryDelay(header??String(busy.retry_after_seconds),attempt));
     window.addEventListener('catalogue-changed',end);signal?.addEventListener('abort',end);});
 }
-async function sent<T>(path:string, options:RequestInit, renewed:boolean, answered:(down:boolean|null,waiting?:boolean)=>void, catalogueAttempt=0):Promise<T> {
-  const generation=sessionGeneration,reading=!options.method||['GET','HEAD'].includes(options.method);
+async function sent<T>(path:string, options:RequestOptions, renewed:boolean, answered:(down:boolean|null,waiting?:boolean)=>void, catalogueAttempt=0):Promise<T> {
+  const {question,...http}=options;
+  const generation=sessionGeneration,reading=question||readMethod(http.method);
   const headers=new Headers(options.headers);headers.set('Accept','application/json');
   // A JSON command or form; a FormData body sets its own multipart boundary and a File its own type (branding images).
   if(typeof options.body==='string'&&!headers.has('Content-Type'))headers.set('Content-Type','application/json');
-  if(options.method && !['GET','HEAD'].includes(options.method)){headers.set('X-CSRF-Token',csrf());inflight.clear();}
+  if(!readMethod(http.method)){headers.set('X-CSRF-Token',csrf());if(!question)inflight.clear();}
   // Big reads (catalogues, a rota's detail) revalidate with their ETag: unchanged data is not sent again.
   // Kept in memory only, cleared on sign-out; nothing is written to the browser's disk cache.
   const cached=!options.method&&kept.get(path),epoch=keptEpoch;if(cached){if(cached.tag)headers.set('If-None-Match',cached.tag);kept.delete(path);kept.set(path,cached);}
   let response:Response;
   const left=()=>{if(options.signal?.aborted)throw new ApiError('PAGE_LEFT','The page that asked for this was left.',0);};
-  try {response=await fetch(path,{...options,headers,credentials:'same-origin',cache:'no-store'});}
+  try {response=await fetch(path,{...http,headers,credentials:'same-origin',cache:'no-store'});}
   catch {
     if(!options.signal?.aborted)answered(true);
     requireSession(generation);left();
@@ -93,7 +96,7 @@ async function sent<T>(path:string, options:RequestInit, renewed:boolean, answer
     const lost=(code:string,message:string)=>new ApiError(code,message,0);
     if(path==='/api/policies/check')throw lost('CHECK_NOT_RECEIVED','Rule check unavailable. No changes were saved. Try again when connected.');
     if(path==='/api/planner/preview'||path==='/api/catalogue/preview'||path==='/api/planner/staffing-suggestions')throw lost('PREVIEW_NOT_RECEIVED','The preview was not received. Previews never save changes; retry to recalculate.');
-    if(!options.method||['GET','HEAD'].includes(options.method))throw lost('READ_UNAVAILABLE','Connection lost. The server could not be reached.');
+    if(reading)throw lost('READ_UNAVAILABLE','Connection lost. The server could not be reached.');
     // A write with no response may have committed: navigator.onLine read after the failure cannot prove it was not sent.
     throw lost('NETWORK_UNCERTAIN','Connection lost. A save may have committed. Retry the same operation; do not re-enter it as a new action.');
   }
@@ -101,8 +104,8 @@ async function sent<T>(path:string, options:RequestInit, renewed:boolean, answer
   // maintenance: a projection being rebuilt (the rule catalogue after an approval) answers 202 {state:'updating'}: never data.
   if(response.status===202){const text=await response.text().catch(()=>'');let busy:CatalogueUpdating|null=null;
     try{const p=JSON.parse(text);if(p?.state==='updating')busy=p;}catch{/* not the envelope: read below as any 202 */}
-    // A decision (a check, a proposal, an approval) is never run against rules being rebuilt, nor sent again by itself.
-    if(busy&&!reading){answered(false);requireSession(generation);throw new ApiError('RULES_UPDATING',RULES_UPDATING,202,busy);}
+    // Only ordinary reads wait for a rebuilt projection. Decisions and questions return control to their caller.
+    if(busy&&(!reading||question)){answered(false);requireSession(generation);throw new ApiError('RULES_UPDATING',RULES_UPDATING,202,busy);}
     if(busy){answered(false,true);requireSession(generation);left();await projectionReady(path,busy,response.headers.get('Retry-After'),catalogueAttempt,options.signal);
       requireSession(generation);left();answered(null,false);return sent<T>(path,options,renewed,answered,catalogueAttempt+1);}
     response=new Response(text,{status:202,headers:response.headers});}
@@ -131,7 +134,7 @@ async function sent<T>(path:string, options:RequestInit, renewed:boolean, answer
     const said=list.length&&list.every(own)&&details?details:`${error.message}${details?' '+details:''}`;
     // ME-16: a write refused for its stale CSRF token (a tab left open over a new sign-in) renews the session's tokens and
     // is sent once more with the same body (its idempotency key too). Still refused: sign in again, the page is kept.
-    if(response.status===403&&error.code==='CSRF_FAILED'&&options.method&&!['GET','HEAD'].includes(options.method)&&!path.startsWith('/auth/')&&!signingOut){
+    if(!question&&response.status===403&&error.code==='CSRF_FAILED'&&options.method&&!['GET','HEAD'].includes(options.method)&&!path.startsWith('/auth/')&&!signingOut){
       if(!renewed&&await refreshSession()){requireSession(generation);return request<T>(path,options,true);}
       window.dispatchEvent(new CustomEvent('session-expired',{detail:{code:error.code}}));
       throw new ApiError(error.code,'Your sign-in needs renewing. Sign in again to save; what you entered stays on the page.',response.status,error.details);}
@@ -369,17 +372,20 @@ export async function command<T=any>(kind:string,payload:Record<string,unknown>=
  * by retiring the rule, which brings back the rules it grouped, and restoring the versions it replaced. */
 type Row={id:string;revision:number;[k:string]:any};
 // `done`: what the message says once undone (else the general "Undone.").
-/** An undo step; a draft edit's names the content it left (`edit`: its content revision), so its Undo is still that
- *  edit's after a check moved the rota's revision (maintenance). */
+/** An undo step. A bound draft edit keeps the content revision it left, even if a later check changes the rota revision. */
 type Step=Command&{edit?:number};
 type Undo={said:string;undo:Step[];now?:boolean;done?:string};
 export const WITHDRAWN='Withdrawn with Undo by the person who proposed it';
 const back=(kind:string,payload:Record<string,unknown>,row?:Row):Command[]=>row?.id?[{kind,payload,target_id:row.id,expected_revision:row.revision}]:[];
 /** The server's own reverse of a command, as it returned it (its receipt binding, e.g. `undo_of`, included): never rebuilt here. */
 const served=(x:any):Command[]=>x?.undo?.kind&&(x.undo.kind!=='bulk.apply'||(x.undo.payload?.items||[]).length)?[x.undo as Command]:[];
-// Draft edits: the server keeps the arrangement before each edit and puts back the latest one.
-const draftEdit=(said:string)=>(_:any,x:any):Undo=>({said,now:true,undo:back('workspace.undo',{reason:'Undo'},x?.workspace)
-  .map(c=>typeof x?.workspace?.content_revision==='number'?{...c,edit:x.workspace.content_revision}:c)});
+const draftEdit=(said:string)=>(_:any,x:any):Undo=>{
+  const workspace=x?.workspace,undoOf=workspace?.undo_change_id;
+  const payload:WorkspaceUndoInput={reason:'Undo',...(typeof undoOf==='string'?{undo_of:undoOf}:{})};
+  const undo=back('workspace.undo',payload,workspace);
+  return {said,now:true,undo:undo.map(c=>payload.undo_of&&typeof workspace.content_revision==='number'
+    ?{...c,edit:workspace.content_revision}:c)};
+};
 /** Did this Apply write? Only the writer's durable receipt `applied` says so (a retained or refused proposal wrote
  *  nothing). A lost reply is never success by itself: app.ts appliedAnyway returns APPLY_CONFIRMED only once the job
  *  reads `applied`. The one test: lives here so api.ts needs no import cycle; autoschedule_result.ts (applyNeedsReview),
@@ -445,7 +451,8 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   'availability_pattern.end':(_,x)=>({said:'Weekly availability ended',done:'Undone. The weekly availability is back.',undo:back('availability_pattern.restore',{reason:'Undo'},x?.pattern)}),
   'availability_pattern.restore':(_,x)=>({said:'Weekly availability restored',undo:back('availability_pattern.end',{reason:'Undo'},x?.pattern)}),
   // Rotations planned or copied are removed again (only unchanged ones, only by who made them); removed ones come back.
-  ...Object.fromEntries(['rotation.plan','rotation.copy'].map(k=>[k,(_:unknown,x:any)=>({said:k==='rotation.plan'?'Rotations planned':'Rotations copied',
+  ...Object.fromEntries(Object.entries({'rotation.plan':'Rotations planned','rotation.copy':'Rotations copied',
+    'rotation.import_reference':'Reference rotations imported'}).map(([k,said])=>[k,(_:unknown,x:any)=>({said,
     undo:x?.created?.length?[{kind:'rotation.undo_plan',payload:{items:x.created.map((r:Row)=>({id:r.id,revision:r.revision})),reason:'Undo'}}]:[]})])),
   'rotation.remove':(_,x)=>({said:'Rotations removed',undo:served(x).length?served(x):(x?.records||[]).map((r:Row)=>({kind:'catalogue.create',payload:{catalogue:'rotations',reason:'Undo',
     value:Object.fromEntries(['rotation_type_id','person_id','cohort_id','service_id','mentor_id','department_available','starts_on','ends_on'].map(k=>[k,r[k]]))}}))}),
@@ -529,6 +536,8 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   // is linked to the request) and records the undo; a bulk decision is undone as one batch. A swap step is undone
   // forward: the swap closes and reopens as a new one at the earlier stage (the database keeps consent forward-only).
   'request.decide':(_,x)=>({said:'Decision saved',undo:back('request.undo',{reason:'Undo'},x?.record)}),
+  'department.leave_balance_settings':(_,x)=>({said:'Leave allowances saved',undo:served(x)}),
+  'request.edit':(_,x)=>({said:'Request updated',undo:served(x)}),
   'request.decide_many':(_,x)=>({said:'Decisions saved',undo:x?.batch_id?[{kind:'request.undo',payload:{batch_id:x.batch_id,reason:'Undo'}}]:[]}),
   'availability_pattern.decide':(_,x)=>({said:'Decision saved',undo:back('availability_pattern.undo',{reason:'Undo'},x?.pattern)}),
   // Once a confirmed swap is prepared into a rota change (automatically), it is withdrawn or declined instead.
@@ -599,11 +608,8 @@ export function takeUndo():{said:string;done?:string;run:()=>Promise<Undone>}|nu
     // conflict message and no "Not saved" for a change that never happened (G-17, G-28).
     const first=steps[0],known=first?.target_id?knownRevision(first.target_id):undefined;
     // maintenance: a draft edit's Undo is the same as Undo last edit while the rota's content is still what that edit left:
-    // a check after it (the rota checks itself after every edit) moved only the revision, so it is sent at the revision
-    // known now, exactly as the top bar's Undo is. Any later edit moved the content: then it is stale, nothing is sent.
-    // This mirrors the server's own rule (planning.py latest_change: the edit Undo puts back is the newest ChangeSet at the
-    // rota's current content revision): a newer one at the same content is a no-op Undo (refused, NO_UNDO) or the same
-    // person's no-op Redo, so it can never undo someone else's newer edit.
+    // A check may move only the rota revision. If the content is the same, send the current revision
+    // with the original edit ID. The server refuses if another edit is now next to undo.
     const sameEdit=first?.kind==='workspace.undo'&&first.edit!=null&&!!first.target_id&&contents.get(first.target_id)===first.edit;
     if(sameEdit&&known!==undefined)steps[0]={...first,expected_revision:known};
     else if(known!==undefined&&first.expected_revision!=null&&known!==first.expected_revision)throw new Error(STALE_UNDO);
@@ -631,6 +637,7 @@ const inflight=new Map<string,Promise<unknown>>();
 // `sessionChanged`), so a late answer can never redraw or report over the page that replaced it. Reads that serve the
 // whole app (the session, lists in memory, the live pulse, inbox checks, sidebar counts) use `background`.
 let pageReads=new AbortController();
+export const pageReadSignal=()=>pageReads.signal;
 // A left page's reads end with PAGE_LEFT wherever they were awaited, including fire-and-forget loads: that is the
 // intended outcome, not an error, so it is never reported as an unhandled rejection. Every other rejection still is.
 if(typeof window!=='undefined')window.addEventListener('unhandledrejection',e=>{if(e.reason instanceof ApiError&&e.reason.code==='PAGE_LEFT')e.preventDefault();});
@@ -652,9 +659,9 @@ export const SLOW_READ_MS=10_000;
 let slowBackground=0;
 export const updatingNow=()=>slowBackground>0&&!ownInFlight&&!confirming;
 const sayUpdating=()=>{if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('reads-updating',{detail:slowBackground>0}));};
-function read<T>(path:string,scope:'page'|'app',quiet=false):Promise<T>{
+function read<T>(path:string,scope:'page'|'app',quiet=false,fresh=false):Promise<T>{
   // A kept reply (keptReads) answers at once: no wait for the person, so never part of the opening's top bar.
-  const shown=scope==='page'?keptReply<T>(path):null;if(shown)return shown;
+  const shown=scope==='page'&&!fresh?keptReply<T>(path):null;if(shown)return shown;
   // The same read already on its way is shared across scopes: a page joins an app read (never aborted); an app read joins
   // a page read and, if that page is left meanwhile, asks again on its own.
   const other=inflight.get((scope==='page'?'app|':'page|')+path);
@@ -669,8 +676,8 @@ function read<T>(path:string,scope:'page'|'app',quiet=false):Promise<T>{
     inflight.set(key,p=waits?track(q):q);}
   return p as Promise<T>;
 }
-/** A page's read; `quiet`: work behind what is already drawn, never shown on the top bar. */
-export const get=<T=any>(path:string,o:{quiet?:boolean}={}):Promise<T>=>read<T>(path,'page',!!o.quiet);
+/** A page's read. Quiet work keeps the top bar settled. A fresh read bypasses kept replies. */
+export const get=<T=any>(path:string,o:{quiet?:boolean;fresh?:boolean}={}):Promise<T>=>read<T>(path,'page',!!o.quiet,!!o.fresh);
 /** A rota's metadata, revision, check summary, health and review state (`?view=compact`, a few KB at department scale):
  *  for a decision, a revision or a fingerprint. Never its sessions or findings: those are the full read (WorkspaceData). */
 type RotaMeta={workspace:Row;current_fingerprint:string;health:Record<string,any>};

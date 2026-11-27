@@ -1,7 +1,12 @@
 /** Sign-in accounts: the public invitation / password-reset page, changing your own password, and the admin's
  *  invitation, one-time link and session-limit dialogs (Access & roles). Passwords only ever go to the API. */
-import {brandRow,el,field,area,check,select,multi,button,note,formDialog,showDialog,notify,formatDate,sectionHead,withIcon,type Choice,CAPABILITY,roleForCapability} from './dom.js';
-import {request,command} from './api.js';
+import {brandRow,el,field,area,check,select,multi,button,note,formDialog,showDialog,notify,formatDate,sectionHead,withIcon,type Choice,CAPABILITY,roleForCapability,armed,badge,bidi,plural,type Tone} from './dom.js';
+import {request,command,ApiError} from './api.js';
+import {dataTable} from './table_view.js';
+import {dockPanel} from './side_panel.js';
+import {personName,nameText} from './person_label.js';
+import {csvText,download as save} from './schedule_export.js';
+import {ACCOUNT_ONBOARDING_LIMITS,type AccountOnboarding,type AccountOnboardingApply} from './generated.js';
 import {accountSetUp} from './account_memory.js';
 import type {Row} from './types.js';
 
@@ -71,7 +76,7 @@ export function changePasswordDialog(username:string){
 /** Show a one-time link once, ready to copy. The app never shows it again (only its expiry). */
 export function linkDialog(title:string,who:string,result:{one_time_link?:string;link?:{expires_at:string}}){
   const link=result.one_time_link;
-  showDialog(title,link?`Send this link to ${who} yourself (for example by hospital email or in person). It works once and expires ${formatDate(result.link?.expires_at||'')}. Anyone with the link can set the password, so do not post it in shared channels.`:'The link was created, but this repeated request cannot show it again. Use Resend to create a new one.',(body,close)=>{
+  showDialog(title,link?`Send this link to ${who} yourself (for example by work email or in person). It works once and expires ${formatDate(result.link?.expires_at||'')}. Anyone with the link can set the password, so do not post it in shared channels.`:'The link was created, but this repeated request cannot show it again. Use Resend to create a new one.',(body,close)=>{
     if(!link)return;
     const input=el('input',{type:'text',readonly:true,value:link,'aria-label':'One-time link',class:'mono'});
     const copy=button('Copy link',async()=>{try{await navigator.clipboard.writeText(link);notify('Link copied.');}catch{input.select();notify('Press Ctrl+C to copy the selected link.','info');}},'primary');
@@ -90,7 +95,7 @@ export function inviteDialog(people:Choice[],refresh:()=>Promise<void>,roles:Cho
     const username=field('Sign-in name','text','',{required:true,pattern:'[a-z0-9][a-z0-9._\\-]{1,62}',title:'2–63 lowercase letters, digits, dot, dash or underscore',autocomplete:'off'});
     username.wrap.append(el('small',{class:'hint'},'What they type to sign in. Lowercase letters, digits, “.”, “-” or “_”.'));
     let edited=false;username.input.addEventListener('input',()=>{edited=true;});
-    email.input.addEventListener('input',()=>{if(!edited)username.input.value=email.input.value.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g,'').slice(0,63);});
+    email.input.addEventListener('input',()=>{if(!edited)username.input.value=usernameFrom(email.input.value);});
     const person=select('Their staff profile',people,'',false,'None (not on rotas)');
     const picked=multi('Access roles',roles,[roleForCapability(CAPABILITY.STAFF)]),reason=area('Reason');reason.input.required=true;
     form.append(name.wrap,email.wrap,username.wrap,person.wrap,picked.wrap,reason.wrap);
@@ -99,6 +104,82 @@ export function inviteDialog(people:Choice[],refresh:()=>Promise<void>,roles:Cho
       await refresh();linkDialog('Invitation link',name.input.value,result);
     };
   },'Create invitation');
+}
+
+/** A sign-in name from an email's local part, within the Username contract; '' when too little is left. */
+export const usernameFrom=(email:string)=>{
+  const name=email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g,'').replace(/^[._-]+/,'').slice(0,63);
+  return name.length>=2?name:'';};
+
+type Invitation={person_id:string;person_label:string;one_time_link:string};
+const signInSuffix=(username:string|undefined)=>username?` (${username})`:'';
+
+/** Keep the sign-in name with the person's text so a spreadsheet preserves numeric sign-in names. */
+export const invitationsCsv=(rows:Invitation[],signInNames:ReadonlyMap<string,string>)=>
+  '\uFEFF'+csvText([['Person','One-time link'],...rows.map(r=>[r.person_label+signInSuffix(signInNames.get(r.person_id)),r.one_time_link])]);
+
+const WAVE=Math.min(ACCOUNT_ONBOARDING_LIMITS.rows,ACCOUNT_ONBOARDING_LIMITS.wave);
+const RESULT:Record<string,[string,Tone]>={ready:['Gets an account','info'],already_linked:['Already has an account','neutral'],
+  created:['Account created','ok'],conflict:['Conflict','err'],stopped:['Not created','warn']};
+const CONFLICT:Record<string,string>={PERSON_NOT_IN_DEPARTMENT:'Not in this department',
+  DUPLICATE_SELECTION:'Same sign-in name or email as another selected person',PERSON_IDENTITY_CONFLICT:'Already has a different sign-in',
+  SIGN_IN_TAKEN:'Sign-in name or email already in use',INVITATION_RECEIPT_STALE:'Invitation not confirmed'};
+const COUNTED:Record<keyof Counts,string>={ready:'to create',already_linked:'already set up',created:'created',conflict:'with a conflict',stopped:'not created'};
+type Ledger=Record<string,{status:string;code?:string}>;
+type Counts={ready:number;already_linked:number;created:number;conflict:number;stopped:number};
+type Preview={expected_fingerprint:string;people:Record<string,string>;ledger:Ledger;counts:Counts};
+type Applied={ledger:Ledger;counts:Counts;invitations:Invitation[]};
+const post=<T>(path:string,body:AccountOnboarding|AccountOnboardingApply)=>request<T>(path,{method:'POST',body:JSON.stringify(body)});
+
+/** Onboard staff (Access & roles): pick people without a sign-in, preview who gets an account, create them with a
+ *  same-button confirm, and save their one-time links once as a file. The links are never drawn, stored or logged. */
+export function onboardingPanel(people:Row[],linked:Set<string>,refresh:(quiet?:boolean)=>Promise<void>){
+  const open=people.filter(p=>p.active!==false&&!linked.has(p.id));
+  const email=(p:Row)=>String(p.work_email||'');
+  let changed=false;
+  dockPanel({key:'staff-onboarding',title:'Onboard staff',width:720,onClose:()=>{if(changed)void refresh(true);},build:({body,close})=>{
+    const pick=()=>{const msg=el('div',{'aria-live':'polite'});
+      body.replaceChildren(msg,dataTable<Row>({id:'staff-onboarding',noun:['person','people'],rows:open,rowId:p=>p.id,
+        searchLabel:'Search people',searchPlaceholder:'Name or email',empty:['Everyone has an account',''],
+        selectable:p=>!!usernameFrom(email(p)),rowLabel:p=>personName(p.id),
+        columns:[{key:'person',label:'Person',text:p=>personName(p.id),cell:p=>nameText(p.id)},
+          {key:'email',label:'Work email',text:email,facet:p=>usernameFrom(email(p))?'Has a work email':'No work email',
+            cell:p=>email(p)||el('span',{class:'muted'},'No work email')}],
+        bulk:()=>[{label:'Preview',icon:'eye',primary:true,run:(ids:string[])=>{
+          if(ids.length>WAVE){msg.replaceChildren(note(`Select up to ${WAVE} people per batch.`,'error'));return;}
+          const rows=open.filter(p=>ids.includes(p.id)).map(p=>({person_id:p.id,username:usernameFrom(email(p)),email:email(p)}));
+          return review({rows,reason:'Staff onboarding'});}}]}).root);};
+    // Who the batch reaches, in the server's words for each person.
+    const outcome=(labels:Record<string,string>,ledger:Ledger,signInNames:ReadonlyMap<string,string>)=>dataTable<[string,{status:string;code?:string}]>({id:'staff-onboarding-result',
+      noun:['person','people'],rows:Object.entries(ledger),rowId:([id])=>id,searchLabel:'Search people',searchPlaceholder:'Name or sign-in',
+      columns:[{key:'person',label:'Person',text:([id])=>personName(id,labels[id])+signInSuffix(signInNames.get(id)),
+          cell:([id])=>el('span',{},nameText(id,labels[id]),bidi(signInSuffix(signInNames.get(id))))},
+        {key:'result',label:'Result',facet:([,r])=>(RESULT[r.status]||[r.status])[0],cell:([,r])=>el('div',{},badge(...(RESULT[r.status]||[r.status,'neutral'] as [string,Tone])),
+          r.code?el('div',{class:'muted cell-note'},CONFLICT[r.code]||r.code.replaceAll('_',' ').toLowerCase()):'')}]}).root;
+    const summary=(c:Counts)=>el('div',{class:'import-summary',role:'status'},...(Object.keys(COUNTED) as (keyof Counts)[]).filter(k=>c[k])
+      .map(k=>el('span',{class:'import-stat'+(k==='conflict'?' error':'')},el('b',{},String(c[k])),' '+COUNTED[k])));
+    const review=async(selection:AccountOnboarding,said:Node|string='')=>{
+      const view=await post<Preview>('/api/account-onboarding/preview',selection),c=view.counts;
+      const signInNames=new Map(selection.rows.filter(r=>Object.hasOwn(view.people,r.person_id)).map(r=>[r.person_id,r.username]));
+      const create=c.ready&&!c.conflict?armed(button(`Create ${plural(c.ready,'account')}`,async()=>{
+        const done=await post<Applied>('/api/account-onboarding/apply',{...selection,expected_fingerprint:view.expected_fingerprint})
+          .catch((e:unknown)=>{if(e instanceof ApiError&&e.code==='STALE_PREVIEW')return null;throw e;});
+        if(!done){await review(selection,note('Accounts or people changed since this preview, so nothing was created. Check it again.','warning'));return;}
+        changed=true;
+        // The links leave only as this file, once; nothing here keeps them.
+        if(done.invitations.length)save(new Blob([invitationsCsv(done.invitations,signInNames)],{type:'text/csv'}),'staff-invitations.csv');
+        const doneButton=button('Done',async()=>{
+          changed=false;
+          // Wait for Access, but leave a menu alone if the panel closes while the read is in flight.
+          await refresh(true);
+          if(body.isConnected)close();},'secondary');
+        body.replaceChildren(el('div',{class:'import-head'},summary(done.counts),doneButton),
+          done.invitations.length?note(`Links downloaded for ${plural(done.invitations.length,'person','people')}.`,'success'):'',
+          outcome(view.people,done.ledger,signInNames));},'primary')):null;
+      body.replaceChildren(el('div',{class:'import-head'},summary(c),el('div',{class:'actions'},button('Back',pick,'secondary'),...(create?[create]:[]))),said,
+        c.conflict?note('Clear the people with a conflict, then preview again.','error'):'',outcome(view.people,view.ledger,signInNames));};
+    pick();
+  }});
 }
 
 /** Session limits for everyone in the department (Configuration › Department settings). */

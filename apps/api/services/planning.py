@@ -401,16 +401,22 @@ def background_checks_available(db):
 
 def assignment_reply_available(db, command):
     """Choose execution strategy only; the writer repeats every admission and authority check."""
-    if command.expected_fingerprint:
+    if command.preview_job_id or (command.expected_fingerprint and not (
+            command.kind == 'shift.update' and command.expected_fingerprint.startswith(s.ASSIGNMENT_STAMP_PREFIX))):
         return False
     if command.kind in {'workspace.undo', 'workspace.redo'}:
         workspace = db.get(m.Workspace, command.target_id)
         if (workspace is None or workspace.status != 'draft' or workspace.base_publication_id
                 or not background_checks_available(db)):
             return False
-        change = db.scalar(latest_change(workspace, m.ChangeSet))
-        if change is None or command.kind == 'workspace.undo' and change.undone or (
-                command.kind == 'workspace.redo' and not change.before_snapshot.get('_undo_of')):
+        if command.kind == 'workspace.undo':
+            target = undo_target(db, workspace)
+            change = db.get(m.ChangeSet, target) if target else None
+        else:
+            change = db.scalar(latest_change(workspace, m.ChangeSet))
+            if change is not None and not change.before_snapshot.get('_undo_of'):
+                return False
+        if change is None:
             return False
         current = workspace_content(db, workspace)
         target = change.before_snapshot
@@ -594,9 +600,23 @@ def assignment_validation_scope(data, before, previous):
     for key in ('starts_on', 'ends_on', 'rule_adjustments', 'target_overrides'):
         if before_workspace.get(key, []) != data['workspace'].get(key, []):
             return None
-    old_components = (previous.get('input_manifest') or {}).get('components') or {}
-    if not all(old_components.get(k) == data['input_manifest']['components'][k]
-               for k in ('mandatory_inputs', 'objective_inputs', 'toolchain')):
+    prior_manifest = previous.get('input_manifest') or {}
+    # Saved checks keep only aggregate hashes. Bind the full before sources to the saved token.
+    before_manifest = before.get('input_manifest') or prior_manifest
+    current_manifest = data['input_manifest']
+    old_components = prior_manifest.get('components') or {}
+    before_sources = before_manifest.get('sources')
+    current_sources = current_manifest.get('sources')
+    if (before_manifest.get('token') != prior_manifest.get('token')
+            or (before_manifest.get('token') and not before_sources)
+            or (current_manifest.get('token') and not current_sources)):
+        return None
+    capacity_source = 'place_capacity:own_duties'
+    before_capacity = (before_sources or {}).get(capacity_source, {}).get('hash')
+    current_capacity = (current_sources or {}).get(capacity_source, {}).get('hash')
+    if (before_capacity != current_capacity
+            or any(old_components.get(key) != current_manifest['components'][key]
+                   for key in ('mandatory_inputs', 'objective_inputs', 'toolchain'))):
         return None
     if assignment_check_scope(data, before) is None:
         return None
@@ -768,7 +788,10 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                        current_input_revision=current_organisation.get('input_revision'),
                        current_availability_revision=current_organisation.get('availability_revision'),
                        bounded=not generation_apply)
-    workspace_record = record(workspace, exclude=("validation",))
+    workspace_record = {**record(workspace, exclude=("validation",)),
+                        'can_undo': undoable or undo_target(db, workspace) is not None}
+    if undoable:
+        workspace_record['undo_change_id'] = change.id
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
     from packages.domain.rota_summary import rota_summary
@@ -937,7 +960,8 @@ def assignment_override_people(db, workspace, value, previous, existing, typ, kn
         # overlay inputs cannot be bypassed by the bounded placement check.
         # Placement evidence needs neither objectives nor a manifest. A zero-limit trial binds its own manifest.
         data = domain_snapshot(db, workspace, own_shifts=[], include_fairness=False,
-                               include_objectives=False, include_manifest=False)
+                               include_objectives=False, include_manifest=False,
+                               edit_sources=known.get('edit_sources'))
         known['assignment_inputs'] = {**data, 'policies': active_rules(data['policies'], context=data)}
     data = known['assignment_inputs']
     shift = {**(record(existing) if existing else {}),
@@ -1772,7 +1796,8 @@ def name_attached_supervisors(db, workspace, row, *, shared_inputs=None, explici
 
 
 def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_inputs=None,
-                            override_reason=None, message=None, staffing_gaps_only=False, evaluated=None):
+                            override_reason=None, message=None, staffing_gaps_only=False, evaluated=None,
+                            edit_sources=None):
     if code is None and actor is None:
         # Keep the pure comparison helper's historical four-argument form for domain tests.
         db, actor, workspace, before, code = None, None, actor, workspace, before
@@ -1786,7 +1811,8 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
     from packages.domain.finding_causes import DRAFT_STAFFING_GAP_CODES, EDIT_NON_REFUSING_CODES
     # Keep all reservation/rule windows as context, but never load scoring or fairness evidence for admission.
     checked, data = evaluated if evaluated is not None else (None, domain_snapshot(
-        db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False))
+        db, workspace, shared_inputs=shared_inputs, include_fairness=False, include_objectives=False,
+        edit_sources=edit_sources))
     focus = set(data['focus_ids'])
     old = {row['id']: row for row in before['shifts']}
     current = [row for row in data['shifts'] if row['id'] in focus]
@@ -1870,9 +1896,11 @@ def admit_assignment_change(db, actor, workspace, before, code=None, *, shared_i
 def save_shift(db, actor, command, update=False):
     value = (s.ShiftEdit if update else s.ShiftCreate).model_validate(command.payload)
     workspace = draft(db, actor, value.workspace_id, command.expected_revision)
+    stamped_reply = False
     if db.info.get('_assignment_reply'):
         require(assignment_reply_available(db, command), 'STALE_INPUTS',
                 'The session inputs or worker changed; refresh before saving again', 409, {'recoverable': True})
+        stamped_reply = (command.expected_fingerprint or '').startswith(s.ASSIGNMENT_STAMP_PREFIX)
     if not update and 'session_creation' in db.info.get('bulk', {}):
         from .bulk import create_session
         return create_session(db, actor, workspace, value)
@@ -1883,6 +1911,9 @@ def save_shift(db, actor, command, update=False):
     if update:
         require(existing is not None and existing.workspace_id == workspace.id, "NOT_FOUND", "Session not found", 404)
     prior = next((row for row in before['shifts'] if existing and row['id'] == existing.id), {})
+    if stamped_reply:
+        require(bool(prior), 'STALE_INPUTS', 'The session could not be captured; refresh before saving again',
+                409, {'recoverable': True})
     previous = {p['person_id']: p for p in prior.get('participants', [])}
     for participant in value.participants:
         supervisor_id = previous.get(participant.person_id, {}).get('supervisor_person_id')
@@ -1895,7 +1926,7 @@ def save_shift(db, actor, command, update=False):
             participant['fixed'] = previous.get(parsed.person_id, {}).get('fixed', False)
     require_change_authority(db, actor, workspace, before, after={**before, 'shifts': [
         row for row in before['shifts'] if row['id'] != proposed['id']] + [proposed]})
-    inputs = {}
+    inputs = {'edit_sources': {}} if stamped_reply else {}
     # The session editor (a new session, or its impact preview) has no reason field; the fill panel does.
     # Both send expected_fingerprint, so it cannot tell them apart.
     refusal = ('Save the session without this person, then use the planner fill panel to assign them with a reason; the conflict still blocks submission'
@@ -1915,17 +1946,21 @@ def save_shift(db, actor, command, update=False):
         name_attached_supervisors(db, workspace, row, shared_inputs=inputs.get('shared_inputs'),
                                   explicit_clears=explicit_clears)
     preparation = db.info.get('_planning_preparation') or {}
-    if update and preparation.get('kind') == 'shift.update' and not preparation['replay']:
+    if update and (stamped_reply or (preparation.get('kind') == 'shift.update' and not preparation['replay'])):
         # The preimage already has every other own session. Reacquire the edited row after
         # the assignment write and automatic supervisor pairing, in canonical schedule order.
         own = [shift for shift in before['shifts'] if shift['id'] != row.id]
-        own.extend(snapshots.shift_records(db, [row]))
+        captured = snapshots.shift_records(db, [row])
+        require(len(captured) == 1 and captured[0].get('id') == row.id, 'STALE_INPUTS',
+                'The saved session could not be captured; refresh before saving again', 409, {'recoverable': True})
+        own.extend(captured)
         own.sort(key=lambda shift: (aware(shift['start']), shift['id']))
         db.info['_prepared_shift_edit'] = workspace.id, own
     admission = None
     if 'bulk' not in db.info and update:
         admission = admit_assignment_change(db, actor, workspace, before, 'EDIT_INVALID',
-            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal)
+            shared_inputs=inputs.get('shared_inputs'), override_reason=value.override_reason, message=refusal,
+            edit_sources=inputs.get('edit_sources'))
     reason = value.override_reason.strip() if value.override_reason is not None else None
     result = changed(db, actor, workspace, before, reason or ("Edit session" if update else "Create session"),
                      shared_inputs=inputs.get('shared_inputs'), defer_assignments=update,
@@ -2140,15 +2175,47 @@ def move(db, actor, command):
     return result
 
 
-def latest_change(workspace, *columns, skip_single_sort=False):
-    """The edit Undo puts back (or, after an Undo, the step Redo re-applies): the newest at the rota's content revision."""
+def latest_change(workspace, *columns, skip_single_sort=False, before=None):
+    """Newest history entry at the current content revision or an earlier Undo boundary."""
     revision = m.ChangeSet.before_snapshot['workspace']['revision'].as_integer()
+    content_revision = workspace.content_revision if before is None else before.content_revision
+    query = select(*columns).where(m.ChangeSet.workspace_id == workspace.id,
+                                   m.ChangeSet.resulting_content_revision == content_revision)
+    if before is not None:
+        query = query.where(revision < before.revision)
     if skip_single_sort:
         # Extract the revision from the large snapshot only when it can affect the choice.
         revision = case((func.count().over() > 1, revision))
-    return (select(*columns).where(m.ChangeSet.workspace_id == workspace.id,
-                                   m.ChangeSet.resulting_content_revision == workspace.content_revision)
-            .order_by(revision.desc()).limit(1))
+    return query.order_by(revision.desc()).limit(1)
+
+
+def edit_history_head(db, workspace, before=None):
+    C = m.ChangeSet
+    return db.execute(latest_change(workspace, C.id, C.undone, C.actor_id,
+        C.before_snapshot['_undo_of'].as_string().label('undo_of'),
+        skip_single_sort=True, before=before)).first()
+
+
+def undo_target(db, workspace, head=None):
+    """An Undo step points to the original edit's pre-state, where Undo continues."""
+    head = edit_history_head(db, workspace) if head is None else head
+    C = m.ChangeSet
+    revision = C.before_snapshot['workspace']['revision'].as_integer()
+    while head is not None and head.undo_of is not None:
+        # Read the head revision only when the linked edit exists.
+        head_revision = select(revision).where(C.id == head.id).correlate(None).scalar_subquery()
+        before = db.execute(select(revision.label('revision'),
+            C.before_snapshot['workspace']['content_revision'].as_integer().label('content_revision'),
+            C.before_snapshot['workspace']['status'].as_string().label('status'),
+            head_revision.label('head_revision'))
+            .where(C.id == head.undo_of, C.workspace_id == workspace.id)).first()
+        # A reopened review can leave an acknowledgement-only Undo at the boundary.
+        if (before is None or before.status not in (None, 'draft')
+                or before.revision is None or before.content_revision is None
+                or before.head_revision is None or before.revision >= before.head_revision):
+            return None
+        head = edit_history_head(db, workspace, before)
+    return head.id if head is not None and not head.undone else None
 
 
 def put_back(db, actor, workspace, snapshot, current):
@@ -2176,10 +2243,16 @@ def put_back(db, actor, workspace, snapshot, current):
 
 
 def undo(db, actor, command):
-    value = s.Decision.model_validate(command.payload)
+    value = s.WorkspaceUndoInput.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
-    change = db.scalar(latest_change(workspace, m.ChangeSet))
-    require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
+    lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
+    if lock_jobs:
+        db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
+        draft(db, actor, command.target_id, command.expected_revision)
+    target = undo_target(db, workspace)
+    require(value.undo_of is None or value.undo_of == target, "STALE_UNDO", "This edit can no longer be undone", 409)
+    require(target is not None, "NO_UNDO", "Nothing left to undo", 409)
+    change = db.get(m.ChangeSet, target)
     current = workspace_content(db, workspace)
     require_change_authority(db, actor, workspace, current, after=change.before_snapshot)
     content_changed = put_back(db, actor, workspace, change.before_snapshot, current)
@@ -2188,10 +2261,13 @@ def undo(db, actor, command):
     # Undoing an applied auto-schedule proposal: it is no longer applied (the panel then offers a fresh run).
     if content_changed:
         receipt_column, raw_revision, current_revision = job_reconciliation_columns()
-        for job, receipt, revision in db.execute(select(m.Job, receipt_column, raw_revision).options(
-                defer(m.Job.input_snapshot), defer(m.Job.result)).where(
-                m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
-                current_revision == change.resulting_content_revision)):
+        jobs = select(m.Job, receipt_column, raw_revision).options(
+            defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+            m.Job.workspace_id == workspace.id, m.Job.status == 'applied',
+            current_revision == change.resulting_content_revision).order_by(m.Job.id)
+        if lock_jobs:
+            jobs = jobs.with_for_update(of=m.Job).execution_options(populate_existing=True)
+        for job, receipt, revision in db.execute(jobs):
             result = job_result_with_reconciliation(job, {'reconciliation': receipt,
                                                           'applied_content_revision': revision})
             if result['applied_content_revision'] == change.resulting_content_revision:
@@ -2201,20 +2277,24 @@ def undo(db, actor, command):
                 job.progress = job_progress_record(job.progress)
                 job.revision += 1
                 unapplied.append(job.id)
-    # Undo is one step: the undo itself is not undoable (Undo again is refused). Its change set keeps the arrangement it
-    # replaced, marked as an Undo, so the same person can Redo it until the rota changes again (redo below, SW3-A-06).
+    # Record which original edit was undone. Undo follows that edit's
+    # pre-state; Redo follows the arrangement this Undo replaced.
     current = {**current, '_undo_of': change.id, '_unapplied_job_ids': unapplied}
     return changed(db, actor, workspace, current, value.reason, content_changed=content_changed, undoable=False,
                    defer_assignments=bool(db.info.get('_assignment_reply')))
 
 
-def redo_available(db, actor, workspace):
-    """Redo applies right after this person's own Undo, while the rota's content is still what that Undo left."""
+def edit_availability(db, actor, workspace):
+    """Return Undo and Redo availability using the same edit lookup as both commands."""
     if workspace.status != 'draft' or workspace.archived_at is not None:
-        return False
-    row = db.execute(latest_change(workspace, m.ChangeSet.actor_id,
-                                   m.ChangeSet.before_snapshot['_undo_of'].as_string(), skip_single_sort=True)).first()
-    return row is not None and row[1] is not None and row[0] == actor.identity_id
+        return False, False
+    row = edit_history_head(db, workspace)
+    return (row is not None and undo_target(db, workspace, row) is not None,
+            row is not None and row.undo_of is not None and row.actor_id == actor.identity_id)
+
+
+def redo_available(db, actor, workspace):
+    return edit_availability(db, actor, workspace)[1]
 
 
 def require_redo_placements(db, actor, workspace, snapshot, current):
@@ -2265,6 +2345,10 @@ def redo(db, actor, command):
     whole rota check, and is itself an edit: audited, and undoable again."""
     value = s.Decision.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
+    lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
+    if lock_jobs:
+        db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
+        draft(db, actor, command.target_id, command.expected_revision)
     step = db.scalar(latest_change(workspace, m.ChangeSet))
     require(step is not None and step.before_snapshot.get('_undo_of') and step.actor_id == actor.identity_id, 'NO_REDO',
             'Nothing to redo: Redo follows your own Undo, until the rota changes again', 409)
@@ -2275,9 +2359,12 @@ def redo(db, actor, command):
     # An auto-schedule proposal its Undo took off the draft is applied again, at the content Redo just made.
     receipt_column, _, _ = job_reconciliation_columns()
     revision = workspace.content_revision + int(content_changed)
-    for job, receipt in db.execute(select(m.Job, receipt_column).options(defer(m.Job.input_snapshot),
-            defer(m.Job.result)).where(m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
-                                      m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded')):
+    jobs = select(m.Job, receipt_column).options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+        m.Job.id.in_(step.before_snapshot.get('_unapplied_job_ids') or []),
+        m.Job.workspace_id == workspace.id, m.Job.status == 'succeeded').order_by(m.Job.id)
+    if lock_jobs:
+        jobs = jobs.with_for_update(of=m.Job).execution_options(populate_existing=True)
+    for job, receipt in db.execute(jobs):
         receipt = job_result_with_reconciliation(job, {'reconciliation': receipt})['reconciliation']
         job.status = 'applied'
         retain_job_reconciliation(job, {**receipt, 'status': 'applied', 'applied_content_revision': revision}
@@ -2801,12 +2888,21 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         sequence = (db.scalar(select(func.max(m.Publication.sequence)).where(m.Publication.department_id == actor.department_id)) or 0) + 1
         workspace.status = "published"
         workspace.revision += 1
+        snapshot = publication_snapshot(db, workspace, result, own_shifts=own, data=acquired)
+        if not (workspace.base_publication_id or workspace.replaces_publication_id):
+            from apps.api.db import bump_snapshot_input_revisions
+            # The publication is an input even when the rota's status change is local.
+            # The insert listener shares this transaction's revision bump.
+            bump_snapshot_input_revisions(db, (actor.organisation_id,))
+            organisation = db.get(m.Organisation, actor.organisation_id)
+            manifest = result['input_manifest']
+            result['input_manifest'] = {**manifest, 'dirty_hint': {
+                **manifest['dirty_hint'], 'input_revision': organisation.input_revision}}
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
                                     effective_until=effective_until, calendar_lineage=True,
-                                    snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
-                                    validation=result, fingerprint=fp)
+                                    snapshot=snapshot, validation=result, fingerprint=fp)
         db.add(publication)
         db.flush()
         for person_id in sorted({a["person_id"] for s in publication.snapshot["shifts"] for a in s["participants"] if a.get("person_id")}):

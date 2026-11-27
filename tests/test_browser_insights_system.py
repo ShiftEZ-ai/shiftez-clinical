@@ -25,7 +25,7 @@ PHONE = {'width': 390, 'height': 844}
 
 
 def two_versions(h, people=None):
-    """Two published rotas; staff (Alex Morgan) works in both."""
+    """Two published rotas; staff (Staff 01(test)) works in both."""
     me = h.get('staff', '/api/me')['person_id']
     for name, day in (('Fictional October rota', '2026-10-04'), ('Fictional November rota', '2026-11-01')):
         end = '2026-10-11' if day == '2026-10-04' else '2026-11-08'
@@ -315,7 +315,7 @@ def test_admin_gives_a_role_and_role_history_shows_it(browser, live_server, h, g
         tabs = page.get_by_role('tablist', name='Access & approvals')
         before = int(tabs.get_by_role('tab', name='Role history', exact=True).locator('.tab-count').inner_text())
         # Header actions belong to People & roles only.
-        expect(page.locator('.topbar .page-actions').get_by_role('button', name='Add hospital sign-in', exact=True)).to_be_visible()
+        expect(page.locator('.topbar .page-actions').get_by_role('button', name='Add institutional sign-in', exact=True)).to_be_visible()
         page.get_by_role('button', name=f"More actions for {target['display_name']}", exact=True).first.click()
         page.get_by_role('menuitem', name='Give a role', exact=True).click()
         form = page.get_by_role('dialog')
@@ -350,7 +350,7 @@ def test_admin_gives_a_role_and_role_history_shows_it(browser, live_server, h, g
 
 
 def test_a_developer_without_admin_manages_only_developer_and_auditor(browser, live_server, h):
-    # A Developer who is not an admin opens People & roles to give Developer or Auditor; department roles,
+    # A Developer opens People & roles to give Developer, Auditor or Installation admin; department roles,
     # sign-ins and accounts stay with admins.
     identity(h, 'devonly', ['operator'])
     target = next(i for i in h.get('admin', '/api/access')['identities'] if i['id'] == h.seed['identities']['staff'])
@@ -358,7 +358,7 @@ def test_a_developer_without_admin_manages_only_developer_and_auditor(browser, l
     try:
         navigate(page, 'access/people')
         expect(page.locator('#main')).to_have_attribute('data-loaded-tab', 'people')
-        for header in ('Invite person', 'Add hospital sign-in'):
+        for header in ('Invite person', 'Add institutional sign-in'):
             expect(page.locator('.topbar .page-actions').get_by_role('button', name=header, exact=True)).to_have_count(0)
         # Department roles cannot be removed here; Developer can (from the row's actions, never a chip ×).
         expect(page.locator('.chip-x')).to_have_count(0)
@@ -367,7 +367,7 @@ def test_a_developer_without_admin_manages_only_developer_and_auditor(browser, l
         expect(page.get_by_role('menuitem', name='Password reset link', exact=True)).to_have_count(0)
         page.get_by_role('menuitem', name='Give a role', exact=True).click()
         form = page.get_by_role('dialog')
-        expect(form.get_by_label('Role', exact=True).locator('option:not([disabled])')).to_have_text(['Auditor', 'Developer'])
+        expect(form.get_by_label('Role', exact=True).locator('option:not([disabled])')).to_have_text(['Auditor', 'Installation admin', 'Developer'])
         expect(form.get_by_label('Role', exact=True).locator('option', has_text='Coordinator')).to_have_attribute('data-hint', 'Only an Admin can grant this')
         form.get_by_label('Role', exact=True).select_option('auditor')
         form.get_by_label('Reason', exact=True).fill('Fictional audit cover')

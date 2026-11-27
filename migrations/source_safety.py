@@ -317,6 +317,8 @@ class Analyzer(ast.NodeVisitor):
         before, previous, schema = self.env, self.function, deepcopy(self.schema)
         clear_execution_proofs(self.schema)
         if node.name != 'upgrade':
+            self.schema.pop('record_fill', None)
+            self.schema.pop('record_duplicate_precheck', None)
             for table in self.schema['tables'].values():
                 table['new'] = False
         self.env, self.function = self.globals.copy(), node.name
@@ -690,6 +692,8 @@ class Analyzer(ast.NodeVisitor):
             guarded = set().union(*(self.guards(predicate, table) for predicate in predicates))
             if setters and not any(call.args for call in setters) and targets \
                     and targets <= set(known.get('columns', [])) and targets <= guarded and self.bounded(predicates, table):
+                if record_fill := self.schema.get('record_fill'):
+                    record_fill(table, targets)
                 return 'fill_only', ''
         if kind == 'insert':
             values = {key.arg: self.value(key.value) for call in setters for key in call.keywords}
@@ -697,6 +701,8 @@ class Analyzer(ast.NodeVisitor):
             if known.get('new') and keys and len(setters) == 1 and not setters[0].args \
                     and any(getattr(call.func, 'attr', '') == 'on_conflict_do_nothing' for call in calls) \
                     and all(isinstance(values.get(key), (str, int)) for key in keys):
+                if record_fill := self.schema.get('record_fill'):
+                    record_fill(table, None)
                 return 'fill_only', ''
         return 'destructive', 'write is not proven bounded, NULL-guarded or idempotent'
 
@@ -775,16 +781,20 @@ def schema_at(ancestors, retained_at=0):
     return schema
 
 
-@lru_cache(maxsize=512)
-def analyze_sources(source, ancestors, retained_at=0, *, branched=False):
-    # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
+def _revision_schema(ancestors, retained_at, *, branched=False):
     schema = deepcopy(schema_at(ancestors, retained_at))
     if branched:
         # A sibling branch may have replaced a CHECK this chain cannot see, so no recorded definition is proof.
         schema.pop('checks', None)
     for table in schema['tables'].values():
         table['new'] = False
-    return Analyzer(source, schema).run()
+    return schema
+
+
+@lru_cache(maxsize=512)
+def analyze_sources(source, ancestors, retained_at=0, *, branched=False):
+    # Source-keyed prefix reuse avoids reanalyzing every ancestor for every revision.
+    return Analyzer(source, _revision_schema(ancestors, retained_at, branched=branched)).run()
 
 
 def _published_guard_history(sources):
@@ -850,12 +860,11 @@ def _parallel_revisions(revision, parents):
     return ancestors & descendants != {revision} or not parents.keys() <= ancestors | descendants
 
 
-def analyze(path):
+def _revision_sources(path):
     path = Path(path)
     source = path.read_text(encoding='utf-8')
-    direct = analyze_sources(source, ())
-    if not direct['needs_schema']:
-        return direct
+    if not analyze_sources(source, (), 0)['needs_schema']:
+        return source, (), 0, False
     previous = assigned(parse(source), 'down_revision')
     ancestors, seen = [], set()
     sources, ambiguous = {}, False
@@ -885,12 +894,24 @@ def analyze(path):
     history = tuple(sources[rev] for rev in ancestors)
     revision = assigned(parse(source), 'revision')
     branched = bool(history) and (ambiguous or unreadable or _parallel_revisions(revision, parents))
-    result = analyze_sources(source, history, branched=branched)
     if (ambiguous or PUBLICATION_GUARD_CHECKPOINT not in seen
-            or not any(finding.endswith(MISSING_RETAINED_GUARD) for finding in result['findings'])):
-        return result
+            or not any(finding.endswith(MISSING_RETAINED_GUARD)
+                       for finding in analyze_sources(source, history, branched=branched)['findings'])):
+        return source, history, 0, branched
     retained_at = ancestors.index(PUBLICATION_GUARD_CHECKPOINT) + 1
     if (not _linear_guard_descendant(source) or not all(map(_linear_guard_descendant, history[retained_at:]))
             or not _published_guard_history(sources)):
-        return result
-    return analyze_sources(source, history, retained_at, branched=branched)
+        return source, history, 0, branched
+    return source, history, retained_at, branched
+
+
+def analyze(path):
+    source, ancestors, retained_at, branched = _revision_sources(path)
+    return analyze_sources(source, ancestors, retained_at, branched=branched)
+
+
+def preflight_analyzer(path, *, record_fill, record_duplicate_precheck):
+    source, ancestors, retained_at, branched = _revision_sources(path)
+    schema = _revision_schema(ancestors, retained_at, branched=branched)
+    schema.update(record_fill=record_fill, record_duplicate_precheck=record_duplicate_precheck)
+    return Analyzer(source, schema)

@@ -119,7 +119,7 @@ class V33Tests(unittest.TestCase):
                     job_id = (name, job_name)
                     if action == 'actions/cache/restore':
                         self.assertNotIn(job_id, restores)
-                        self.assertNotIn('if', step)
+                        self.assertEqual(step['if'], "steps.affected-scope.outputs.scope == ''")
                         restores.add(job_id)
                     else:
                         self.assertEqual(action, 'actions/cache/save')
@@ -134,8 +134,11 @@ class V33Tests(unittest.TestCase):
                                 "'candidate/package-lock.json', '.trusted-controls/requirements/policy.lock') }}"})
         doc = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual(doc['on']['push']['branches'], ['dev', 'main', 'release/*'])
-        for job in ('unit', 'browser', 'static'):
-            self.assertEqual(doc['jobs'][job]['if'], "always() && !cancelled() && needs.checks.result == 'success'")
+        ordinary = "always() && !cancelled() && needs.checks.result == 'success'"
+        no_scope = " && needs.checks.outputs.quota_scope == ''"
+        self.assertEqual(doc['jobs']['static']['if'], ordinary + no_scope)
+        for job in ('unit', 'browser'):
+            self.assertEqual(doc['jobs'][job]['if'], ordinary + " && needs.checks.outputs.queue_run == ''" + no_scope)
         self.assertEqual(doc['jobs']['ci-gate']['if'], "always()")
 
     def test_duplicate_yaml_keys_refused(self):

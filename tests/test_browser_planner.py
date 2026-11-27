@@ -795,7 +795,8 @@ def test_agenda_swipes_to_the_next_week(browser, live_server, h):
 
 def test_exchange_refusal_is_said_at_once_and_save_does_not_ask_again(browser, live_server, h):
     """H-03: an exchange the server refuses (it would put someone in two places at once) says so in the dialog with the
-    clash on the exchanged sessions first, and Exchange then repeats that refusal at once: no second preview, no spinner.
+    clash on the exchanged sessions first, and Exchange then brings that one refusal back at once: no second copy, no
+    second preview, no spinner.
     The pickers name each assignment's day, since one person can hold several sessions in a week."""
     a, b = h.seed['people'][:2]
     w = two_people_week(h, 'Exchange refusal rota')
@@ -817,15 +818,23 @@ def test_exchange_refusal_is_said_at_once_and_save_does_not_ask_again(browser, l
         second.select_option(sunday['id'])
         expect(dialog.get_by_label('First assignment', exact=True).locator('option:checked')).to_contain_text('5 Oct')
         expect(second.locator('option:checked')).to_contain_text('4 Oct')
-        refusal = dialog.locator('.note.error, [role=alert]').filter(has_text='neither side was saved')
+        # One refusal that names the problem; who and when are in the checks under it.
+        refusal = dialog.get_by_role('alert').filter(has_text='Not exchanged. ')
         expect(refusal).to_be_visible(timeout=20000)
-        expect(dialog.locator('.preview-findings').first).to_contain_text('Checks for changed sessions')
+        expect(refusal).not_to_contain_text('failed validation')
+        expect(dialog.get_by_role('alert')).to_have_count(1)
+        checks = dialog.locator('.preview-findings').first
+        expect(checks).to_contain_text('Checks for changed sessions')
+        # The date and its time are one unit, and who and when keep to one line on a desktop.
+        expect(checks.locator('td:nth-child(2) .date-units > span').first).to_have_text(re.compile(r'Oct 2026 \d{1,2}:\d\d$'))
+        assert checks.locator('td').first.evaluate('c => getComputedStyle(c).whiteSpace') == 'nowrap'
         asked = len(previews)
         dialog.get_by_role('button', name='Exchange', exact=True).click()
         expect(dialog.get_by_role('button', name='Exchange', exact=True)).to_be_enabled()
-        # Exchange sends nothing and says so at the button, in the server's words (the refusal above stays as it was).
-        expect(dialog.get_by_role('alert').filter(has_text='Not saved: ')).to_contain_text('neither side was saved')
-        expect(refusal.filter(has_not_text='Not saved: ')).to_have_count(1)
+        # Exchange sends nothing and brings that refusal back into view: still said once in the dialog.
+        expect(refusal).to_be_in_viewport()
+        expect(dialog.get_by_role('alert')).to_have_count(1)
+        expect(dialog).not_to_contain_text('Not saved')
         assert len(previews) == asked, previews
         assert [p['person_id'] for s in h.detail(w)['shifts'] for p in s['participants'] if p['id'] == monday_b['id']] == [b]
         shot(page, 'exchange-refusal-1440-light', full_page=False)

@@ -354,10 +354,11 @@ def prepare_writes(db, actor, items, acknowledgement, *, preview_only=False, leg
         len(items) == 1 and acknowledgement is None and legacy_acknowledgement is not None) else items
     checked = s.SeriesOverlapBatchPreview.model_validate(preview_many(db, actor, evaluated, disclose=False)).model_dump(mode='json')
     acknowledgement = acknowledgement or legacy_acknowledgement
-    require(preview_only or not any(item['conflicts'] for item in checked['items'])
-            or acknowledgement == checked['conflict_token'], 'SERIES_OVERLAP_ACKNOWLEDGEMENT',
-            'Review and acknowledge every conflicting occurrence before saving these recurrences', 409,
-            json_value(overlap_labels(db, actor, checked)))
+    if not (preview_only or not any(item['conflicts'] for item in checked['items'])
+            or acknowledgement == checked['conflict_token']):
+        details = s.SeriesOverlapBatchPreview.model_validate(overlap_labels(db, actor, checked)).model_dump(mode='json')
+        raise Problem(409, 'SERIES_OVERLAP_ACKNOWLEDGEMENT',
+                      'Review and acknowledge every conflicting occurrence before saving these recurrences', details)
     return {'pending': items, 'checked': checked, 'acknowledgement': acknowledgement, 'preview_only': preview_only}
 
 

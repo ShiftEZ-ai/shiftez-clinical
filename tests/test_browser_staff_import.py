@@ -5,7 +5,7 @@ from playwright.sync_api import expect
 from .test_browser import browser, live_server, sign_in, navigate  # noqa: F401
 from .test_browser_bulk_changes import bar, panel, submit
 from .test_browser_bulk_sheet import no_light_path
-from .test_staff_import import ALEX, NEW, csv_of, row, setup_catalogue, import_business_state, apply, preview
+from .test_staff_import import EXISTING_PERSON, NEW, csv_of, row, setup_catalogue, import_business_state, apply, preview
 
 pytestmark = pytest.mark.browser
 
@@ -77,7 +77,7 @@ def test_upload_preview_and_apply_split_between_coordinator_and_credentialer(bro
         navigate(page,"system/imports")
         page.get_by_role("button", name="Upload staff CSV").click()
         dialog = page.get_by_role("dialog")
-        dialog.get_by_label("CSV file").set_input_files({"name": "October staff.csv", "mimeType": "text/csv", "buffer": csv_of(ALEX, NEW).encode()})
+        dialog.get_by_label("CSV file").set_input_files({"name": "October staff.csv", "mimeType": "text/csv", "buffer": csv_of(EXISTING_PERSON, NEW).encode()})
         expect(dialog.get_by_label("Name for this import")).to_have_value("October staff")
         dialog.get_by_role("button", name="Preview").click()
         review = page.locator(".dock-panel.staff-import")
@@ -222,7 +222,7 @@ def test_apply_names_the_review_on_screen_and_each_part_reads_the_review_again(b
     context, page = sign_in(browser, live_server, 'coordinator')
     sent = applies(page)
     try:
-        review = upload_sheet(page, 'Reviewed fingerprint', csv_of(ALEX, NEW))
+        review = upload_sheet(page, 'Reviewed fingerprint', csv_of(EXISTING_PERSON, NEW))
         expect(review.get_by_text('Dr Nadia Example')).to_be_visible()
         batch = h.get('coordinator', '/api/staff-imports')['batches'][0]
         shown = h.get('coordinator', '/api/staff-imports/' + batch['id'])['source_fingerprint']

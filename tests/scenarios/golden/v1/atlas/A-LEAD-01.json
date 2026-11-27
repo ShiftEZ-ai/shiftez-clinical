@@ -1,6 +1,6 @@
 {
   "id": "A-LEAD-01",
-  "revision": 1,
+  "revision": 2,
   "title": "Named leadership minimum, maximum and continuity",
   "intent": "One qualified whole-duty leader, with continuous handover as a separate obligation",
   "pressure": "Two eligible leaders have complementary internal attendance gaps; continuous cover is possible, but neither flagged leader covers every required interval.",
@@ -16,6 +16,9 @@
     ],
     "kind.team_lead_requirement.continuity": [
       "continuity"
+    ],
+    "kind.team_lead_requirement.count_scope": [
+      "concurrent_leaders"
     ]
   },
   "commands": [
@@ -210,6 +213,75 @@
       }
     },
     {
+      "key": "peer_service",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "services",
+        "value": {
+          "name": "A-LEAD-01 second clinic",
+          "starts_on": "2027-01-01"
+        },
+        "reason": "Synthetic scenario"
+      }
+    },
+    {
+      "key": "peer_room",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "locations",
+        "value": {
+          "name": "A-LEAD-01 second room",
+          "starts_on": "2027-01-01",
+          "location_type_id": "$location_kind",
+          "capacity": 4
+        },
+        "reason": "Synthetic scenario"
+      }
+    },
+    {
+      "key": "access0",
+      "role": "credentialer",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p0",
+        "service_id": "$peer_service",
+        "starts_on": "2027-01-01"
+      }
+    },
+    {
+      "key": "access1",
+      "role": "credentialer",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p1",
+        "service_id": "$peer_service",
+        "starts_on": "2027-01-01"
+      }
+    },
+    {
+      "key": "shared_type",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "assignment_types",
+        "value": {
+          "name": "A-LEAD-01 concurrent duty",
+          "starts_on": "2027-01-01",
+          "definition": {
+            "requirements": [
+              {
+                "minimum": 1,
+                "maximum": 1
+              }
+            ]
+          }
+        },
+        "reason": "Synthetic scenario"
+      }
+    },
+    {
       "key": "lead",
       "role": "coordinator",
       "kind": "rule.propose",
@@ -258,6 +330,46 @@
                 "continuity": "whole_duty"
               }
             }
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000003",
+            "where": {
+              "conditions": [
+                {
+                  "field": "assignment_type_ids",
+                  "op": "any",
+                  "values": [
+                    "$shared_type"
+                  ]
+                }
+              ]
+            },
+            "who": {
+              "conditions": [
+                {
+                  "field": "person_ids",
+                  "values": [
+                    "$p0",
+                    "$p1"
+                  ]
+                }
+              ]
+            },
+            "numbers": {
+              "min": {
+                "value": 1,
+                "level": "mandatory"
+              },
+              "max": {
+                "value": 1,
+                "level": "mandatory"
+              }
+            },
+            "settings": {
+              "team_lead_requirement": {
+                "count_scope": "concurrent_duties"
+              }
+            }
           }
         ]
       }
@@ -286,6 +398,53 @@
         "start": "2027-01-03T08:00:00+03:00",
         "end": "2027-01-03T12:00:00+03:00",
         "participants": []
+      },
+      "revision": "$workspace.revision"
+    },
+    {
+      "key": "shared_one",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$shared_type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-01-04T08:00:00+03:00",
+        "end": "2027-01-04T12:00:00+03:00",
+        "participants": [
+          {
+            "start": "2027-01-04T08:00:00+03:00",
+            "end": "2027-01-04T12:00:00+03:00",
+            "person_id": "$p0",
+            "team_lead": true
+          }
+        ]
+      },
+      "revision": "$workspace.revision"
+    },
+    {
+      "key": "shared_two",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$shared_type",
+        "location_id": "$peer_room",
+        "service_ids": [
+          "$peer_service"
+        ],
+        "start": "2027-01-04T08:00:00+03:00",
+        "end": "2027-01-04T12:00:00+03:00",
+        "participants": [
+          {
+            "start": "2027-01-04T08:00:00+03:00",
+            "end": "2027-01-04T12:00:00+03:00",
+            "person_id": "$p1"
+          }
+        ]
       },
       "revision": "$workspace.revision"
     }
@@ -327,6 +486,28 @@
         47
       ],
       "workers": 1
+    },
+    "concurrent_leaders": {
+      "duties": [
+        "shared_one",
+        "shared_two"
+      ],
+      "assignments": [
+        [
+          [
+            "p0",
+            true
+          ]
+        ],
+        [
+          [
+            "p1",
+            false
+          ]
+        ]
+      ],
+      "unled_duty": "shared_two",
+      "gap_code": "LEAD_GAP"
     }
   },
   "inputs": {

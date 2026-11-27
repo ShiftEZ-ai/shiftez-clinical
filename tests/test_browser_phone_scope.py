@@ -80,7 +80,7 @@ def test_phone_navigation_lists_only_phone_views(browser, live_server, h, role, 
         # Commands follow the same rule: no planning or setup actions, no People results.
         expect(page.get_by_role('option').first).to_be_visible()
         expect(page.get_by_role('option', name=re.compile(r'New rota|announcement|Auto-schedule', re.I))).to_have_count(0)
-        expect(page.get_by_role('option', name=re.compile(r'Alex Morgan'))).to_have_count(0)
+        expect(page.get_by_role('option', name=re.compile(r'Staff 01\(test\)'))).to_have_count(0)
         page.keyboard.press('Escape')
         if role == 'staff':
             shot(page, f'home-staff-{theme}')
@@ -92,8 +92,8 @@ def test_phone_navigation_lists_only_phone_views(browser, live_server, h, role, 
 def test_every_role_lands_on_a_usable_home_on_a_phone(browser, live_server, h, role):
     """H-04 / N-04: no account lands on "Best on a desktop" (whose Back to Home looped onto itself): Home is always the
     phone Home, the menu lists it, and nothing offers Home while on Home."""
-    if role == 'programme_lead':
-        identity(h, 'programme_lead', ['programme_lead'])
+    if role not in h.seed['identities']:
+        identity(h, role, [role])
     context, page = phone(browser, live_server, role, 'dark')
     try:
         expect_loaded(page, 'home')
@@ -327,7 +327,7 @@ def test_staff_ask_for_leave_and_an_approver_decides_it_on_a_phone(browser, live
         expect(needs).to_contain_text('Leave request')
         expect(needs.locator('li')).to_have_count(1)
         shot(page, f'home-approver-{theme}')
-        needs.get_by_role('button', name='Review', exact=True).click()
+        needs.get_by_role('button', name='Review, Leave request,').click()
         expect_loaded(page, 'requests')
         card = page.locator('#main .dt-card').filter(has_text='Leave').first
         expect(card).to_contain_text('Approving opens 1 place')

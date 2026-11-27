@@ -13,6 +13,55 @@ from apps.api.db import DatabaseWriteTimeout, transaction
 from apps.worker import main as worker
 
 
+@pytest.mark.parametrize(('process_cpus', 'affinity_cpus', 'cpu_max', 'expected'), [
+    (None, 4, FileNotFoundError(), 4),
+    (8, None, '250000 100000\n', 2),
+    (8, None, '50000 100000\n', 1),
+    (6, None, 'max 100000\n', 6),
+    (None, 3, PermissionError(), 3),
+    (32, None, 'max 100000\n', 8),
+    (4, None, 'invalid format', 4),
+    (4, None, '100000 0', 4),
+    (None, None, FileNotFoundError(), 1),
+])
+def test_default_solver_workers_respect_process_cpu_limits(monkeypatch, process_cpus, affinity_cpus, cpu_max, expected):
+    def affinity(pid):
+        assert process_cpus is None and pid == 0
+        if affinity_cpus is None:
+            raise OSError()
+        return set(range(affinity_cpus))
+
+    def quota_file(path):
+        assert path == '/sys/fs/cgroup/cpu.max'
+
+        def read_text(*, encoding):
+            if isinstance(cpu_max, OSError):
+                raise cpu_max
+            return cpu_max
+
+        return SimpleNamespace(read_text=read_text)
+
+    monkeypatch.delenv('ROTA_SOLVER_WORKERS', raising=False)
+    monkeypatch.setattr(worker.os, 'process_cpu_count', lambda: process_cpus, raising=False)
+    monkeypatch.setattr(worker.os, 'sched_getaffinity', affinity, raising=False)
+    monkeypatch.setattr(worker, 'Path', quota_file)
+    assert worker._solver_worker_count() == expected
+
+
+@pytest.mark.parametrize('configured', [0, 1, 4, 8, 9])
+def test_explicit_solver_workers_win_and_are_validated(monkeypatch, configured):
+    def unexpected_detection():
+        pytest.fail('Explicit solver workers must bypass CPU detection')
+
+    monkeypatch.setenv('ROTA_SOLVER_WORKERS', str(configured))
+    monkeypatch.setattr(worker.os, 'process_cpu_count', unexpected_detection, raising=False)
+    if 1 <= configured <= 8:
+        assert worker._solver_worker_count() == configured
+    else:
+        with pytest.raises(RuntimeError, match='ROTA_SOLVER_WORKERS must be between 1 and 8'):
+            worker._solver_worker_count()
+
+
 @pytest.mark.parametrize('lease_seconds,heartbeat_seconds,pool_timeout,starts', [
     (600, 3, 5, True),
     (600, 3, 596, True),
