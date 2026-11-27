@@ -19,7 +19,8 @@ def check_fair_share(data, ids, spec):
     def assert_comparison(snapshot, key):
         goals = [row for row in evaluate(snapshot).get('goals', [])
                  if row['policy_id'] == rule_id and row['metric'] == 'duties']
-        actual = sorted((row['line_id'] if key == 'within_group' else None,
+        separate_groups = key in ('within_group', 'within_group_day_window')
+        actual = sorted((row['line_id'] if separate_groups else None,
                          row['period_start'], row['period_end'],
                          sorted((people[p['person_id']], p['planned'], p['expected']) for p in row['people']))
                         for row in goals)
@@ -37,7 +38,9 @@ def check_fair_share(data, ids, spec):
     assert_comparison(data, 'pooled')
     separate = variant(comparison='within_group')
     assert_comparison(separate, 'within_group')
-    assert_comparison(variant(period_months=None, period_days=32), 'day_window')
+    day_window = {'period_months': None, 'period_days': 32}
+    assert_comparison(variant(**day_window), 'day_window')
+    assert_comparison(variant(comparison='within_group', **day_window), 'within_group_day_window')
 
     changed_choices = 0
     for seed in expected['seed_robustness']['seeds']:
@@ -49,7 +52,8 @@ def check_fair_share(data, ids, spec):
             assert person == expected['solver_choice'][key]
             assigned.append(person)
         changed_choices += assigned[0] != assigned[1]
-    return {'assertions': {'pooled', 'within_group', 'day_window', 'solver_choice', 'seed_robustness'},
+    return {'assertions': {'pooled', 'within_group', 'day_window', 'within_group_day_window',
+                           'solver_choice', 'seed_robustness'},
             'bindings': {'share': changed_choices}}
 
 
