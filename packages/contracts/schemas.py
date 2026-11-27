@@ -9245,13 +9245,18 @@ class SwapEligibility(Schema):
     findings: list[SwapBlockingFinding] = Field(default_factory=list)
 
 
+class SwapNote(Schema):
+    # A step both people agree to needs no typed reason: the message is optional and stored empty when left out.
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ''
+
+
 class SwapOfferInput(Schema):
     kind: SwapKind = "exchange"
     publication_id: ID
     assignment_id: ID
     recipient_person_id: ID | None = None
     expires_at: datetime
-    reason: Reason
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ''
 
     @field_validator("expires_at")
     @classmethod
@@ -9261,7 +9266,7 @@ class SwapOfferInput(Schema):
         return _utc_instant(value)
 
 
-class SwapCounterofferInput(Decision):
+class SwapCounterofferInput(SwapNote):
     assignment_id: ID
 
 
