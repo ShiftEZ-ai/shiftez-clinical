@@ -197,6 +197,15 @@ jobs:
         ( while :; do date +%s; cat /proc/loadavg; head -1 /proc/stat; cat /proc/pressure/cpu /proc/pressure/io /proc/pressure/memory 2>/dev/null; sleep 15; done > .run/reports/cpu-samples.txt 2>&1 & )
         echo "CI_POSTGRES_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
         python scripts/compiled_client.py
+    - name: Make the unit test runtime readable to synthetic identities
+      if: inputs.suite == 'unit'
+      run: |
+        runtime=$(python -I -c 'import sys; print(sys.base_prefix)')
+        case "$runtime" in
+          "$RUNNER_TEMP"/runtime-python-*/python) ;;
+          *) echo 'Expected the pinned runner-local Python runtime'; exit 1 ;;
+        esac
+        chmod -R a+rX -- "$runtime" "$RUNNER_TEMP/public-ci-venv" apps packages
     - name: Run the exact planned shard once
       env:
         CI_CHECKS_PLAN: ${{ steps.shard-plan.outcome == 'success' && format('{0}/checks-plan/shard-plan.json', runner.temp) || '' }}
