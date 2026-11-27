@@ -554,8 +554,12 @@ HIT_AREA = r"""nodes => nodes.map(n => {
   const grown = b.content !== 'none' && b.position === 'absolute';
   const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
   const box = {left: r.left - x, top: r.top - y, right: r.right + x, bottom: r.bottom + y};
+  // A corner with a radius does not take the pointer outside its curve, so each corner is probed on the curve (45 degrees).
+  const shape = grown ? b : getComputedStyle(n), side = Math.min(box.right - box.left, box.bottom - box.top);
+  const inset = v => 1 + Math.ceil((v.endsWith('%') ? parseFloat(v) / 100 * side : parseFloat(v) || 0) * (1 - Math.SQRT1_2));
+  const [tl, tr, br, bl] = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'].map(c => inset(shape[`border${c}Radius`]));
   // What each corner that misses lands on instead, so a failure names the neighbour or parent in the way.
-  const misses = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.right - 1, box.bottom - 1], [box.left + 1, box.bottom - 1]]
+  const misses = [[box.left + tl, box.top + tl], [box.right - tr, box.top + tr], [box.right - br, box.bottom - br], [box.left + bl, box.bottom - bl]]
     .map(([px, py]) => [px, py, document.elementFromPoint(px, py)]).filter(([, , hit]) => !hit || !(hit === n || n.contains(hit)))
     .map(([px, py]) => `${Math.round(px)},${Math.round(py)} ` + document.elementsFromPoint(px, py).slice(0, 3)
       .map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].map(c => '.' + c).join('')).join(' < '));
