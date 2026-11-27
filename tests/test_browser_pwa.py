@@ -13,7 +13,7 @@ import re
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from playwright.sync_api import expect
+from playwright.sync_api import Error as PlaywrightError, expect
 from packages.contracts.schemas import ABSENCE_REPORT_LABEL
 
 from apps.api import models as m
@@ -132,6 +132,7 @@ def test_manifest_icons_and_head_make_the_app_installable(browser, live_server):
 def test_worker_registers_under_csp_and_shows_a_visible_alert_for_every_push(browser, live_server):
     context, page = sign_in(browser, live_server, 'staff', service_workers='allow')
     errors = []
+    worker_errors = []
     page.on('pageerror', lambda e: errors.append(str(e)))
     try:
         context.grant_permissions(['notifications'], origin=live_server)
@@ -140,16 +141,54 @@ def test_worker_registers_under_csp_and_shows_a_visible_alert_for_every_push(bro
         cdp = context.new_cdp_session(page)
         registrations = []
         cdp.on('ServiceWorker.workerRegistrationUpdated', lambda e: registrations.extend(e['registrations']))
+        cdp.on('ServiceWorker.workerErrorReported', lambda e: worker_errors.append(e['errorMessage']['errorMessage']))
         cdp.send('ServiceWorker.enable')  # reports the registration; the next round trip delivers the event
         page.wait_for_function('() => navigator.serviceWorker.controller !== null')
         registration = next(r for r in registrations if r['scopeURL'] == live_server + '/' and not r['isDeleted'])
+        permission, script = page.evaluate('''() => {
+            window.pushShowOutcomes = [];
+            navigator.serviceWorker.addEventListener('message', ({data}) => {
+                if (data?.type === 'test-push-show') window.pushShowOutcomes.push(data);
+            });
+            return [Notification.permission, navigator.serviceWorker.controller.scriptURL];
+        }''')
+        worker = next((w for w in context.service_workers if w.url == script), None)
+        probe = 'worker target unavailable'
+        if worker is not None:
+            try:
+                worker.evaluate('''async () => {
+                    const clients = await self.clients.matchAll({type: 'window'});
+                    const proto = ServiceWorkerRegistration.prototype, show = proto.showNotification;
+                    const record = (title, outcome, error) => {
+                        for (const client of clients) client.postMessage({type: 'test-push-show', title, outcome, error});
+                    };
+                    proto.showNotification = async function (title, options) {
+                        record(title, 'started');
+                        try { await show.call(this, title, options); }
+                        catch (error) { record(title, 'rejected', String(error)); throw error; }
+                        record(title, 'resolved');
+                    };
+                }''')
+                probe = 'installed on the controlling worker'
+            except PlaywrightError as error:
+                probe = str(error)
         # The app is open and visible: the alert still shows (iOS revokes permission after a silent push). An
         # unreadable payload still shows one, with the app's name.
-        for data in (json.dumps({'v': 1, 'title': 'Duty changed', 'body': 'Open Rota to see it', 'url': '/#inbox', 'unread': 3}), 'not json'):
-            cdp.send('ServiceWorker.deliverPushMessage', {'origin': live_server, 'registrationId': registration['registrationId'], 'data': data})
-        shown = _notifications(page, 2)
-        assert {(n['title'], n['body']) for n in shown} == {('Duty changed', 'Open Rota to see it'), (s.BRANDING_DEFAULTS['short_name'], 'You have a rota update')}
-        assert {n['url'] for n in shown} == {live_server + '/#inbox'}
+        shown = None
+        try:
+            for data in (json.dumps({'v': 1, 'title': 'Duty changed', 'body': 'Open Rota to see it', 'url': '/#inbox', 'unread': 3}), 'not json'):
+                cdp.send('ServiceWorker.deliverPushMessage', {'origin': live_server, 'registrationId': registration['registrationId'], 'data': data})
+            shown = _notifications(page, 2)
+            assert {(n['title'], n['body']) for n in shown} == {('Duty changed', 'Open Rota to see it'), (s.BRANDING_DEFAULTS['short_name'], 'You have a rota update')}
+            assert {n['url'] for n in shown} == {live_server + '/#inbox'}
+        except (AssertionError, PlaywrightError) as failure:
+            try:
+                current, outcomes = page.evaluate('() => [Notification.permission, window.pushShowOutcomes]')
+            except PlaywrightError as error:
+                current, outcomes = 'unavailable', str(error)
+            failure.add_note(f'Push evidence: permission before={permission}, after={current}; probe={probe}; '
+                             f'showNotification={outcomes!r}; worker errors={worker_errors!r}; listed={shown!r}')
+            raise
         # Signing in, its CSRF cookie and the start-up screen are untouched by the worker: the app still works.
         navigate(page, 'requests')
         assert not errors, errors

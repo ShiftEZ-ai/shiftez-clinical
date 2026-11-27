@@ -2,13 +2,14 @@
 every mark the planner draws is stamped as its key entry, every entry has a mark on screen, and no mark of the shared
 vocabulary is drawn without its key (tests/legend_guard.py). Two drafts between them draw each kind of mark: one of
 supervision teams and their problems (test_browser_team_box), one with a team lead, a double booking, a locked
-session, an open place, someone on leave and a staff wish."""
+session, an open place, someone on leave and a staff wish. The phone's All Key list outlives a live redraw of the same view."""
 import re
 
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in  # noqa: F401
+from .test_browser import browser, holding, live_server, sign_in, wait_until  # noqa: F401
+from .test_browser_kept_reads import live_pulse
 from .test_browser_team_box import fixture as team_fixture, open_view
 from .test_browser_legends import two_duties
 from .test_browser_qa_planner import clinic
@@ -68,6 +69,47 @@ def test_phone_day_agenda_keys_every_mark_it_draws(browser, live_server, h):
         guarded(page, teams, 'Week', 'Agenda', ['team', 'issue:error', 'issue:warning'])
         # The agenda's "N open" pill (Wed 7) is the shared Open place entry (live check 6cea25859 found it unkeyed).
         guarded(page, marked, 'Week', 'Agenda', ['tag:lead', 'clash', 'issue:error', 'open'])
+    finally:
+        context.close()
+
+
+def test_phone_all_key_stays_open_through_a_same_view_redraw(browser, live_server, h):
+    """A live redraw of the same rota, view and period whose sessions read lands after All Key opened (first-attempt run
+    45091667806 lost the list there): the list stays open on the redrawn key's +N and lists that key's entries, and
+    Escape returns the focus to that +N."""
+    marked = marked_draft(h)
+    moved, sessions = [0], '**/api/schedule/sessions?**'
+    context, page = sign_in(browser, live_server, 'coordinator', PHONE)
+    live_pulse(page, 'publication', moved)  # someone else published: the Schedule redraws in place
+    try:
+        open_view(page, marked, 'Week', 'Agenda')
+        key = page.locator(f'{ROOT} .view-legend:visible')
+        expect(key).to_have_count(1)
+        more = key.locator(':scope > .lg-more > button')
+        expect(more).to_be_visible()
+        label, before = key.get_attribute('aria-label'), key.get_attribute('data-lg-key')
+        panel = page.get_by_role('dialog', name=f'All {label}', exact=True)
+        with holding(page) as held:
+            held.hold(sessions)
+            moved[0] = 1
+            page.evaluate("window.dispatchEvent(new Event('online'))")
+            wait_until(page, lambda: held[sessions], 'the live redraw never read the sessions')
+            more.click()
+            expect(panel).to_be_visible()
+            held.release(sessions)
+            expect(page.locator(f'{ROOT} .view-legend[data-lg-key="{before}"]')).to_have_count(0)  # the key was redrawn
+        expect(key).to_have_count(1)
+        expect(panel).to_be_visible()
+        expect(page.locator('.popover')).to_have_count(1)
+        expect(more).to_have_attribute('aria-expanded', 'true')
+        expected = key.locator(':scope > li[data-lg-entry]').evaluate_all('ns => ns.map(n => n.innerHTML)')
+        listed = panel.locator('ol > li > .lg-pop')
+        expect(listed).to_have_count(len(expected))
+        assert listed.evaluate_all('ns => ns.map(n => n.innerHTML)') == expected
+        page.keyboard.press('Escape')
+        expect(panel).to_have_count(0)
+        expect(more).to_be_focused()
+        expect(more).to_have_attribute('aria-expanded', 'false')
     finally:
         context.close()
 

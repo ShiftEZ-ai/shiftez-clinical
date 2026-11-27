@@ -57,7 +57,7 @@ def test_inherited_short_timeout_survives_unchanged_save_edits_and_undo(browser,
         field.fill(str(idle))
         dialog.get_by_role('button', name='Save', exact=True).click()
         expect(dialog).to_have_count(0)
-        saved = context.request.get(legacy_session_server + '/api/me').json()['department']
+        saved = page.evaluate("fetch('/api/me').then(response => response.json())")['department']
         assert saved['session_idle_minutes'] is None and saved['session_max_hours'] is None
         pane.get_by_role('button', name='Edit session settings', exact=True).click()
         dialog.get_by_label('Longest session (hours)', exact=True).fill('2')
@@ -74,7 +74,7 @@ def test_inherited_short_timeout_survives_unchanged_save_edits_and_undo(browser,
         page.reload()
         open_config(page, 'Department settings')
         expect(pane).to_contain_text(f'Signed out after {idle_text} without activity')
-        saved = context.request.get(legacy_session_server + '/api/me').json()['department']
+        saved = page.evaluate("fetch('/api/me').then(response => response.json())")['department']
         assert saved['session_idle_minutes'] is None and saved['session_max_hours'] is None
         no_overflow(page)
     finally:
