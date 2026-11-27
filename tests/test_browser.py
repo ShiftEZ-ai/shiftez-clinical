@@ -112,7 +112,8 @@ def _observe_keep_alive_pool(original, keep_alive, logger):
 
 def _live_server_env(h,origin):
     return {"ROTA_ENV":"test","DATABASE_URL":h.settings.database_url,"PUBLIC_ORIGIN":origin,
-            "ROTA_SQLITE_SYNCHRONOUS":h.settings.sqlite_synchronous,**getattr(h,"server_env",{})}
+            "ROTA_SQLITE_SYNCHRONOUS":h.settings.sqlite_synchronous,
+            "ROTA_GENERATION_ENGINE":h.settings.generation_engine,**getattr(h,"server_env",{})}
 
 
 @pytest.fixture

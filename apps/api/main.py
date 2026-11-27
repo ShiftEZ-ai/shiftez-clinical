@@ -198,7 +198,6 @@ def create_app(settings: Settings | None = None, engine=None):
         import asyncio
         import threading
         from . import live
-        settings.warn_default_generation_engine()
         live.configure(settings)
         live.attach(asyncio.get_running_loop())
         live.listen(settings.database_url)

@@ -8,6 +8,7 @@ import socket
 import re
 from datetime import timedelta
 import logging
+from pathlib import Path
 import time
 import threading
 from types import SimpleNamespace
@@ -2068,6 +2069,31 @@ def notification_loop(engine, settings, stopped, wake=None, *, dispatch=True):
             listener.close()
 
 
+def _solver_worker_count():
+    configured = os.getenv('ROTA_SOLVER_WORKERS')
+    if configured is not None:
+        workers = int(configured)
+        if not 1 <= workers <= 8:
+            raise RuntimeError('ROTA_SOLVER_WORKERS must be between 1 and 8')
+        return workers
+
+    process_cpu_count = getattr(os, 'process_cpu_count', None)
+    available = process_cpu_count() if process_cpu_count else None
+    if available is None:
+        try:
+            available = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            available = 1
+    try:
+        quota, period = Path('/sys/fs/cgroup/cpu.max').read_text(encoding='ascii').split()
+        if quota != 'max':
+            available = min(available, max(1, int(quota) // int(period)))
+    except (OSError, ValueError, ZeroDivisionError):
+        # An unavailable quota leaves the process CPU count as the limit.
+        pass
+    return max(1, min(8, available))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
@@ -2082,10 +2108,7 @@ def main():
         raise RuntimeError(
             "ROTA_DB_POOL_TIMEOUT_SECONDS must be less than JOB_LEASE_SECONDS - JOB_HEARTBEAT_SECONDS "
             f"({JOB_LEASE_SECONDS - JOB_HEARTBEAT_SECONDS} seconds) to leave positive worker lease time")
-    settings.warn_default_generation_engine()
-    solver_workers = int(os.getenv('ROTA_SOLVER_WORKERS', '1'))
-    if not 1 <= solver_workers <= 8:
-        raise RuntimeError('ROTA_SOLVER_WORKERS must be between 1 and 8')
+    solver_workers = _solver_worker_count()
     if not WORKER_ID.strip() or len(WORKER_ID) > 120:
         raise RuntimeError('ROTA_WORKER_ID must be a nonempty instance identifier of at most 120 characters')
     engine = make_engine(settings.database_url, settings=settings)
