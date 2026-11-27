@@ -281,11 +281,15 @@ export function dayTimeline(ctx:Context,data:WorkspaceData,visible:Row[],period:
   const props=propertiesOf(weekView.props,'bar'),on=(k:PropKey)=>props.some(p=>p.key===k&&p.on),colours=colourRule(ctx,period.days,key);
   const words=new Set([...ITEM_DRAWS.bar].filter(k=>!['label','supervisor','lead','people'].includes(k)));
   const peopleAfter=(parts:ReturnType<typeof itemParts>)=>{const at=props.findIndex(p=>p.key==='people');return parts.filter(x=>props.findIndex(p=>p.key===x.key)<at).length;};
-  // The check's findings by session, once per draw (each of the day's sessions read them several times: ~360,000 steps).
-  const ofShift=new Map<string,Row[]>();for(const f of (data.workspace.validation?.findings||[]) as Row[])if(f.shift_id){const l=ofShift.get(f.shift_id);if(l)l.push(f);else ofShift.set(f.shift_id,[f]);}
   const people=new Map(ctx.catalogues.people.map(p=>[p.id,p])),locations=new Map((ctx.catalogues.locations||[]).map(l=>[l.id,l])),services=new Map((ctx.catalogues.services||[]).map(s=>[s.id,s]));
   const minute=(iso:string)=>{const l=toLocal(iso,zone);return (l.slice(0,10)<day?-1440:l.slice(0,10)>day?1440:0)+Number(l.slice(11,13))*60+Number(l.slice(14,16));};
   const shifts=visible.filter(s=>touchesDay(s,day,zone)&&(!weekView.onlyOpen||gapOf(data,s))&&(!window||minute(s.end)>clock(window.start)&&minute(s.start)<clock(window.end))).sort((a,b)=>String(a.start).localeCompare(String(b.start)));
+  // Bars and their team cards only use blocking findings on the sessions drawn here.
+  const errorsByShift=new Map<string,Row[]>(shifts.map(s=>[s.id,[]]));
+  for(const finding of (data.workspace.validation?.findings||[]) as Row[]){
+    const errors=errorsByShift.get(finding.shift_id);
+    if(errors&&finding.severity==='error')errors.push(finding);
+  }
   const first=Math.min(...shifts.map(s=>Math.max(0,minute(s.start)))),last=Math.max(...shifts.map(s=>Math.min(2880,minute(s.end))));
   const fitFrom=shifts.length?Math.max(0,Math.floor(first/60)*60-60):420,fitTo=shifts.length?Math.min(2880,Math.ceil(last/60)*60+60):fitFrom+1440;
   const fitSpan=Math.max(360,fitTo-fitFrom),from=window?clock(window.start):fitFrom,span=window?clock(window.end)-from:Math.ceil(fitSpan/(fitSpan>720?120:60))*(fitSpan>720?120:60);
@@ -314,10 +318,10 @@ export function dayTimeline(ctx:Context,data:WorkspaceData,visible:Row[],period:
       const tl=(p:Row)=>on('lead')&&p.team_lead?' '+MARKS.lead[0]:'',nameOf=(id:string)=>hooks.name(people.get(id))||'named supervisor';
       const drawn=drawnPeople(s),hidden=drawn.hidden.length;  // a person display's others: counted (Search › Show)
       // Teams as one-line team boxes (team_view.ts) where the bar is tall enough; the half bars of an overlay say them in words.
-      const errs=(pid:string)=>(ofShift.get(s.id)||[]).filter(f=>f.person_id===pid&&f.severity==='error');
+      const sessionErrs=errorsByShift.get(s.id)!;
+      const errs=(pid:string)=>sessionErrs.filter(f=>f.person_id===pid);
       const day0=toLocal(s.start,zone).slice(0,10),rank=(id:string)=>rankOn(ctx.catalogues,id,day0);
       const teams=on('people')&&showPairs('bar')?teamGroups(drawn.shown,s.participants as Row[]).map(t=>({t,problem:teamProblem(t,s.participants as Row[],errs)})).filter(x=>x.t.length>1||x.problem):[];
-      const sessionErrs=(ofShift.get(s.id)||[]).filter(f=>f.severity==='error');
       // Every rule problem here is one a drawn team says: no "Needs role" badge repeating it.
       const told=!overlay&&teams.some(x=>x.problem)&&sessionErrs.length>0&&sessionErrs.every(f=>BOX_CODES.has(String(f.code)));
       const boxed=overlay?[]:teams,inBox=new Set(boxed.flatMap(x=>x.t.map(e=>e.p))),rest=drawn.shown.filter(p=>!inBox.has(p));
