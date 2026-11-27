@@ -1414,3 +1414,35 @@ def test_overtime_offer_names_uncovered_days_before_sending(browser, live_server
         expect(page.locator('#save-state')).not_to_contain_text('Not saved')
     finally:
         context.close()
+
+
+def test_leave_balance_on_phone_and_negative_approval_confirmation(browser, live_server, h):
+    from .test_leave_balances import configure, request_between
+
+    configure(h, 0)
+    made = request_between(h, day(), day(1))
+    context, page = sign_in(browser, live_server, 'staff', PHONE)
+    try:
+        navigate(page, 'requests')
+        expect(page.get_by_text('0 calendar days remaining', exact=False)).to_be_visible()
+        no_horizontal_scroll(page)
+    finally:
+        context.close()
+    context, page = sign_in(browser, live_server, 'approver', PHONE)
+    try:
+        navigate(page, f"requests?open={made['id']}")
+        panel = page.locator('.request-panel')
+        expect(panel.get_by_text('-1 calendar day after approval', exact=False)).to_be_visible()
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        page.get_by_role('dialog', name='Approve leave').get_by_role('button', name='Approve', exact=True).click()
+        warning = page.get_by_role('dialog', name='Confirm negative leave balance')
+        expect(warning.get_by_text('-1 calendar day after approval', exact=False)).to_be_visible()
+        no_horizontal_scroll(page)
+        warning.get_by_role('button', name='Cancel', exact=True).click()
+        expect(panel.get_by_role('button', name='Approve', exact=True)).to_be_visible()
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        page.get_by_role('dialog', name='Approve leave').get_by_role('button', name='Approve', exact=True).click()
+        warning.get_by_role('button', name='Approve below zero', exact=True).click()
+        expect(panel.locator('.request-history')).to_contain_text('Approved below zero')
+    finally:
+        context.close()
