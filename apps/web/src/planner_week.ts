@@ -5,7 +5,7 @@ import {working,savingMark,failedMark,skeleton,elapsed,observeSize,say as sayPol
 import {fillOptions,assignFingerprint,askRegistry} from './candidates.js';
 import {dateMarks,dateMarkWords} from './date_sets.js';
 import {sidePanel,claimSlot,panelHead} from './side_panel.js';
-import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reasoned,pairWords,autoCode,type MarkKey,el,icon,hoverCard,hoverWithin,type HoverContent,popover,menuItem,type IconName,colourOf,formatDate,formatTime,formatDay,toLocal,labelOf,button,withIcon,note,notify,empty,emptyLine,panelHighlight,tabs,WEEKEND_DAYS,reasonForm,focusQuietly,reportError,type Legend,hostLegend,avatar} from './dom.js';
+import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reasoned,pairWords,autoCode,type MarkKey,el,icon,hoverCard,hoverWithin,keepHover,type HoverContent,popover,menuItem,type IconName,colourOf,formatDate,formatTime,formatDay,toLocal,labelOf,button,withIcon,note,notify,empty,emptyLine,panelHighlight,tabs,WEEKEND_DAYS,reasonForm,focusQuietly,reportError,type Legend,hostLegend,avatar} from './dom.js';
 import {get,request,command,onSessionReset,ApiError,serverChecking} from './api.js';
 import type {Context} from './forms.js';
 import {isWeekend,addDays,isClosed,closureText,rangeWords,absentFrom} from './planner_logic.js';
@@ -598,13 +598,6 @@ export function swipe(node:HTMLElement,period:Pick<Period,'page'|'has_previous'|
   node.addEventListener('pointercancel',()=>{swipeFrom=null;});
   return node;
 }
-/** Where a mouse rests: a redraw under it (a live refresh, a save) brings back the card it dropped (SI-49). */
-let pointer:{x:number;y:number}|null=null;
-if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('pointermove',e=>{pointer=e.pointerType==='mouse'?{x:e.clientX,y:e.clientY}:null;},{passive:true});
-function rehover(){
-  if(!pointer||document.querySelector('.hovercard'))return;
-  document.elementFromPoint(pointer.x,pointer.y)?.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:pointer.x,clientY:pointer.y}));
-}
 /** What changed since the grid was last drawn (per rota), so new names pop in and edited sessions pulse once. */
 let drawn:{workspace:string;shifts:Map<string,string>}|null=null;
 /** The grid is redrawn on every change: a control is found again by its class and name. */
@@ -625,9 +618,9 @@ export function plannerPanels(ctx:Context,data:WorkspaceData,period:Period,hooks
     const had=document.activeElement instanceof HTMLElement&&root.contains(document.activeElement)?document.activeElement:null;
     const active=document.activeElement instanceof HTMLElement?document.activeElement:null;
     if(opener)panelOpener=opener;else if(panel&&active&&active!==document.body&&!active.closest('.wk-panel'))panelOpener=focusKey(active);
-    const next=build&&!panelOnly?build():root,hovering=!!document.querySelector('.hovercard');
+    const back=keepHover(),next=build&&!panelOnly?build():root;
     // One period navigator (SSOT): the Schedule moves it into its toolbar, so a redrawn view drops its own copy.
-    if(next!==root){const fresh=next.querySelector('.wk-nav');if(fresh&&!root.querySelector('.wk-nav'))fresh.remove();root.replaceWith(next);if(hovering)requestAnimationFrame(rehover);}
+    if(next!==root){const fresh=next.querySelector('.wk-nav');if(fresh&&!root.querySelector('.wk-nav'))fresh.remove();root.replaceWith(next);requestAnimationFrame(back);}
     else drawPanels();
     // Keyboard users keep their place: focus moves into a panel that opened, back to what opened it when it closes,
     // or else to the same control in the new grid.

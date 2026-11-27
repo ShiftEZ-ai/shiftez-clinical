@@ -8,7 +8,7 @@ import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
 import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,keepHover,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
@@ -1748,7 +1748,8 @@ async function renderPage(live=false){
   // The same page already on screen: if this read fails at the server or the connection, it stays (with the stale banner).
   const shownBefore=!changedPage&&!keep&&document.querySelector('#main')?.getAttribute('data-loaded-view')===view&&document.querySelector('#main')?.getAttribute('data-loaded-tab')===(routeParts[0]||'')?[...document.querySelector('#main')!.childNodes]:[];
   const sk=keep||previous.length?null:pageSkeleton();
-  dragWorkspace=null;dropHoverCard();if(!keep)shell();const main=document.querySelector<HTMLElement>('#main')!;
+  // A redraw of the page on screen keeps its card while that page stays usable; the swap below brings it to the new copy.
+  dragWorkspace=null;if(!keep){dropHoverCard();shell();}const main=document.querySelector<HTMLElement>('#main')!;
   main.classList.toggle('page-planner',view==='schedule'&&!schedSubPage());  // the Fix list is a list: the window scrolls it
   main.classList.toggle('page-contained',view==='rules');main.classList.toggle('page-wide',['schedule','people','configuration','insights'].includes(view));
   // SW3-C-12: a planning address (a draft to edit, the Fix list) is restricted for a reader who plans nothing, on any
@@ -1818,10 +1819,10 @@ async function renderPage(live=false){
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
-      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){const scroll=plannerScroll();keepFocus(main,()=>main.replaceChildren(body));scroll();}
+      const rehover=keepHover();body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){const scroll=plannerScroll();keepFocus(main,()=>main.replaceChildren(body));scroll();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
       void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
-      closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
+      closeOrphanPopover();requestAnimationFrame(rehover);trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
       // Perf instrumentation (as rk-decorate): a page's render, start to drawn; requests included when it made any.
       // `keep`: a redraw of the page on screen (a save, a live update), which the PC measures read (PC-STEPS).
       performance.measure?.(`render:${view}${keep?':redraw':''}`,{start:renderStarted});
