@@ -694,5 +694,10 @@
     "class": "additive",
     "sha256": "f36f96e0d6fb9960113470a338877afd9317f62428acaf0613aa52865876ff98",
     "review": "Adds a nullable request Undo note without changing existing records. The note can be erased with the request's private details."
+  },
+  "0155_installation_admin": {
+    "class": "destructive",
+    "sha256": "de177afa5a7c37ff51290d0d73e72f5a62422b0a511812d7410cc405fc0836a1",
+    "review": "Widens the role binding check and adds one installation administrator grant and its audit event. Requires confirmation of this revision after a verified backup. Existing rows are retained."
   }
 }

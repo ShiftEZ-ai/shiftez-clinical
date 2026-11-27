@@ -42,9 +42,14 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Checks
 - A pull request runs static checks plus the tests its diff against the target base can reach, proven by hiding a
-  change on purpose. Merge groups and pushes to `main` or a release branch run the full unit and browser suites.
+  change on purpose. The protected affected-unit pilot verifies a qualifying unit fixture change and its node coverage
+  without the static or browser jobs. Merge groups and release-branch pushes run the full unit and browser suites.
+  A queue push to `main` reuses the successful merge-group reports only after verifying the exact commit, tree, base,
+  full test coverage and protected CI controls. A push without that proof runs both suites.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
-  reports. If the nightly capacity check defers the suites, the gate records the deferral.
+  reports. On a qualifying main push it independently verifies the queue proof, retains the qualification reports
+  with their original run identity, and links to that run for the shard reports. If the nightly capacity check
+  defers the suites, the gate records the deferral.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
   guard fails any workflow whose `runs-on` is not a GitHub-hosted label.
 - Jobs run in parallel; independent jobs never wait on each other; suites are sharded and shard counts follow
@@ -54,6 +59,7 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   `pull_request_target` on untrusted code. Workflows from forks get no secrets and need approval to run.
 - One fast privacy check of secrets, names and hosts runs as a pre-push hook and as a required check. Issue and
   pull-request text gets the same screen before posting. A failed check means nothing is sent; never work around it.
+  On pull requests, the trusted checker also requires a bot opener listed in `.github/privacy-pr-openers.json`.
 - The policy guard and trusted verdict run from `main`'s copy. They read policy data from the event's target base
   for pull requests and merge groups, and from the previous commit on a branch push. A newly created release
   branch uses its starting commit, and reader changes land before the policy or ruleset changes they support.
@@ -134,7 +140,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Versions are `vX.Y.Z`; release candidates are `vX.Y.Z-rc.N`, tested on staging.
 - Version tags build, scan and publish the image for their exact commit. The published build contains public code only.
 - Before tagging, qualify the exact release tree with the full checks and require zero failed or skipped tests.
-- Before creating either tag, run `python scripts/check_release_version.py TAG COMMIT` from the repository root and require it to pass.
+- The release tag tool runs `scripts/check_release_version.py` for the exact tag and commit.
+  It refuses to create the tag if the check fails.
 - Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
   may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
   that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.

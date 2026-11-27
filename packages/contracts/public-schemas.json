@@ -159,11 +159,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -302,11 +303,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           }
@@ -3010,7 +3012,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -3610,7 +3613,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -11983,11 +11987,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Approver Roles",
             "type": "array"
           }
@@ -21081,7 +21086,8 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
@@ -26496,7 +26502,8 @@
           "admin",
           "auditor",
           "programme_lead",
-          "operator"
+          "operator",
+          "installation_admin"
         ],
         "title": "Role",
         "type": "string"
@@ -27361,8 +27368,8 @@
         "type": "string"
       },
       "reason": {
+        "default": "",
         "maxLength": 500,
-        "minLength": 3,
         "title": "Reason",
         "type": "string"
       }
@@ -27370,8 +27377,7 @@
     "required": [
       "publication_id",
       "assignment_id",
-      "expires_at",
-      "reason"
+      "expires_at"
     ],
     "title": "SwapOfferInput",
     "type": "object"
@@ -27380,8 +27386,8 @@
     "additionalProperties": false,
     "properties": {
       "reason": {
+        "default": "",
         "maxLength": 500,
-        "minLength": 3,
         "title": "Reason",
         "type": "string"
       },
@@ -27392,7 +27398,6 @@
       }
     },
     "required": [
-      "reason",
       "assignment_id"
     ],
     "title": "SwapCounterofferInput",
@@ -28118,11 +28123,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -28962,7 +28968,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -29944,11 +29951,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Roles",
         "type": "array"
       },
@@ -36402,7 +36410,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
@@ -37544,11 +37553,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -37830,11 +37840,12 @@
             "admin",
             "auditor",
             "programme_lead",
-            "operator"
+            "operator",
+            "installation_admin"
           ],
           "type": "string"
         },
-        "maxItems": 8,
+        "maxItems": 9,
         "title": "Role Names",
         "type": "array"
       },
@@ -38181,11 +38192,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Role Names",
             "type": "array"
           },
@@ -40629,11 +40641,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -41231,11 +41244,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -42062,11 +42076,12 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },
-            "maxItems": 8,
+            "maxItems": 9,
             "title": "Roles",
             "type": "array"
           },
@@ -45812,7 +45827,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -46767,7 +46783,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -49579,7 +49596,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "title": "Role",
             "type": "string"
@@ -54039,7 +54057,8 @@
               "admin",
               "auditor",
               "programme_lead",
-              "operator"
+              "operator",
+              "installation_admin"
             ],
             "type": "string"
           },
@@ -55024,7 +55043,8 @@
                   "admin",
                   "auditor",
                   "programme_lead",
-                  "operator"
+                  "operator",
+                  "installation_admin"
                 ],
                 "type": "string"
               },
@@ -80292,7 +80312,8 @@
                 "admin",
                 "auditor",
                 "programme_lead",
-                "operator"
+                "operator",
+                "installation_admin"
               ],
               "type": "string"
             },

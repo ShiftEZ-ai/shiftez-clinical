@@ -7,6 +7,10 @@ Mockup names and numbers are illustrative only; nothing from them is seeded into
 
 - Cool neutral surfaces (#F8FAFC page, white cards, slate text), one teal accent.
   Light, dark and system themes from the same tokens (`app.css` `:root`).
+- Forced colours (Windows contrast themes): system colours only (Canvas, CanvasText, ButtonText, Highlight,
+  HighlightText, GrayText). A background or a shadow never carries a state alone, because both are removed: every
+  switch, dot, bar and mark keeps an edge, a shape or a word. `forced-color-adjust:none` only on a control that then
+  draws itself in system colours (the switch, the highlighted search option). Focus is a solid Highlight outline.
 - Colour carries meaning: each duty type has a hue (teal, sky, violet, amber, slate,
   coral, indigo, pink) shown as a soft tint plus a dot. A chosen colour stays; the others get the free hues one each
   in creation order (`setTypeColours`, the one assignment every view and key reads). Automatic colours never use
@@ -553,8 +557,19 @@ and a desktop window narrowed below it gets the same rule at once.
   a "!" to decode; a number inherited from a broader line is muted with "↰" and its tooltip names
   that line. The Rules list and database, a rule's lines table, the line panel title, Needs
   attention, Which rule applies?, the rule sheet's cards and range bar and the planner's rule list all use it.
-- Rules as the rule catalogue (`rules_tree.ts`, `rule_catalogue.ts`): one
-  database, families › rules (Show lines, switch, "N lines") › numbered lines. Who and where are pills by kind — everyone grey,
+- Rules as the rule catalogue (`rules_tree.ts`, `rule_catalogue.ts`), the default Rules page; the Rules list above shows
+  only while a department has the catalogue switched off. A list, not a table: families › rules › lines. A rule row is
+  select · switch · the catalogue name · its badges (strength, safety lock, "Off") over one count line,
+  "N lines · who: … · where: …". There is no per-line sentence and no column, so nothing is empty and nothing scrolls
+  sideways at 1440 or 390.
+  Lines show when a rule is opened, grouped by where (lines with a different where all apply). In each group the broadest
+  line is the anchor, and the more specific lines sit indented under it as its exceptions, most specific first
+  (person › rank/programme/tag/skill › everyone, the order in which they win). An exception names what it replaces,
+  "≤ 3 (instead of ≤ 5)", only when exactly one broader line is replaced. No anchor: flat, most specific first; a chosen
+  line sort keeps its own flat order. Safety kinds (every line applies, the strictest binds) stay flat under
+  "Always applies" with the lock, never "instead of". A line reads who › when › numbers, and the rule's page lists its
+  lines the same way. View settings keeps one layout setting: Open all rules or Collapsed.
+  Who and where are pills by kind — everyone grey,
   each rank its own rank tint (`rankColour`), groups violet, people blue, clinics teal, #tags their own colour (`.rp`, `tagRef`) — first N then "+N".
   Tri-state boxes roll up to select-all; one selection bar. A rule's page opens a line in the docked item panel (`dockPanel`) and
   outlines the line it edits. Needs attention: issues grouped by kind, each with a ★ recommended fix and Apply.
@@ -820,7 +835,8 @@ and a desktop window narrowed below it gets the same rule at once.
   on the side with room and scroll inside when taller, never past the status footer, their head and foot staying in view
   (Reset, Save as view) and the wheel or a swipe never scrolling the page behind them; a phone sheet the same. Menus are `role=menu` with `menuitemradio` for single choices.
   A closed dropdown never cuts its label silently: too long for its width, it ends in "…" with the full choice as a
-  tooltip.
+  tooltip. People lists: a single choice is one list A to Z by name with the rank on the row; a multiple choice keeps
+  rank sections (a whole rank is chosen at once) in the department's rank order, No rank last.
 - Grids (`role=grid`: Schedule Week, Month, People, Timeline, Counts through `roving()` in `planner_week.ts`; the Sheet
   its own): one Tab stop, a cell (the last focused, else today's first session, else the first cell), per the WAI-ARIA
   APG grid pattern. A column's resize grip (APG window splitter, `role=separator`, ← → resize) is no grid item: Tab

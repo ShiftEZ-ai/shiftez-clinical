@@ -42,14 +42,17 @@ def solo(h, permitted=True):
 
 
 def self_approve(page, why):
-    """B5 (f1d80dcc4): Activate… docks the decision panel, named after the change; for your own proposal "Approve and
-    activate" asks for your reason (its use of the permission is recorded as self-approved, §3) in a confirm dialog."""
+    """B5 (f1d80dcc4): Activate… docks the decision panel, named after the change; for your own proposal it asks for your
+    reason once, beside the decision (its use of the permission is recorded as self-approved, §3): "Approve and activate"
+    waits for it and no second dialog asks again. Returns the panel and any dialog, for the caller to see none is left."""
     review = page.get_by_role('region', name='Add a line for everyone · turns the rule on', exact=True)
-    review.get_by_role('button', name='Approve and activate', exact=True).click()
-    confirm = page.get_by_role('dialog', name='Approve and activate your own change', exact=True)
-    confirm.get_by_label('Reason', exact=True).fill(why)
-    confirm.get_by_role('button', name='Approve and activate', exact=True).click()
-    return review, confirm
+    approve = review.get_by_role('button', name='Approve and activate', exact=True)
+    expect(review.locator('.rc-lp-foot .why-unavailable')).to_have_text('Give a reason (3 characters or more)')
+    expect(approve).to_be_disabled()
+    expect(review.get_by_label('Reason', exact=True)).to_have_count(1)
+    review.get_by_label('Reason', exact=True).fill(why)
+    approve.click()
+    return review, page.get_by_role('dialog')
 
 
 @pytest.mark.parametrize('width,scheme', VIEWS)
