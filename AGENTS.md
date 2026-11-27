@@ -134,7 +134,7 @@ Only a critical change gets a review, meaning a change whose failure would be ir
 - Merge gates: `.github/`, `ci/`, `tests/quarantine.json`, test-runner and build configuration, the scripts in `package.json`, and deleting, skipping or weakening a test.
 - Production: `infra/`, `apps/api/settings.py`, production deploys.
 
-A critical change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict that names the head. A re-cut that only merges `main` keeps the earlier verdict only when the Delivery Lead confirms a clean merge. No review for a same-tree re-cut, a rebase, or a test-only change that keeps every assertion.
+A critical change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict that names the head. A re-cut that only merges `main` keeps the earlier verdict when the publisher confirms a clean merge (same tree replay, same patch). No review for a same-tree re-cut, a rebase, or a test-only change that keeps every assertion.
 
 ## Data safety
 - Migrations only add; never edit, rename or delete a landed migration (`migrations/safety.py`,

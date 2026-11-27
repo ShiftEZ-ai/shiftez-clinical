@@ -1361,7 +1361,9 @@ def test_request_type_change_keeps_person(browser, live_server, h):
         dialog = new_request(page, 'Other request')
         person = dialog.get_by_label('Person', exact=True)
         person.select_option(other['id'])
-        expect(person.locator('optgroup')).not_to_have_count(0)  # grouped by rank, as every people choice
+        # The shared people list: one flat list for a single choice, each person carrying their rank for the row.
+        expect(person.locator('optgroup')).to_have_count(0)
+        expect(person.locator('option[data-group]')).not_to_have_count(0)
         dialog.get_by_role('radio', name=re.compile('^Leave or absence')).check()
         # A short people list is checkboxes (a long one the shared picker's hidden <select multiple>).
         expect(dialog.locator('fieldset[name="People"] input:checked')).to_have_attribute('value', other['id'])
