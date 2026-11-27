@@ -152,8 +152,17 @@ def test_home_counts_only_decisions_this_person_may_take(h):
     assert counts(h.get('coordinator', '/api/home'))['patterns'] == 1
 
 
-@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_a_rota_months_ahead_waits_on_home_for_whoever_may_review_it(h):
+    _check_distant_rota_review(h)
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('h', ['postgresql'], indirect=True)
+def test_a_distant_rota_waits_for_the_eligible_reviewer_on_postgres(h):
+    _check_distant_rota_review(h)
+
+
+def _check_distant_rota_review(h):
     """A submitted rota three months ahead is outside Home's near-dates window, yet the Schedule offers it for review:
     Home offers it too, to the approver only, and offers it to publish once approved."""
     identity(h, 'programme', ['programme_lead'])
