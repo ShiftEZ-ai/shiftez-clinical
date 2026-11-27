@@ -17,7 +17,7 @@ def deployment(request, monkeypatch):
 def test_operations_and_footer_identify_the_same_deployment(browser, live_server, deployment):
     context, page = sign_in(browser, live_server, 'operator')
     try:
-        me = context.request.get(live_server + '/api/me').json()
+        me = page.evaluate("fetch('/api/me').then(response => response.json())")
         assert me['deployment'] == deployment
         navigate(page, 'system/operations')
         service = page.locator('.ops-tile').filter(has=page.get_by_text('Service', exact=True))
