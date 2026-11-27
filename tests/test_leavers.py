@@ -1,5 +1,6 @@
 """person.anonymise: a leaver's personal details are removed; rotas, publications and the audit log stay intact."""
 import json
+from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
 from apps.api import models as m
@@ -66,13 +67,20 @@ def test_anonymised_leaver_is_absent_from_other_directory_and_people_reads(reque
 
 def test_anonymising_a_leaver_preserves_the_last_installation_admin(h):
     person_id = h.seed["people"][0]
-    h.command("operator", "role.grant", {"identity_id": h.seed["identities"]["staff"],
-        "role": INSTALLATION_ADMIN_ROLE, "starts_on": "2020-01-01", "reason": "Synthetic installation grant"})
+    grant = {"role": INSTALLATION_ADMIN_ROLE, "starts_on": "2020-01-01", "reason": "Synthetic installation grant"}
+    h.command("operator", "role.grant", {**grant, "identity_id": h.seed["identities"]["staff"]})
+    other = h.command("operator", "role.grant", {**grant, "identity_id": h.seed["identities"]["coordinator"]})["record"]
     person = next(p for p in h.get("admin", "/api/catalogues")["people"] if p["id"] == person_id)
     person = h.configure("people", {"display_name": person["display_name"], "active": False},
                          person_id, person["revision"])["record"]
-    refused = h.command("admin", "person.anonymise", {"reason": "Remove synthetic leaver details"},
-                        person_id, person["revision"], status=409)
+    reason = {"reason": "Remove synthetic leaver details"}
+    refused = h.command("admin", "person.anonymise", reason, person_id, person["revision"], status=403)
+    assert refused["error"]["code"] == "FORBIDDEN"
+
+    h.command("operator", "role.revoke", {"reason": "End synthetic access"}, other["id"], other["revision"])
+    h.command("operator", "role.grant", {**grant, "identity_id": h.seed["identities"]["admin"],
+        "ends_on": (date.today() + timedelta(days=30)).isoformat()})
+    refused = h.command("admin", "person.anonymise", reason, person_id, person["revision"], status=409)
     assert refused["error"]["code"] == "LAST_INSTALLATION_ADMIN"
     assert h.get("staff", "/api/admin/branding")["can_edit"]
 

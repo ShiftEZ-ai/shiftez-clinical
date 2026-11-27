@@ -76,7 +76,7 @@ def anonymise(db, actor, command, settings):
     if identities:
         retiring = {identity.id for identity in identities}
         keep_developer(db, retiring)
-        keep_installation_admin(db, identity_ids=retiring)
+        keep_installation_admin(db, actor, identity_ids=retiring)
     affected = 1
     name = f"Former staff member {person.id[:8]}"
     person.display_name, person.tags, person.rota_aliases = name, [], []
