@@ -402,22 +402,34 @@ export function legend(label='Legend'){
   // One line below its view reviewed: the entries that don't fit, the last first, go behind the one "+N",
   // which lists every entry. The first entry always stays; print shows them all (app.css).
   let width=-1;
+  // D-057: an open "+N" list stays open when its key is refitted or redrawn. It moves to the "+N" of the key now in its
+  // place (this one, or the same key of an area redrawn under the same data-redraw-key: the Schedule's rota, view and
+  // period) and lists that key's entries; it closes when nothing is hidden there any more.
+  const successor=()=>{
+    const same=`.view-legend[aria-label="${CSS.escape(label)}"]`,host=root.closest<HTMLElement>('[data-redraw-key]');
+    const scope=host?.dataset.redrawKey,nth=host?[...host.querySelectorAll(same)].indexOf(root):-1;
+    return ()=>{
+      const next=root.isConnected?root:scope==null?null:document.querySelector(`[data-redraw-key="${CSS.escape(scope)}"]`)?.querySelectorAll(same)[nth];
+      if(!next)return null;
+      if(!next.querySelector(':scope>.lg-more'))legendFits.get(next)?.();  // a key drawn but not painted or fitted yet
+      return next.querySelector<HTMLElement>(':scope>.lg-more>button');};};
   const fit=()=>{
     width=root.hidden||!root.isConnected?0:root.clientWidth;
     if(!width)return;
     root.querySelector(':scope>.lg-more')?.remove();
     const lis=[...root.querySelectorAll<HTMLElement>(':scope>li[data-lg-entry]')];for(const l of lis)l.hidden=false;
     const list=()=>lis.map(l=>{const i=items.get(l.dataset.lgK||'');return i?el('span',{class:'lg-pop'},...entry({...i,mark:i.mark.cloneNode(true) as HTMLElement})):'';});
+    let keep:(()=>HTMLElement|null)|undefined;
     for(let i=lis.length-1,n=1;i>0&&root.scrollWidth>root.clientWidth+1;i--,n++){lis[i].hidden=true;root.querySelector(':scope>.lg-more')?.remove();
-      const more=overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list});
+      const more=overflowMore(n,['legend item','legend items'],{all:items.size,title:label,list,keep:keep??=successor()});
       more.replaceChildren(el('span',{class:'lg-more-mark','aria-hidden':'true'},more.textContent));
       root.append(el('li',{class:'lg-more'},more));}};
-  legendFits.set(root,fit);
+  legendFits.set(root,()=>queued?paint():fit());
   observeSize(root,()=>{if(root.clientWidth!==width)fit();});
   const add=(key:string,mark:string|HTMLElement,text:string,order=1,use?:LegendUse)=>{
     if(items.has(key))return;
     items.set(key,{mark:typeof mark==='string'?el('span',{class:'lg-swatch '+mark,'aria-hidden':'true'}):mark,label:text,order,use});
-    if(!queued){queued=true;queueMicrotask(paint);}
+    if(!queued){queued=true;queueMicrotask(()=>{if(queued)paint();});}  // painted already when a successor asked first
   };
   /** Draws `node` as entry `key` (its swatch `mark`, its words `text`): stamps it and adds the entry. Returns `node`. */
   // One element may stand for several entries (a bar: its area's colour, worked in, not published yet): space-separated.
@@ -1117,15 +1129,24 @@ export function paintMore<T extends HTMLElement>(m:T,n:number,w:MoreWords):T{
  *  it shows "+N" and is named in full by moreName. `all`: the action is "show all M" (and its tip). `list` builds the
  *  numbered list it opens (a popover); `open` shows them elsewhere instead (a panel); neither: the caller's own handler.
  *  `title`: that list's title when it holds more than the noun names. `as`: 'span' a plain mark, 'hidden' a mark inside
- *  a control that already names everything. */
+ *  a control that already names everything. `keep`: the "+N" that stands for this one after a redraw (legend()): the
+ *  open list moves to it and lists what it lists, or closes when there is none. */
+const moreLists=new WeakMap<HTMLElement,{list:()=>Child[];all?:number}>();
 export function overflowMore(n:number,noun:MoreNoun,o:{all?:number;of?:string;action?:string;list?:()=>Child[];open?:()=>void;title?:string;
-  cls?:string;as?:'button'|'span'|'hidden';attrs?:Record<string,string>}={}):HTMLElement{
+  cls?:string;as?:'button'|'span'|'hidden';attrs?:Record<string,string>;keep?:()=>HTMLElement|null}={}):HTMLElement{
   const w={noun,of:o.of,action:o.action??(o.all!=null?`show all ${o.all}`:undefined)},cls=o.cls??'pill-more';
   if(o.as==='span'||o.as==='hidden')return paintMore(el('span',{class:cls,...(o.as==='hidden'?{'aria-hidden':'true'}:{}),...o.attrs}),n,w);
   const b=paintMore(el('button',{type:'button',class:cls,...(o.list?popup('dialog'):{}),...(o.all!=null?{'data-tip':`Show all ${o.all}`}:{}),...o.attrs}),n,w);
   const many=o.title??(typeof noun==='string'?noun:noun[1]);  // the opened list's title
+  const fill=(panel:HTMLElement,list:()=>Child[],all?:number)=>panel.replaceChildren(el('div',{class:'dt-pop-label'},`${many} · ${all}`),el('ol',{},...list().map(x=>el('li',{},x))));
+  if(o.list)moreLists.set(b,{list:o.list,all:o.all});
   if(o.list||o.open)b.addEventListener('click',e=>{e.stopPropagation();if(o.open){o.open();return;}
-    popover(b,panel=>{panel.classList.add('pill-pop');panel.append(el('div',{class:'dt-pop-label'},`${many} · ${o.all}`),el('ol',{},...o.list!().map(x=>el('li',{},x))));},{label:`All ${many}`});});
+    let shown:HTMLElement|null=null;
+    const keep=o.keep&&(()=>{const next=o.keep!(),to=next&&moreLists.get(next);if(!shown||!to)return null;
+      const had=shown.contains(document.activeElement);fill(shown,to.list,to.all);
+      if(had&&!shown.contains(document.activeElement)){const first=shown.querySelector<HTMLElement>('button');if(first)first.focus();else{shown.tabIndex=-1;shown.focus({preventScroll:true});}}
+      return next;});
+    popover(b,panel=>{shown=panel;panel.classList.add('pill-pop');fill(panel,o.list!,o.all);},{label:`All ${many}`,keep});});
   return b;
 }
 /** One step of a step rail: its title; done (a check, and "completed" in its name) or current (aria-current=step);
@@ -1560,8 +1581,8 @@ export const buildingPage=(content:HTMLElement|null)=>{
 /** Whether a late answer may still draw into `node`: it is on screen, or in the page being built. Never `isConnected`
  *  alone, which drops an answer that lands before the page is shown; a replaced page's detached nodes stay gone. */
 export const alive=(node:Node|null|undefined)=>!!node&&(node.isConnected||!!pageBuilding?.contains(node));
-/* maintenance: footer controls (rota health, score, overlap, proposal, Needs a check) act through one delegated handler, never
- * a listener of their own. The footer redraws often (a check finishing, a live update, a save): a press that began on a
+/* maintenance: footer controls (rota health, score, overlap, proposal, Needs a check) and the Schedule's Auto-schedule button
+ * act through one delegated handler, never a listener of their own. The footer and the top bar redraw often (a check finishing, a live update, a save): a press that began on a
  * pill the redraw replaced still acts, on the same control (`key`) drawn again under the pointer, whether or not the
  * browser still sends a click; and a control lent to the "+N" list keeps its action. */
 const footerActs=new WeakMap<Element,(e:MouseEvent)=>unknown>();

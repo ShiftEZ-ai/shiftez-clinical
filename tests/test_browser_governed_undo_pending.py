@@ -83,7 +83,9 @@ def test_group_retirement_undo_waiting_for_a_second_approver_is_pending_and_with
 
 
 def test_restore_undo_with_one_approval_still_says_retired_again(browser, live_server, h):
-    row = transition(h, 'approver', 'policy.retire', transition(h, 'approver', 'policy.activate', proposal(h))['record'])['record']
+    non_safety = proposal(h, definition={'rule': {'kind': 'max_duties', 'maximum': 10}})
+    row = transition(h, 'approver', 'policy.retire',
+                     transition(h, 'approver', 'policy.activate', non_safety)['record'])['record']
     context, page = sign_in(browser, live_server, 'approver')
     try:
         navigate(page, 'rules')

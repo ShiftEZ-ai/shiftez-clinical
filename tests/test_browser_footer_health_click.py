@@ -96,3 +96,30 @@ def test_a_press_the_footer_redraws_under_still_opens_the_pill(browser, live_ser
         expect(page.locator('.popover')).to_have_count(1)
     finally:
         context.close()
+
+
+def test_a_press_the_top_bar_redraws_under_still_opens_auto_schedule(browser, live_server, h):
+    """Issue 1800: the press begins on Auto-schedule and a live update draws the top bar again before the button is
+    released. The button drawn again under the pointer is the one pressed, so the panel opens and stays open."""
+    from .test_browser_team_box import open_view
+    w, gaps, gap = real_gaps(h, 'top bar press redraw')
+    context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
+    try:
+        open_view(page, w, 'Week')
+        auto = page.get_by_role('button', name='Auto-schedule', exact=True)
+        expect(auto).to_have_attribute('aria-expanded', 'false')
+        auto.evaluate('n=>{n.__before=true;}')
+
+        def middle():
+            box = auto.bounding_box()
+            return box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+        page.mouse.move(*middle())
+        page.mouse.down()
+        live_change(page, h, w)
+        page.wait_for_function("()=>{const b=document.querySelector('.auto-button');return !!b&&!b.__before;}", timeout=20000)
+        page.mouse.move(*middle())
+        page.mouse.up()
+        expect(page.locator('#auto-panel')).to_be_visible()
+        expect(auto).to_have_attribute('aria-expanded', 'true')
+    finally:
+        context.close()
