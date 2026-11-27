@@ -1100,6 +1100,20 @@ def _focal_workload_windows(data, rule, selected, focal, zone):
     return ((a, b) for a, b in sorted(windows) if any(overlaps(a, b, c, d) for _, _, c, d in focal))
 
 
+def _max_hours_observations(data, rule, selected, focal, zone, cache):
+    if cache is not None:
+        # Applicability and the selected duties are resolved afresh before reusing this arithmetic.
+        key = (zone, data['organisation']['week_start'], rule['window'], rule.get('window_days'),
+               tuple((a, b) for _, _, a, b in selected), tuple((a, b) for _, _, a, b in focal))
+        if key in cache:
+            return cache[key]
+    observations = [(a, b, workload_actual(rule, selected, a, b, zone)[0][1])
+                    for a, b in _focal_workload_windows(data, rule, selected, focal, zone)]
+    if cache is not None and len(cache) < 8192:
+        cache[key] = observations
+    return observations
+
+
 @lru_cache(maxsize=8192)
 def _workload_windows(a, b, window, window_days, zone, week_start):
     if window == 'rolling':
@@ -1680,7 +1694,8 @@ def _merge_session_checks(partial, shifts, findings, coverage, session_start):
     coverage.sort(key=lambda row: (row['status'] in {'cancelled', 'closed'}, order[row['shift_id']]))
 
 
-def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False, trial_cache=None) -> dict:
+def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False,
+             trial_cache=None, workload_hours_cache=None) -> dict:
     """`session_cache`: private to assignment-copy trials on one otherwise immutable snapshot.
     Reuse unchanged sessions' checks; department reports remain fresh.
     Internal decision/score trials may omit cause/hint decoration; all constraint checks still run.
@@ -1689,7 +1704,8 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     Greedy's private person-duty lookup belongs to an assignment-only trial. It needs only
     mandatory personal rules, because advisory workload observations do not guide placements.
     `trial_cache` reuses personal rule checks and quota attribution for unchanged duties. Rebuild it after any fact,
-    rule or session setup edit; participant edits and focus changes are checked by their complete signatures."""
+    rule or session setup edit; participant edits and focus changes are checked by their complete signatures.
+    `workload_hours_cache` shares only interval arithmetic across the snapshots in one catalogue comparison."""
     from .rule_lines import read_quality_for
     read_quality = read_quality_for(data)
     # Private to participant-only trials on one otherwise immutable snapshot. Keep only each person's latest state.
@@ -2501,8 +2517,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
             if observed is None:
                 selected, unknown_external = workload_selected(data, policy, pid, entries)
                 if hours_by_person is not None:
-                    hour_windows = [(a, b, workload_actual(rule, selected, a, b, zone)[0][1])
-                                    for a, b in _focal_workload_windows(data, rule, selected, focal, zone)]
+                    hour_windows = _max_hours_observations(data, rule, selected, focal, zone, workload_hours_cache)
                     hours_by_person[pid] = focal, unknown_external, hour_windows
             else:
                 _, unknown_external, hour_windows = observed
