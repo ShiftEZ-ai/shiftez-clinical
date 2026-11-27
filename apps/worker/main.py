@@ -721,9 +721,9 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
         old.revision += 1
         queue_generation_outcome(db, old)
     queued = select(m.Job).where(wanted, m.Job.status == "queued")
-    # The serialized claim reserves one solve slot. A paused expired job keeps its stored status.
+    # A feature can pause a live lease. Count it until expiry, across both worker lanes.
     heavy = m.Job.kind.in_(_HEAVY_JOB_KINDS)
-    if db.scalar(select(m.Job.id).where(enabled, m.Job.status == "running", heavy, lease_expired.is_not(True)).limit(1)):
+    if db.scalar(select(m.Job.id).where(m.Job.status == "running", heavy, lease_expired.is_not(True)).limit(1)):
         queued = queued.where(~heavy)
     if recovering_worker is not None and expired:
         queued = queued.order_by(m.Job.id.in_([old.id for old in expired]).desc())
