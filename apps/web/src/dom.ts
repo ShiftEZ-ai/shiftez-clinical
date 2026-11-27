@@ -1492,7 +1492,7 @@ function stackToasts(tray:Element){
   const max=phoneQuery.matches?2:3,items=[...tray.children] as HTMLElement[];
   let shown=0;
   // The message focus is in stays shown (WCAG 2.2.1), even when newer ones arrive.
-  for(const t of items){if(shown<max||t.contains(document.activeElement)){t.hidden=false;shown++;}else if(t.classList.contains('with-action'))t.hidden=true;else t.remove();}
+  for(const t of items){if(shown<max||t.contains(document.activeElement)){t.hidden=false;shown++;}else if(t.classList.contains('with-action')){if(!t.hidden)t.hidden=true;}else t.remove();}
   // Only the bars of the tray's own host count: in a dialog its footer, on the page the page's bars (not a dialog's).
   const host=tray.parentElement||document.body,inDialog=host!==document.body;
   let lift=0;
@@ -1502,18 +1502,21 @@ function stackToasts(tray:Element){
     if(r.height&&r.top>innerHeight/2&&r.top<innerHeight)lift=Math.max(lift,innerHeight-r.top);
   }
   (tray as HTMLElement).style.setProperty('bottom',lift?`${lift+8}px`:'');
-  // A docked side panel beside the page: the messages sit over the page column, never over the panel's controls.
-  const dock=inDialog?null:document.querySelector<HTMLElement>('.shell>.dock-panel');
-  const left=dock?.getBoundingClientRect().left??innerWidth;
-  (tray as HTMLElement).style.setProperty('right',dock&&left>innerWidth/3&&left<innerWidth?`${innerWidth-left+20}px`:'');
+  // Any side panel open beside the page (the shared docked one or a page's own, such as Auto-schedule): the messages sit
+  // over the page column, never over the panel's controls. A phone's full-width sheet starts at the left edge: not beside.
+  let left=innerWidth;
+  if(!inDialog)for(const p of document.querySelectorAll<HTMLElement>('.side-panel:not([hidden],.slot-covered)')){
+    const l=p.getBoundingClientRect().left;if(!p.closest('dialog')&&p.getClientRects().length&&l>innerWidth/3)left=Math.min(left,l);}
+  (tray as HTMLElement).style.setProperty('right',left<innerWidth?`${innerWidth-left+20}px`:'');
 }
-/** While messages show, a panel docking or a bar appearing (a redraw) moves them out of the way, once per frame. */
+/** While messages show, a panel docking or opening or a bar appearing (a redraw) moves them out of the way, once per frame. */
 let layoutWatch:MutationObserver|null=null;
 function followLayout(tray:HTMLElement){
   if(layoutWatch)return;let queued=false;
   layoutWatch=new MutationObserver(()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;
     if(!tray.isConnected||!tray.childElementCount){layoutWatch?.disconnect();layoutWatch=null;return;}stackToasts(tray);});});
-  layoutWatch.observe(document.body,{childList:true,subtree:true});
+  // A page's own panel opens by losing its hidden attribute, not by being added.
+  layoutWatch.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
 }
 /** Ctrl/⌘ Z outside a text field undoes the newest change that offers Undo (its message's own button), as in any editor
  *  (owner decision OD-8); Ctrl/⌘ Shift Z and Ctrl Y redo (SW3-A-06): the newest message's Redo, else the page's Redo
