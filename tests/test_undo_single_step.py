@@ -2,7 +2,7 @@
 REASON = 'Independent test review decision'
 
 
-def test_second_undo_is_refused_not_a_redo(h):
+def test_undo_walks_back_available_edits_then_refuses(h):
     created = h.shift(h.workspace()); w = created['workspace']; sid = created['shift_id']
     locked = h.command('coordinator', 'shift.action', {'workspace_id': w['id'], 'shift_ids': [sid], 'action': 'lock', 'reason': REASON}, revision=w['revision'])
     assert locked['workspace']['can_undo'] is True
