@@ -8,6 +8,11 @@
       "reason": "The replacement test keeps the input revision, refused over-limit request, accepted at-limit request, effective options and fingerprint assertions. Continuing uses the limit captured by the draft so a later department limit does not change its prepared run."
     },
     {
+      "node": "tests/test_bulk_contracts.py::test_generated_recursive_contracts_typecheck_with_the_pinned_compiler",
+      "owner": "maintainer",
+      "reason": "The recursive interface assertions remain in test_generated_recursive_contracts_export_interfaces. The Static checks job compiles generated.ts through the web TypeScript project with the locked compiler."
+    },
+    {
       "node": "tests/test_browser_audit_rules_layout.py::test_search_keeps_horizontal_scroll_and_row_actions_capture_immediate_native_scroll",
       "owner": "maintainer",
       "reason": "The Rules table is replaced by the one-row Rules list, which has no columns, column menus or sideways scroll; the list layout and fit are asserted in the Rules page layout tests."
