@@ -500,7 +500,7 @@ def test_stage_waits_while_pasted_names_are_being_matched(browser, live_server, 
 def contact_labels():
     """Every name a contact column could carry: the contact types, their old record-field labels and the People list's."""
     from packages.contracts.schemas import DEFAULT_CONTACT_TYPES
-    return {t['name'] for t in DEFAULT_CONTACT_TYPES} | {'Work phone', 'Extension', 'Pager', 'Work email', 'Hospital phone'}
+    return {t['name'] for t in DEFAULT_CONTACT_TYPES} | {'Work phone', 'Extension', 'Pager', 'Work email'}
 
 
 def people_view(page, layout):
@@ -513,7 +513,7 @@ def people_view(page, layout):
 def test_a_list_shown_as_sheet_keeps_its_grouping_and_shown_columns(browser, live_server, h):
     """Review #12: People › Group by Status, Title and Short code shown → Sheet keeps the grouping (rows in their
     groups, the grouped column shown) and edits the shown columns as their record fields; back to Table keeps the view
-    settings. Contacts are never bulk fields (G3-32e): a shown Hospital phone stays out of the Sheet."""
+    settings. Contacts are never bulk fields (G3-32e): a shown Work phone stays out of the Sheet."""
     p = next(x for x in h.get('admin', '/api/catalogues')['people'] if x['id'] == h.seed['people'][1])
     h.command('admin', 'catalogue.update', {'catalogue': 'people', 'value': {**{k: p[k] for k in ('display_name',)}, 'active': False},
               'reason': 'Test setup'}, p['id'], p['revision'])
@@ -526,7 +526,7 @@ def test_a_list_shown_as_sheet_keeps_its_grouping_and_shown_columns(browser, liv
             pop.get_by_role('button', name='Clear all filters', exact=True).click()
         page.keyboard.press('Escape')
         settings = toolbar(main, 'View settings')
-        for name in ('Title', 'Short code', 'Hospital phone'):
+        for name in ('Title', 'Short code', 'Work phone'):
             box = settings.get_by_role('checkbox', name=name, exact=True)
             if not box.is_checked():
                 box.check()
@@ -551,7 +551,7 @@ def test_a_list_shown_as_sheet_keeps_its_grouping_and_shown_columns(browser, liv
         stage_bar(main).get_by_role('button', name=re.compile('Discard all')).click()
         people_view(page, 'Table')
         expect(main.get_by_role('button', name=re.compile('^Group'))).to_contain_text('Status')
-        for name in ('Title', 'Short code', 'Hospital phone'):
+        for name in ('Title', 'Short code', 'Work phone'):
             expect(main.locator('th', has_text=name)).to_have_count(1)
     finally:
         context.close()

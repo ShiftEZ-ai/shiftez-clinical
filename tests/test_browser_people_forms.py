@@ -202,7 +202,7 @@ def test_editing_job_title_preserves_contacts_omitted_from_people_list(browser, 
         panel = open_person(page, p)
         panel.get_by_role("button", name=f"Edit {p['display_name']}", exact=True).click()
         form = page.get_by_role("dialog", name="Edit person", exact=True)
-        for label in ("Hospital phone", "Office extension", "Pager number"):
+        for label in ("Work phone", "Office extension", "Pager number"):
             expect(form.get_by_label(label, exact=True)).to_have_value("")
         form.get_by_label("Job title", exact=True).fill("Updated title")
         form.get_by_role("button", name="Save version", exact=True).click()

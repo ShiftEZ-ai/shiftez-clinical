@@ -76,7 +76,7 @@ export function changePasswordDialog(username:string){
 /** Show a one-time link once, ready to copy. The app never shows it again (only its expiry). */
 export function linkDialog(title:string,who:string,result:{one_time_link?:string;link?:{expires_at:string}}){
   const link=result.one_time_link;
-  showDialog(title,link?`Send this link to ${who} yourself (for example by hospital email or in person). It works once and expires ${formatDate(result.link?.expires_at||'')}. Anyone with the link can set the password, so do not post it in shared channels.`:'The link was created, but this repeated request cannot show it again. Use Resend to create a new one.',(body,close)=>{
+  showDialog(title,link?`Send this link to ${who} yourself (for example by work email or in person). It works once and expires ${formatDate(result.link?.expires_at||'')}. Anyone with the link can set the password, so do not post it in shared channels.`:'The link was created, but this repeated request cannot show it again. Use Resend to create a new one.',(body,close)=>{
     if(!link)return;
     const input=el('input',{type:'text',readonly:true,value:link,'aria-label':'One-time link',class:'mono'});
     const copy=button('Copy link',async()=>{try{await navigator.clipboard.writeText(link);notify('Link copied.');}catch{input.select();notify('Press Ctrl+C to copy the selected link.','info');}},'primary');
