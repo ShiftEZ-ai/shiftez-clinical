@@ -14,6 +14,7 @@ from packages.contracts.schemas import ENDED_REASON, PolicyDefinition, PolicyInp
 from packages.domain.conditions import active_rules
 from packages.domain.rule_groups import canonical_model, ended, expanded, same_checks, same_model, simplify
 from packages.domain.validation import evaluate
+from .governance_support import retire_rule
 from .test_rule_simplification import PERSON, SERVICE, WEEK_START, configure_baseline_rehearsal, quota, rule
 from .test_rule_templates import activate, propose
 
@@ -233,7 +234,7 @@ def test_phase_three_through_governance_checks_the_same_and_undoes(h, mode):
     # Undo: retiring each new rule brings back what it replaced.
     for rec in result['records']:
         live = next(p for p in h.get('approver', '/api/policies?status=active')['policies'] if p['id'] == rec['id'])
-        restored = h.command('approver', 'policy.retire', {'reason': 'Undo phase 3'}, live['id'], live['revision'])['restored_ids']
+        restored = retire_rule(h, live, 'Undo phase 3')['restored_ids']
         assert sorted(restored) == sorted(rec['definition']['merged_ids'])
     assert {f['code'] for f in evaluate(h.snapshot(w))['findings']} == {f['code'] for f in checked['findings']}
     assert {p['id'] for p in h.get('approver', '/api/policies?status=active')['policies']} >= {low['id'], high['id'], *(x['id'] for x in covers)}

@@ -12,7 +12,6 @@ from .test_browser import wait_run_created, browser, live_server, sign_in, navig
 from .test_browser_cp_sat import cp_server  # noqa: F401
 from .test_browser_autoschedule_budget import confirm
 from .test_bulk_reverse_transitions import proposal, transition
-from .test_policy_transition_approvals import settings
 
 pytestmark = pytest.mark.browser
 REASON = 'Only cover available; arrange relief before submission'
@@ -154,12 +153,14 @@ def test_retire_approval_count_is_configured_validated_and_undone(browser, live_
 
 def test_retire_waiting_for_more_approvals_says_who_and_how_many(browser, live_server, h):
     row = transition(h, 'approver', 'policy.activate', proposal(h))['record']
-    settings(h, 2)
+    assert h.get('admin', '/api/me')['department']['policy_retire_approvals_required'] == 1
     context, page = sign_in(browser, live_server, 'approver')
     try:
         navigate(page, 'rules')
         sheet = open_rule(page, row['name'])
         sheet.get_by_role('button', name='Retire rule', exact=True).click()
+        expect(page.get_by_role('dialog', name='Retire rule')).to_contain_text(
+            'Retiring a safety rule needs approval from at least two different people')
         confirm(page, 'Retire rule', 'Retire rule', 'First of two approvals')
         expect(page.locator('.toast').filter(
             has_text='Retiring approved by you (1 of 2) · 1 more approval needed from a different approver')).to_be_visible()

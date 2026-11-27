@@ -16,6 +16,25 @@ def identity(h, username, roles, person=None, department=None):
     return row.id
 
 
+def retirement_vote(h, row, reason, *, role="retirement_approver", department=None):
+    if role not in h.seed["identities"]:
+        identity(h, role, ["approver"], department=department)
+    return h.command(role, "policy.retire", {"reason": reason}, row["id"], row["revision"])
+
+
+def retire_rule(h, row, reason, *, role="approver", department=None, status=200):
+    """Complete ordinary retirement or its two-person safety decision in test setup."""
+    first = retirement_vote(h, row, reason, department=department) if status != 200 else h.command(
+        role, "policy.retire", {"reason": reason}, row["id"], row["revision"])
+    if first.get("approval", {}).get("complete", True):
+        assert status == 200
+        return first
+    other = role if status != 200 else "retirement_approver"
+    if other not in h.seed["identities"]:
+        identity(h, other, ["approver"], department=department)
+    return h.command(other, "policy.retire", {"reason": reason}, row["id"], row["revision"], status=status)
+
+
 def developer(h):
     """The owner's set-up: department Admin plus Developer (system work: feedback triage, audit log, Operations)."""
     if 'developer' not in h.seed['identities']:

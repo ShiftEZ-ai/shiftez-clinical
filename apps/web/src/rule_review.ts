@@ -2,7 +2,7 @@ import {get,command,request,ApiError,rotaMeta} from './api.js';
 import {weekdayOptions,el,button,note,select,area,check,showDialog,table,notify,field,formDialog,multi,toLocal,icon,plural,formatDate,formatTime} from './dom.js';
 import type {Row} from './types.js';
 import {conditionBuilder,scopeAsConditions} from './conditions.js';
-import {ruleConditionFields,type Context} from './forms.js';
+import {ruleConditionFields,safetyRule,type Context} from './forms.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
 import {clock} from './loading.js';
 import {waitingWord,checkCodeLabel,proposalProtection} from './rule_check_api.js';
@@ -244,7 +244,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       const selected=replacing?.values()||[];
       // As policy.activate_many does, associate explicit replacements with the first proposal.
       const proposed=lines.filter(p=>p.status==='proposed'&&(p===policy&&selected.length||
-        p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id));
+        p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id||safetyRule(p.definition?.rule)));
       protection.hidden=true;needsReviewer=false;protectionFailed=false;protectionPending=proposed.length>0;
       protectionStatus.textContent=protectionPending?'Checking safety protection…':'';
       protectionRetry.hidden=true;

@@ -17,7 +17,7 @@ from apps.api.serialization import record
 from apps.api.services import policies
 from packages.contracts import schemas as s
 from packages.contracts.audit import AUDIT_ACTION_CATALOGUE
-from .governance_support import identity
+from .governance_support import identity, retire_rule
 from .test_bulk_reverse_transitions import REASON, proposal, transition
 from .test_policy_transition_approvals import settings
 
@@ -34,7 +34,7 @@ def approval_harness(request):
 def waiting(h, action="retire"):
     row = transition(h, "approver", "policy.activate", proposal(h))["record"]
     if action == "restore":
-        row = transition(h, "approver", "policy.retire", row)["record"]
+        row = retire_rule(h, row, REASON["reason"])["record"]
     settings(h, 2)
     identity(h, "second_approver", ["approver"])
     assert not transition(h, "approver", "policy." + action, row)["approval"]["complete"]

@@ -649,42 +649,52 @@ def _authorize_undo(db, actor, value):
         return
     source = db.get(m.CommandReceipt, value["undo_of"])
     require(source is not None and source.department_id == actor.department_id and source.command_kind in {
-                "bulk.apply", "catalogue.bulk_update"},
+                "bulk.apply", "catalogue.bulk_update", "policy.activate", "policy.activate_many", "policy.retire"},
             "NOT_FOUND", "Bulk change receipt not found", 404)
     own_change = source.actor_id == actor.identity_id
-    shared_approver = (db.get(m.Department, actor.department_id).policy_retire_approvals_required > 1
-                       and actor.permits("approver"))
+    shared_approver = actor.permits("approver")
     require(own_change or shared_approver, "FORBIDDEN", "Only the person who made this change can undo it", 403)
     reverse = source.result.get("undo")
     require(reverse and reverse.get("kind") == "bulk.apply", "BULK_UNDO_UNAVAILABLE", "This change has no reversible operations", 409)
     stored = s.BulkApply.model_validate(reverse["payload"]).model_dump(mode="json", exclude_none=True)
     stored.pop("selection", None)
-    shared_rule_decision = (shared_approver and bool(stored.get("items"))
-        and all(item.get("item_kind") in {"policy.retire", "policy.restore"} for item in stored["items"]))
-    require(own_change or shared_rule_decision, "FORBIDDEN", "Only the person who made this change can undo it", 403)
     require(value == stored, "BULK_UNDO_CHANGED", "Use the complete Undo returned by this change's receipt", 409)
+    if not own_change:
+        _, required = _policy_undo_requirements(db, actor, stored.get("items", []))
+        require(required > 1, "FORBIDDEN", "Only the person who made this change can undo it", 403)
     return source.id
+
+
+def _policy_undo_requirements(db, actor, items):
+    from .policies import transition_approvals_required
+
+    if not items or any(item.get("item_kind") not in {"policy.retire", "policy.restore"} for item in items):
+        return [], 1
+    targets = [scoped(db, m.Policy, item["target_id"], actor) for item in items]
+    required = max(transition_approvals_required(db, actor, policy, item["item_kind"].split(".")[1])
+                   for policy, item in zip(targets, items))
+    return targets, required
 
 
 def _policy_undo_approval(db, actor, source_id):
     """Dependent lifecycle inverses are one recorded Undo decision, before any inverse changes its prerequisites."""
     from . import independence, policies
+
     source = db.get(m.CommandReceipt, source_id)
     value = source.result["undo"]["payload"]
     items = value["items"]
-    if (len(items) < 2 or db.get(m.Department, actor.department_id).policy_retire_approvals_required == 1
-            or any(item.get("item_kind") not in {"policy.retire", "policy.restore"} for item in items)):
+    if len(items) < 2:
+        return None
+    targets, required = _policy_undo_requirements(db, actor, items)
+    if required == 1:
         return None
     require_role(actor, "approver")
-    targets = []
-    for item in items:
-        policy = scoped(db, m.Policy, item["target_id"], actor)
+    for policy, item in zip(targets, items):
         require(policy.revision == item["expected_revision"], "STALE_REVISION",
                 "Another session changed this record; reload and reconcile", 409)
-        targets.append(policy)
     return policies.transition_approval(db, actor, targets[0], items[0]["item_kind"].split(".")[1],
-        value["reason"], {"undo_source": source_id, "items": items},
-        excluded={independence.person_key(db, policy.created_by) for policy in targets})
+        value["reason"], {"undo_source": source_id, "items": items}, minimum=required,
+        excluded={independence.person_key(db, policy.created_by) for policy in targets if policy.created_by})
 
 
 def _apply_value(current, change):
@@ -1202,6 +1212,18 @@ def _reverse(command, before, reply, reason):
     if reverse is None:
         return []
     return [{"item_kind": reverse, **base, "payload": data}]
+
+
+def governed_policy_undo(db, actor, command, result, receipt_id):
+    if command.kind not in {"policy.activate", "policy.activate_many", "policy.retire"}:
+        return None
+    if result.get("approval") and not result["approval"]["complete"]:
+        return None
+    items = _reverse(command, {}, result, "Undo rule decision")
+    if len(items) < 2 or _policy_undo_requirements(db, actor, items)[1] == 1:
+        return None
+    return {"kind": "bulk.apply", "payload": {
+        "items": items, "undo_of": receipt_id, "reason": "Undo rule decision"}}
 
 
 def _registered_reverse(kind, command, before, reply, reason):
