@@ -68,6 +68,11 @@
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."
     },
     {
+      "node": "tests/test_ci_install_deps.py::test_browser_falls_back_when_dpkg_fails",
+      "owner": "maintainer",
+      "reason": "Issue 1842: the offline browser packages install through APT, not raw dpkg. Renamed to test_browser_falls_back_when_the_offline_install_fails; it still asserts that a failed offline install warns and falls back to the online install, now naming the APT step and the offline-install warning."
+    },
+    {
       "node": "tests/test_codeowners.py::test_an_ownerless_rule_unowns_its_paths",
       "owner": "maintainer",
       "reason": "Owner decision 22 Nov, item 6: code-owner review removed (ruleset require_code_owner_review=false); protected pipeline files land with one full-diff review plus tests. .github/CODEOWNERS and the guard's CODEOWNERS parser are deleted, so this test of their content and matching has nothing left to assert; Tier 1 classification stays asserted in tests/test_working_policy.py."
