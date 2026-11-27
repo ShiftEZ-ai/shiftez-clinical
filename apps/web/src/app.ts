@@ -2914,7 +2914,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       create:planner&&permits(CAPABILITY.COORDINATOR)?'New rota':undefined,onCreate:planner&&permits(CAPABILITY.COORDINATOR)?()=>workspaceForm(ctx(),undefined,inView()):undefined,onShowAll:()=>showAllSessions(),unlinked:unlinkedStaff(me!),...mine};
   let listParts:Parameters<NonNullable<WeekHooks['onTable']>>[0]={};
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
-  const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
+  const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'data-redraw-key':`${viewKey}|${range}`,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
   // The live check lands after its read, in a later redraw (loadLiveCoverage): this says which page has it drawn.
   viewPanel.toggleAttribute('data-live-checked',!!liveCheck);
   target.append(viewPanel);
