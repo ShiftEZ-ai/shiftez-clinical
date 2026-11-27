@@ -214,3 +214,40 @@ def test_admin_edits_and_undoes_leave_allowances(browser, live_server, h):
         assert h.get('admin', '/api/leave-balance-settings')['configuration']['allowances'] == []
     finally:
         context.close()
+
+
+def test_admin_adds_a_dated_department_allowance(browser, live_server, h):
+    from .test_leave_balances import configure as configure_allowances
+
+    configure_allowances(h, 15)
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        open_config(page, 'Leave types')
+        page.get_by_role('button', name='Leave allowances', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Leave allowances')
+        prior = dialog.get_by_role('group', name='Allowance for closed leave years', exact=True)
+        expect(prior.get_by_label('Calendar days per year', exact=True)).to_be_disabled()
+        dialog.get_by_role('button', name='Add allowance', exact=True).click()
+        entry = dialog.get_by_role('group', name='Allowance', exact=True)
+        entry.get_by_label('Leave type', exact=True).select_option(label='Annual')
+        entry.get_by_label('Calendar days per year', exact=True).fill('20')
+        start = entry.get_by_label('First leave year starting on or after', exact=True)
+        expect(start).to_have_attribute('required', '')
+        start.fill('1 Jan 2027')
+        dialog.get_by_label('Reason', exact=True).fill('Set annual allowances')
+        save_dialog(dialog, 'Save allowances')
+        expect(page.locator('.toast', has_text='Leave allowances saved')).to_be_visible()
+        saved = h.get('admin', '/api/leave-balance-settings')['configuration']['allowances']
+        assert [(line['person_id'], line['starts_on'], line['days']) for line in saved] == [
+            (None, None, 15), (None, '2027-01-01', 20),
+        ]
+    finally:
+        context.close()
+
+    context, page = sign_in(browser, live_server, 'auditor')
+    try:
+        navigate(page, 'system/audit')
+        expect(page.get_by_text(re.compile(r'Annual from .*2027 · 15 calendar days → 20 calendar days'))).to_be_visible()
+        expect(page.get_by_text('Annual · No allowance → 15 calendar days', exact=True)).to_be_visible()
+    finally:
+        context.close()
