@@ -400,7 +400,9 @@ and a desktop window narrowed below it gets the same rule at once.
   refuses (403) says "Not available for your role." as information, with no Retry; any other failure is an error with
   Retry inside the message. One builder: `readFailed()` in `dom.ts` (`tests/test_web_ssot_guards.py` keeps it so).
 - Ctrl/⌘ K opens the command menu from anywhere (each typed word matches a word start, in any order); `?` lists
-  keyboard shortcuts.
+  keyboard shortcuts. Alt M (`MESSAGES_KEY`) goes to the newest message's Undo (else its Dismiss) from anywhere;
+  a message stays while focus or the pointer is in it, and Esc, Undo or Dismiss hand focus back to the control it came
+  from, as does an Undo that turns its message into a saving note. Not F6 (the browser's move to its address bar).
 - A failed refresh (server error or offline) never presents saved data as current: a page showing data keeps its header,
   toolbar and data under one banner, "Couldn’t refresh · showing data from HH:MM" (a server error adds the server's message when it is a sentence for people, its problem detail, never a bare status phrase such as "Service unavailable") with Retry inside it (app.ts
   `showStale`); a page that showed nothing shows `readFailed()` (above): "Couldn’t load <page>." with the same server-message rule and Retry inside it, plus Report this problem on a 5xx or lost connection. In a tab still

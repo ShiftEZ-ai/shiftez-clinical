@@ -1392,7 +1392,8 @@ export function notify(message: string, tone = 'success', action?: {label:string
   if (!tray.hasAttribute('role')) { tray.setAttribute('role','region'); tray.setAttribute('aria-label','Messages'); }
   placeTray(tray as HTMLElement);
   const item = el('div',{class:`toast ${tone}${action||next?' with-action':''}`,role: tone === 'error' ? 'alert' : 'status'},tone === 'error' || tone === 'warning' ? icon('alert') : null,el('span',{},message));
-  const done=()=>{item.remove();stackToasts(tray);};
+  // WCAG 2.4.3: a message closing (Undo, Dismiss, its timeout) with focus in it gives focus back to where it came from.
+  const done=()=>{const had=item.contains(document.activeElement);item.remove();stackToasts(tray);if(had)backFromTray();};
   // Report this problem captures the page with this message still on it, then the message goes.
   // maintenance: an action that saves (`saves`; every Undo and Redo) keeps its message open, saying what the footer says
   // (savingWords), until the save settles; its outcome is then said by the message that follows. Never closed first.
@@ -1401,7 +1402,8 @@ export function notify(message: string, tone = 'success', action?: {label:string
   if(action){const run=action.run,first=action.label===REPORT_PROBLEM,b=button(action.label,()=>{if(first){const r=run();done();return r;}
     if(!(action!.saves??['Undo','Redo'].includes(action!.label))){done();return run();}
     const r=run();if(!(r instanceof Promise)){done();return r;}
-    working=true;window.clearTimeout(timer);b.remove();item.classList.add('working');
+    const had=item.contains(document.activeElement);
+    working=true;window.clearTimeout(timer);b.remove();item.classList.add('working');if(had)backFromTray();
     const said=item.querySelector(':scope>span')!,word=()=>{said.textContent=savingWords();};word();
     said.before(el('span',{class:'spinner','aria-hidden':'true'}));
     for(const t of SAVE_EVENTS)window.addEventListener(t,word);
@@ -1468,7 +1470,8 @@ export function settledWords(e:unknown):string|null{
 function stackToasts(tray:Element){
   const max=phoneQuery.matches?2:3,items=[...tray.children] as HTMLElement[];
   let shown=0;
-  for(const t of items){if(shown<max){t.hidden=false;shown++;}else if(t.classList.contains('with-action'))t.hidden=true;else t.remove();}
+  // The message focus is in stays shown (WCAG 2.2.1), even when newer ones arrive.
+  for(const t of items){if(shown<max||t.contains(document.activeElement)){t.hidden=false;shown++;}else if(t.classList.contains('with-action'))t.hidden=true;else t.remove();}
   // Only the bars of the tray's own host count: in a dialog its footer, on the page the page's bars (not a dialog's).
   const host=tray.parentElement||document.body,inDialog=host!==document.body;
   let lift=0;
@@ -1506,6 +1509,31 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
   if(!b)return;
   e.preventDefault();announce(redo?'Redoing the last undone change':'Undoing the last change');b.click();
 });
+/** The messages' key (issue 1408; WCAG 2.1.1, 2.4.3): from anywhere it focuses the newest message's action (its Undo),
+ *  else the newest message's Dismiss; Escape in the messages, Undo or Dismiss go back to the control focus came from.
+ *  Not F6 (the browser's own move to its address bar) nor Ctrl Shift with a letter (taken by browsers). In a text field
+ *  only a key that types nothing (Alt M on Windows and Linux; Option M types µ on a Mac, so there it works outside one). */
+export const MESSAGES_KEY='Alt M';
+/** Where focus was before it entered the messages (by this key or by Tab). */
+let trayFrom:Opener|null=null;
+function backFromTray(){const o=trayFrom;trayFrom=null;if(o)returnFocus(o);else if(focusLost())document.querySelector<HTMLElement>('#main')?.focus({preventScroll:true});}
+if(typeof window!=='undefined'&&typeof document!=='undefined'&&typeof document.addEventListener==='function'){
+  document.addEventListener('focusin',e=>{const tray=document.querySelector('#toast-tray'),from=e.relatedTarget as HTMLElement|null;
+    if(!tray||!from)return;const inside=tray.contains(e.target as Node);
+    // Only a keyboard arrival (:focus-visible): a click on Undo never scrolls the page back to a control focused earlier.
+    if(inside&&!tray.contains(from))trayFrom=(e.target as Element).matches(':focus-visible')?openerOf(from):null;
+    else if(!inside&&tray.contains(from))trayFrom=null;});
+  window.addEventListener('keydown',e=>{
+    const tray=document.querySelector('#toast-tray');
+    // Before a dialog's or panel's own Escape: the person leaves the messages, not the dialog.
+    if(e.key==='Escape'&&trayFrom&&tray?.contains(e.target as Node)){e.preventDefault();e.stopImmediatePropagation();backFromTray();return;}
+    if(!e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.defaultPrevented||e.code!=='KeyM'&&e.key.toLowerCase()!=='m')return;
+    if((e.target as HTMLElement|null)?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable=true]')&&e.key.toLowerCase()!=='m')return;
+    e.preventDefault();
+    const to=tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-action')||tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-close');
+    if(to)to.focus();else announce('No messages');
+  },true);
+}
 /** The screen's own status for the footer (left side): rota health, counts, a score. A page puts it anywhere in its
  *  content; the shell moves it into the footer when that page is shown, so a page that finished loading after you left
  *  never writes into another page's footer. Keep the node to update it later. An empty one keeps the footer clear.

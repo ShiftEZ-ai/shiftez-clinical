@@ -138,6 +138,7 @@ import {SAFETY_DECIDED,UNDECIDED,baselineSourceLabel,changeLabel,refreshPlan} fr
 import {groupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
 import {tabs as sharedTabs} from './dom.js';  // the one tab set (UX › controls S8)
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
+import {MESSAGES_KEY} from './dom.js';  // the messages' key (issue 1408)
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
 import {notYet} from './dom.js';  // a control held in place until it can be used (D59)
@@ -866,7 +867,7 @@ window.addEventListener('pageshow',e=>{if(!e.persisted)return;if(!me){location.r
 function shortcutsDialog(){
   showDialog('Keyboard shortcuts','',body=>body.append(table(['Shortcut','Action'],[
     [el('kbd',{},'Ctrl K'),'Search pages and actions'],[el('kbd',{},FEEDBACK_KEY),'Send feedback about this page'],[el('kbd',{},'?'),'Show this list'],[el('kbd',{},'Esc'),'Close a menu, panel or dialog'],
-    [el('kbd',{},'Ctrl Z'),'Undo the last change'],[el('kbd',{},'Ctrl Shift Z'),'Redo what you just undid (also Ctrl Y)'],
+    [el('kbd',{},'Ctrl Z'),'Undo the last change'],[el('kbd',{},MESSAGES_KEY),'Go to the newest message and its Undo (Esc goes back)'],[el('kbd',{},'Ctrl Shift Z'),'Redo what you just undid (also Ctrl Y)'],
     // Schedule keys, named as its views are.
     ...(allowed('schedule')?SCHED_VIEWS.map(v=>[el('kbd',{},v.letter),`Schedule: ${v.label} view`]):[]),
     ...(allowed('schedule')?[[el('kbd',{},'J'),'Fix list focus: next cause'],[el('kbd',{},'K'),'Fix list focus: previous cause']]:[])])));
