@@ -1,6 +1,6 @@
 # Delivery
 
-Follows engineering standard v1.22. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
+Follows engineering standard v1.29.8. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
 The QA Lead owns the Test policy section, nightly-test triage, `tests/quarantine.json`, known failures, known skips, the
 frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.md and the design contract is in DESIGN.md.
 
@@ -18,6 +18,7 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   Every revision keeps working. About 500 changed lines is a review heuristic, not a limit. An unfinished feature
   may sit behind an existing admin feature flag, off by default, when the off state is safe.
 - Every pull request names its issue as AGENTS.md § Must-follow coding rules says.
+- Only one pull request that adds a migration may be armed or queued at a time. Take its next migration number from live `main` at arming.
 - Every pull request has one owner until it is merged or closed. The owner watches its run and fixes any failure or
   conflict. A pull request dropped from the queue is fixed at its root cause and queued again; never retry an
   unchanged deterministic failure. A cancelled or skipped check is not a pass.
@@ -50,8 +51,14 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   reports. On a qualifying main push it independently verifies the queue proof, retains the qualification reports
   with their original run identity, and links to that run for the shard reports. If the nightly capacity check
   defers the suites, the gate records the deferral.
+- `ci.yml` plans and checks each run, calls `ci-tests.yml` for unit and browser shards, and reports the verdict.
+  `working-policy.yml` checks protected changes, `dependency-graph.yml` submits locked dependencies, and
+  `image.yml` publishes deployable images; the published build contains public code only. Limits live in the workflows. The [CI timing sample](.github/ci-timings.json)
+  records first-attempt timings by job producer and event, using each run's slowest leg of each matrix.
+- File a bug for a red scheduled run that day and link the run. Nightly admission applies the capacity check first.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
-  guard fails any workflow whose `runs-on` is not a GitHub-hosted label.
+  guard fails any workflow whose `runs-on` is not a GitHub-hosted label. No host holds a credential for the
+  repository.
 - Jobs run in parallel; independent jobs never wait on each other; suites are sharded and shard counts follow
   measured times. Caches hold only dependencies keyed by lock hash, never results.
 - Workflows use only GitHub-owned and `docker/*` actions pinned by full commit SHA, with a read-only default token.
@@ -67,6 +74,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   `changes what the checks run on` for visibility.
 - The required check counts collected tests at the base and the head. Each disappearing test is declared in the
   removal ledger at node level; an undeclared disappearance fails, a declared one shows as `collect=+a/-b`.
+- Baseline source classifications are in `ci/failure-classifications.json`. The trusted gate reads the active
+  failure ledger in `ci/known-failures.json`.
 - Planted canary tests prove in every run that the reporter reports outcomes honestly.
 - Migrations are checked append-only against the target branch (`migrations/safety.py`, `tests/test_data_safety.py`).
 - `python scripts/generate_contracts.py` must leave no diff.
@@ -126,8 +135,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Environments
 - **ci**: per change, on the runner; synthetic data only.
-- **dev**: deployed automatically on every merge; the fast-moving one. Synthetic data and test accounts only (names
-  ending "(test)").
+- **dev**: integrates green builds of `main` through the dev admission gate. Synthetic data and test accounts only
+  (names ending "(test)").
 - **staging**: tagged release candidates only; the owner's testing and the speed gates run there. Its own synthetic
   data, identities and keys, never a copy of another environment.
 - **production**: only with the owner's yes, after he has tested the release candidate on staging; real accounts
@@ -137,14 +146,17 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Never copy one environment's database into another, and never copy test identities or rotas into production.
 
 ## Releases
-- Versions are `vX.Y.Z`; release candidates are `vX.Y.Z-rc.N`, tested on staging.
-- Version tags build, scan and publish the image for their exact commit. The published build contains public code only.
-- Before tagging, qualify the exact release tree with the full checks and require zero failed or skipped tests.
-- The release tag tool runs `scripts/check_release_version.py` for the exact tag and commit.
-  It refuses to create the tag if the check fails.
-- Release tags (`v*`) are immutable with no bypass, and only an admin or a bypass actor of the tag-creation ruleset
-  may create one. The Delivery Lead names the exact commit. The project's GitHub App creates the tag once it holds
-  that bypass; until then the tag is created under the owner's login on the Portfolio Lead's recorded line.
+- Start release-candidate preparation as soon as the milestone's work and candidate criteria are met.
+  Track any blocker and its resolution on the affected milestone item.
+- Versions are `vX.Y.Z`. Candidate tags use `vX.Y.Z-rc.N`. Both build, scan and publish an image for the exact commit.
+- Before every candidate or final tag, qualify the exact tree with the full checks and require zero failed or
+  skipped tests. The release tag tool runs `python scripts/check_release_version.py TAG COMMIT` from the target
+  commit before creating the tag. Any authorized manual tag creation must pass the same check first.
+- Release tags are immutable. The Delivery Lead names the exact commit and the actor allowed by the
+  tag-creation ruleset creates the tag on the Master Lead's recorded decision.
+- Run a release-candidate session on staging for the tagged digest. Exercise the critical user journeys and
+  speed gates and retain the results. Rehearse the rollback, check readiness on the previous version, then
+  redeploy the candidate. Record both with the staging deployment before requesting production approval.
 - Before every final release tag, the QA Lead sweeps every page for every role (`ROLE_NAMES`),
   desktop 1440 and phone 390, light and dark, the states in § Test policy and the critical journeys, looking at the
   screenshots. Fix the real blockers it finds first.
@@ -159,41 +171,61 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   approval the same day.
 
 ## Deploys
-- A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
-  No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
-  Nothing in the repository names or reveals where the product runs.
-- Main publishes the same scanned build to the primary and public packages. The public package digest carries a
-  provenance attestation signed by `image.yml` on `refs/heads/main`. The dev slot verifies it offline and pins the
-  signer workflow and ref.
-- The operator machine pushes the image to each server over a private network by exact digest; the server verifies
-  it by image ID and revision label and reports nothing back. Every deploy is recorded. Deploy definitions and host
-  facts live outside this repository.
-- dev: the operator PC relays every green main build's image digest to the dev slot through a sealed, single-purpose
-  gate that accepts only green main digests and records each deploy.
-- staging: only tagged release candidates, promoted by digest by hand.
-- production: only with the owner's yes, after he has tested the candidate on staging.
-- **Gated releases:** a release gate (such as the dev relay gate) gets one independent review
-  and gets one Portfolio Lead GO; after that, every change that passes the gate releases automatically, with an audit
-  row. A new kind of change needs a new GO. Production keeps the owner's yes for every deploy.
-- Staging runs the scanned image digest built for the candidate tag. Production takes exactly the digest staging
-  qualified for the same commit. Record the staged and promoted digests.
-- **Production approval:** the owner approves production deployments only. Delivery puts a "Deploy vX.Y.Z to
-  production" item in Waiting on owner on the board, with the test report; the owner's yes is the approval and
-  nothing else is.
-- **Every production deploy:** a verified backup first, the previous image kept for rollback, a health check after;
-  roll back at once on failure.
-- A migration on the reviewed-destructive list runs only with an explicit confirmation naming its id. The Delivery
-  Lead confirms on non-production environments after a verified backup; only the owner confirms on production; a new
-  list entry needs the Master Lead's word.
-- Before redeploying an environment while a diagnosis is open, save every api and worker container log first: a
-  redeploy recreates the containers and their logs are lost.
-- What only the owner decides is listed once, in AGENTS.md § Who decides; an ordinary release approval never covers
-  a destructive data operation.
+
+- `image.yml` publishes the same scanned main build to the primary and public packages. Each commit has its own
+  image concurrency group. Use exact digests for deploys because out-of-order builds can move the floating `dev`
+  tag backwards. Workflows have no deploy access. The operator promotes the image and the receiving system
+  verifies its image ID and revision. Deployment commands live in the private runbook.
+- **Dev admission gate.** Admit green `main` commits with a scanned public image. Verify its digest and its
+  `image.yml` provenance offline, pinning the signer workflow and `refs/heads/main` before startup. The operator record holds the
+  commit, digest, time and health result. Unattended deployment and its GitHub deployment row are tracked in
+  issue 1279.
+- **Staging deploy gate.** Admit tagged candidates after verifying the scanned tag image and its exact digest.
+  Record the commit, digest, health result, candidate session and rollback rehearsal in the staging deploy record.
+- Establish each non-production gate once. A critical gate requires an independent review and the Master Lead's
+  recorded decision. Thereafter, each passing deploy records an audit row.
+- **Production deploy gate.** Use exactly the digest staging qualified for the same commit. The Delivery Lead
+  puts the production deploy item in Waiting on owner with the staging session report, verified backup evidence
+  and rollback instructions. The owner's explicit yes is required for each production deploy.
+- Before production, verify a fresh backup and retain the previous image by digest until the new release is
+  healthy. Check `/health/ready` after deployment. On failure, run the approved deploy command from the private
+  runbook with the recorded previous digest. Check readiness again and append the outcome to the deploy record.
+- Each deploy record captures its decision, commit, digest and health result. Publish the digest with the
+  matching GitHub deployment when that integration is available. Keep private operational evidence in the
+  append-only deploy audit and reference it from the board deploy item.
+- A migration on the reviewed-destructive list runs only with explicit confirmation naming its revision.
+  The Delivery Lead confirms on non-production after a verified backup. Only the owner confirms on production.
+  A new entry needs the Master Lead's decision. Approval for a production deploy and approval for destructive
+  real-data work are separate decisions under the project rules.
+- Before redeploying during a diagnosis, save the API and worker logs. Redeployment replaces the containers.
+
+## Backup and restore
+
+- Use `scripts/backup_job.py` for scheduled logical backups. It validates the archive inventory and checksum before
+  rotating archives and their manifests. Retention follows the backup job's daily, weekly and recent-archive
+  settings. Verify a fresh backup before each production deploy.
+- Once per quarter, run `python -m scripts.restore_drill` with an approved empty scratch database. Review the
+  migration head and table/count report. Record the date, result and evidence reference here without private
+  backup details.
+
+| Quarterly production restore | Date | Result and evidence |
+| --- | --- | --- |
+| First recorded drill | Pending | See the production backup and restore deviation. |
 
 ## Deviations
 
-- **Signed provenance for version tags.** Version-tag publication ends after digest verification. Follow the
-  tag-attestation work in issue 1339. Review on 2026-12-23.
+| Rule | Reason | Review date |
+| --- | --- | --- |
+| One attested artifact across environments | Version tags build a scanned image separately from main. Staging and production use the same candidate digest. Signed tag provenance is tracked in issue 1339. | 2026-12-23 |
+| Automatic dev deployments and GitHub deployment audit | The operator records deploys in the deploy audit. Unattended delivery and the matching GitHub deployment record are open in issue 1279. | 2026-12-01 |
+| Staging rollback rehearsal and GitHub deployment audit | The deploy audit holds staging evidence. The staging gate still needs a recorded rehearsal and GitHub deployment evidence. | 2026-12-01 |
+| Scheduled production backups and quarterly restore evidence | Backup and drill tools exist. Production scheduling and a completed quarterly production drill await evidence. | 2026-12-01 |
+| Nightly full suite | The hosted schedule starts suites only when capacity allows. Separate nightly quarantine reporting is tracked in issue 1003. | 2026-12-01 |
+| First-attempt CI | The exception in Test policy remains until issue 1473 removes it. | 2026-12-01 |
+| CI job limits | Browser and ci-gate keep their limits while artifact download stalls in issue 856 and the install budget in issue 1458 remain open. The image job keeps its limit pending more runs of the new scanner, including a tag push. Include release-branch pushes once they run. | 2026-12-01 |
+| PR feedback and merge-queue duration | The hosted timing sample exceeds the feedback and full-suite targets. | 2026-12-01 |
+| Formatter coverage | Hosted checks enforce whitespace, generated contracts, Python lint and TypeScript types. Language formatter checks are pending. | 2026-12-23 |
+| Required checks and independent verdict | The ruleset also requires the working-policy workflow. The publisher enforces the critical review before auto-merge. | 2026-12-23 |
 
 ## Hotfixes
 - A hotfix is its own board item. Use the release-branch flow for the patch release, test the new candidate on
@@ -221,10 +253,9 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Security reports go through GitHub's private vulnerability reporting.
 
 ## Speed and quality gates
-- Measure before setting any limit (timeout, deadline, budget, cap). Run first with generous limits and timing
-  instrumentation to see every failure and the real timings, then set the limit from measured data plus a generous
-  margin. Safety bounds (security, data protection, resource caps, fail-closed checks) always stay. A run killed by a
-  timeout rather than a real error means the limit was wrong: relax it.
+- Measure before setting any limit (timeout, deadline, budget, cap). Raising a limit needs a new measurement and
+  is never part of a fix PR. Security, data-protection, resource and fail-closed bounds stay in force. Diagnose
+  timeouts at their source.
 - Speed is measured in the browser, on production-class hardware, to a written definition of "usable". Every gate
   number comes with an agreed tolerance, recorded with the gate.
 - Before tuning a slow action, get its waterfall (every request, with server and client time).
@@ -236,10 +267,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Performance work is measured before and after; the regression budgets in `tests/test_rule_map.py` and
   `tests/test_scheduler_performance.py` hold. CP-SAT is measured on representative workloads with bounded time and
   resources.
-- Pull-request runs (static checks plus affected tests) target a result in under 1 minute at p50 and under 2 minutes
-  at p95, without letting CI lie: the full suite still runs in the merge queue, failures are never hidden, and no
-  check is weakened. The pull-request check's wall time is a measured objective, and the merge-queue run is not
-  slower than the pull-request run.
+- Compare PR feedback and merge-queue wall time with the engineering standard's targets using the timing
+  sample linked under Checks.
 - **The one admission rule (fair share):** hosted runners have a shared concurrency ceiling (its measured number is
   in the private project brief). Every launch path (pull-request runs and merge-queue enqueues, which start merge groups) goes
   through one serialised admission decision that counts this repository's in-flight test jobs of all events and
@@ -247,5 +276,3 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   missing cancel-in-progress are fixed, so that this repository's job pickup p95 stays within 30 s and the other users
   of the shared ceiling keep their agreed share. Re-measure and reset it when the shared ceiling, the jobs per run or the pickup p95
   changes, and at least once per release.
-- Moving to a queue-free trunk is considered only after two weeks with the full suite under 10 minutes, the queue
-  green over 90% of the time and interaction failures under 1 in 20.
