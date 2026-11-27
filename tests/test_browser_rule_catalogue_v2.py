@@ -531,8 +531,15 @@ def test_person_quota_propose_reload_review_change_and_durable_undo(browser, liv
         approver.close()
 
 
-@pytest.mark.parametrize('redraw_during_review', [False, True], ids=['ordinary', 'panel-replaced'])
-def test_overtime_offer_uses_shared_scope_builder_and_independent_review(browser, live_server, h, redraw_during_review):
+def test_overtime_offer_uses_shared_scope_builder_and_independent_review(browser, live_server, h):
+    review_overtime_offer(browser, live_server, h, redraw_during_review=False)
+
+
+def test_overtime_offer_review_survives_a_panel_rebuild_while_its_rota_read_waits(browser, live_server, h):
+    review_overtime_offer(browser, live_server, h, redraw_during_review=True)
+
+
+def review_overtime_offer(browser, live_server, h, redraw_during_review):
     flag(h, legacy=False)
     person = h.seed['people'][1]
     context, page = themed(browser, live_server, 'coordinator', 390, 'dark')
