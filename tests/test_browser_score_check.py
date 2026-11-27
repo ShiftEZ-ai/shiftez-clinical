@@ -532,7 +532,7 @@ def test_editing_a_provider_keeps_what_was_not_edited(ai_ready, browser, live_se
         dialog = page.get_by_role('dialog', name='Edit Intranet provider')
         thinking = dialog.locator('select').filter(has=page.locator('option', has_text='Medium'))
         assert 'Token budget' not in ' '.join(thinking.locator('option').all_text_contents())  # never a setting the server refuses
-        expect(dialog.get_by_role('checkbox', name='On the hospital network')).not_to_be_checked()  # an explicit choice
+        expect(dialog.get_by_role('checkbox', name='On the organisation network')).not_to_be_checked()  # an explicit choice
         dialog.get_by_label('Name', exact=True).fill('Intranet provider (renamed)')
         dialog.get_by_role('button', name='Save').click()
         expect(page.locator('#main').get_by_role('row', name=re.compile('^Intranet provider \\(renamed\\)'))).to_be_visible()

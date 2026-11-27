@@ -23,13 +23,13 @@ pytestmark = pytest.mark.browser
 PHONE = {'width': 390, 'height': 844}
 # Columns each role sees by default (desktop), in order; the first is always Person.
 COLUMNS = {
-    'staff': ['Person', 'Title', 'Section', 'Hospital phone', 'Extension'],
-    'admin': ['Person', 'Current rank', 'Clinical eligibility', 'Skills', 'Tags', 'Hospital phone', 'Extension'],
-    'coordinator': ['Person', 'Current rank', 'Clinical eligibility', 'Skills', 'Tags', 'Hospital phone', 'Extension'],
-    'credentialer': ['Person', 'Clinical eligibility', 'Skills', 'Hospital phone', 'Extension'],
-    'approver': ['Person', 'Current rank', 'Clinical eligibility', 'Tags', 'Hospital phone', 'Extension'],
-    'auditor': ['Person', 'Current rank', 'Clinical eligibility', 'Tags', 'Hospital phone', 'Extension'],
-    'programme_lead': ['Person', 'Current rank', 'Clinical eligibility', 'Tags', 'Hospital phone', 'Extension'],
+    'staff': ['Person', 'Title', 'Section', 'Work phone', 'Extension'],
+    'admin': ['Person', 'Current rank', 'Clinical eligibility', 'Skills', 'Tags', 'Work phone', 'Extension'],
+    'coordinator': ['Person', 'Current rank', 'Clinical eligibility', 'Skills', 'Tags', 'Work phone', 'Extension'],
+    'credentialer': ['Person', 'Clinical eligibility', 'Skills', 'Work phone', 'Extension'],
+    'approver': ['Person', 'Current rank', 'Clinical eligibility', 'Tags', 'Work phone', 'Extension'],
+    'auditor': ['Person', 'Current rank', 'Clinical eligibility', 'Tags', 'Work phone', 'Extension'],
+    'programme_lead': ['Person', 'Current rank', 'Clinical eligibility', 'Tags', 'Work phone', 'Extension'],
 }
 # Side panel tabs per role (accessible names; Workload, Requests and Quotas are their short labels).
 SHORT = {'Workload & fairness': 'Workload', 'Leave & requests': 'Requests', 'Quotas & offers': 'Quotas'}

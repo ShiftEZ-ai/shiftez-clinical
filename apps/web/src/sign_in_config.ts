@@ -1,5 +1,5 @@
 /** Configuration › Sign-in: how people sign in on this server — Rota passwords, the
- *  hospital's institutional provider, or both. One environment-wide setting on /api/admin/auth-config: saving takes a
+ *  organisation's institutional provider, or both. One environment-wide setting on /api/admin/auth-config: saving takes a
  *  reason, a same-button confirm and the revision it was read at (a change made elsewhere meanwhile is refused, never
  *  overwritten); one step can be undone; the server audits every change. The client secret is write-only. */
 import {el,button,iconButton,field,check,select,sectionHead,note,notify,badge,ruleFacts,saveBar,confirmAction,byLabel,type Child} from './dom.js';
