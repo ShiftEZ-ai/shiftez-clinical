@@ -9,8 +9,10 @@ export interface SelectionAction{label:string;icon:IconName;run:()=>unknown;tip?
   /** Same-button confirm (press twice), only for an action that cannot be undone (D42). */armed?:boolean}
 export interface SelectionState{count:number;noun:[string,string];
   /** The line under "selected" (e.g. "lines in Duties per week", "issues · On leave or away"); the noun when not given. */
-  detail?:string;actions:SelectionAction[];clear:()=>void;
-  /** The selection the actions are for (e.g. its ids): drawn again for the same one, an armed action stays armed. */key?:string}
+  detail?:string;
+  /** What is selected (e.g. its ids). Drawn again for the same key, an armed action stays armed; for a page that draws
+   *  a new bar on every redraw (the Schedule), with the bar's `id`, an open ⋯ More moves to the new bar (D-057). */
+  key?:string;actions:SelectionAction[];clear:()=>void}
 
 const run=(a:SelectionAction)=>{try{const r=a.run();if(r instanceof Promise)r.catch(reportError);}catch(e){reportError(e);}};
 const live=new Set<{root:HTMLElement;clear:()=>void;place:()=>void}>();
@@ -31,8 +33,8 @@ if(typeof document!=='undefined'&&typeof document.addEventListener==='function')
  */
 export function selectionBar(o:{label?:string;id?:string}={}){
   // Its own mark: more than one bar can be on the page at once (a list's and the Bulk editor's), and a kept ⋯ More
-  // (D-057) finds this bar's button across redraws by it.
-  const mark=String(++bars),keep=`.selection-bar[data-bar="${mark}"] .sel-more`;
+  // (D-057) finds this bar's button across redraws by it, or by the bar's id and selection key when given.
+  const mark=String(++bars);
   const root=el('div',{class:'selection-bar',role:'toolbar','aria-label':o.label||'Bulk actions','data-bar':mark,...(o.id?{id:o.id}:{})});root.hidden=true;
   // ⋯ More's items: the bar's extra actions as drawn now; an open More follows a redraw to the new button (dom.ts keep).
   let extra:SelectionAction[]=[];
@@ -66,6 +68,9 @@ export function selectionBar(o:{label?:string;id?:string}={}){
     // Read before the redraw: Chromium blurs a focused button as it is removed, and the blur disarms it.
     const was=s.key!==undefined&&s.key===drawnKey?root.querySelector<HTMLElement>('.sel-act.armed'):null,focused=!!was&&was===document.activeElement,from=was?.dataset.armedFrom;
     drawnKey=s.key;
+    const keep=o.id&&s.key?`#${CSS.escape(o.id)}[data-selection-key="${CSS.escape(s.key)}"] .sel-more`:
+      `.selection-bar[data-bar="${mark}"] .sel-more`;
+    if(s.key)root.dataset.selectionKey=s.key;else delete root.dataset.selectionKey;
     const word=s.count===1?s.noun[0]:s.noun[1];
     const act=(a:SelectionAction)=>{
       const b=el('button',{type:'button',class:'sel-act'+(a.primary?' primary':'')+(a.danger?' danger':''),'aria-label':a.label,'data-tip':a.tip||a.label,...(a.disabled?{'aria-disabled':'true'}:{})},icon(a.icon),el('span',{class:'label'},a.label));

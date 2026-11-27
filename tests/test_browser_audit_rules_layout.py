@@ -7,6 +7,7 @@ from playwright.sync_api import expect
 
 from .test_browser import browser, live_server, navigate, sign_in, wait_held, fonts_ready, toolbar, choose  # noqa: F401
 from .test_browser_rule_catalogue import catalogue_rule, flag, line, shot
+from .test_browser_kept_reads import live_pulse, rebuild
 from .rules_support import rules_by_family
 
 pytestmark = pytest.mark.browser
@@ -468,6 +469,21 @@ def test_acknowledge_and_undo_keep_the_native_issue_scroll_position(browser, liv
         assert position(scroll) == before
         page.get_by_role('button', name='Undo', exact=True).click()
         expect(page.locator(f'[data-issue="{issue_id}"]')).to_have_count(1)
+        expect(rows).to_have_count(24)
+        assert position(scroll) == before
+        # Another person's change rebuilds the page in the background (as a live update after Undo can): the list stays
+        # on screen, moved into the new page while its catalogue is read, at the same place, and the rebuilt list too.
+        held, moved, catalogue = [], [0], re.compile(r'/api/rules/catalogue(\?|$)')
+        live_pulse(page, 'workspace', moved)  # someone else changed a draft: the Rules page follows that scope
+        page.route(catalogue, lambda route: held.append(route))
+        shown = scroll.element_handle()
+        rebuild(page, held, moved, 1)
+        moved[0] = 0
+        assert position(scroll) == before
+        page.unroute(catalogue)
+        for route in held:
+            route.continue_()
+        page.wait_for_function('e => !e.isConnected', arg=shown)
         expect(rows).to_have_count(24)
         assert position(scroll) == before
     finally:
