@@ -8,7 +8,7 @@ from playwright.sync_api import expect
 
 from apps.api.db import transaction
 from apps.api import models as m
-from .test_browser import browser, live_server, sign_in, navigate, condition, planner_filter, pick_view, close_popover, toolbar, save_dialog  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, condition, planner_filter, pick_view, close_popover, toolbar, save_dialog, wait_held  # noqa: F401
 from .test_browser_uiux_polling import notification
 from .governance_support import developer
 from .collection_fixture import mount
@@ -373,16 +373,22 @@ def test_long_list_search_draws_once_per_pause_and_server_search_draws_once(brow
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'people')
-        # The page clock holds every pause: the list's own first work settles before counting, and no real time between
-        # keys can split one pause into two.
+        # Hold the clock so the saved-view reply arrives during a pending search, before the typing pause can elapse.
         start = datetime(2026, 10, 5, 9, 0)
         page.clock.install(time=start)
-        fixture = mount(page, 'fixture-search-draws', rows=400)
         page.clock.pause_at(start + timedelta(seconds=5))  # an installed clock still runs with real time until paused
+        list_id = 'fixture-search-draws'
+        held = []
+        page.route(f'**/api/table-views?table={list_id}', lambda route: held.append(route))
+        fixture = mount(page, list_id, rows=400)
+        wait_held(page, held)
         count_draws = """() => {window.bodyDraws = 0; new MutationObserver(list => {for (const m of list) if (m.addedNodes.length) window.bodyDraws++;})
           .observe(document.querySelector('#fixture .dt-body'), {childList: true});}"""
         page.evaluate(count_draws)
         fixture.get_by_role('searchbox').press_sequentially('row 001')
+        held[0].continue_()
+        # The fixture's saved-view callback runs before this await of the same cached read finishes.
+        page.evaluate("async id => (await window.importBundle('table_view.js')).fetchViews(id)", list_id)
         assert page.evaluate('window.bodyDraws') == 0  # nothing drawn while typing
         page.clock.run_for(1000)
         expect(fixture.locator('tbody tr[data-row]')).to_have_count(10)
