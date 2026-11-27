@@ -725,7 +725,8 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         live = {policy["id"]: policy for policy in current_policies
                 if (policy["id"] in captured_ids or mandatory(policy))
                 and not s.safety_rule(policy["definition"])}
-        live_rule_ids = set(live)
+        live_rule_ids = set(live) | current_safety_ids
+        safety_only_versions = set()
         result["source_bindings"] = [
             *(binding for binding in frozen.get("source_bindings", []) if not mandatory(binding["source"])),
             *(binding for binding in current.get("source_bindings", []) if mandatory(binding["source"])),
@@ -748,6 +749,7 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                 current_version = current_by_id.get(ident)
                 if (policy["kind"] == "catalogue" and policy["status"] == "active" and policy.get("active", True)
                         and (current_version is None or current_version["revision"] != policy["revision"])):
+                    safety_only_versions.add((ident, policy["revision"]))
                     projected = _captured_safety_numbers(policy)
                     if projected is None:
                         continue
@@ -881,12 +883,15 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     saved_seeds = result.get("policy_seed_lines") or []
     live_seeds = current.get("policy_seed_lines") or []
     if current_mandatory:
-        seeds = {seed["id"]: seed for seed in saved_seeds}
+        # Immutable seed defaults are ordinary goals or counts. They must not put a captured
+        # non-safety number back into a projection after its policy revision was superseded.
+        seeds = {seed["id"]: seed for seed in saved_seeds
+                 if (seed["policy_id"], seed["policy_revision"]) not in safety_only_versions}
         seeds.update((seed["id"], seed) for seed in live_seeds if seed["policy_id"] in live_rule_ids)
         saved_seeds = list(seeds.values())
     result["policies"] = _overlay_zero_limits(seeded_policies(merged, saved_seeds),
         seeded_policies(current_policies, live_seeds), current_safety_ids)
-    if saved_seeds:
+    if result.get("policy_seed_lines") or saved_seeds:
         result["policy_seed_lines"] = []
     if "team_lead_requirement" in kinds:
         result["type_lead_ownership"] = current.get("type_lead_ownership", [])

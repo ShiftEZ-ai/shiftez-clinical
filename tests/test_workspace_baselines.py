@@ -146,6 +146,42 @@ def test_review_keeps_stricter_cover_minimum_and_maximum_from_either_revision(h)
             and d['severity'] == 'advisory'] == [3]
 
 
+def test_review_replaces_captured_seed_counts_with_current_counts_in_a_mixed_rule(h):
+    from packages.domain.conditions import active_rules
+    from .test_rule_catalogue_api import approve, line, propose
+    from .test_rule_catalogue_v2_api import proposed
+
+    conversion = proposed(h)
+    h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent conversion review'},
+              conversion['id'], conversion['revision'])
+    restricted = line(numbers={'apply': {}}, weekdays=[1], settings={'restriction': {}})
+    old = approve(h, propose(h, 'workload_limit', [restricted], catalogue_version=2)['record'])
+    rota = h.workspace('Captured seed counts')
+    new = approve(h, propose(h, 'workload_limit', [{**restricted, 'weekdays': [4]}], catalogue_version=2,
+                            policy_id=old['id'], revision=old['revision'])['record'])
+
+    def seed(policy, limit):
+        maximum = line(numbers={'max': {'value': limit, 'level': 'critical'}},
+                       settings={'block_quota': {'metric': 'lead_turns', 'starts_on': '2000-01-01',
+                                                 'repeat': True, 'window_alignment': 'calendar_month'}})
+        return {'id': maximum['id'], 'policy_id': policy['id'], 'policy_revision': policy['revision'],
+                'line': maximum}
+
+    with transaction(h.app.state.engine) as db:
+        workspace = db.get(m.Workspace, rota['id'])
+        organisation = db.get(m.Organisation, h.seed['organisation_id'])
+        current = snapshot_inputs(db, organisation)
+        capture = {**current, 'policies': [old], 'policy_seed_lines': [seed(old, 2)]}
+        current = {**current, 'policies': [new], 'policy_seed_lines': [seed(new, 4)]}
+        review = live_safety_inputs(db, workspace, capture, current=current,
+                                    include_mandatory=True, current_mandatory=True)
+    copies = active_rules(review)
+    assert [p['definition']['rule']['amount'] for p in copies
+            if p['definition']['rule'].get('metric') == 'lead_turns'] == [4]
+    assert {tuple(p['definition']['scope']['weekdays']) for p in copies
+            if p['definition']['rule']['kind'] == 'restriction'} == {(1,), (4,)}
+
+
 def test_safety_catalogue_conversion_binds_once_before_and_after_draft_capture(h):
     from packages.domain.conditions import active_rules
     from .test_rule_catalogue_guard import world
