@@ -126,7 +126,8 @@ export function timeInput(time:HTMLInputElement):HTMLInputElement{
 /** The one date-and-time field (every former datetime-local): the shared date field and a timeInput beside it named
  *  "<label> time". The labelled date input's .value reads and writes local ISO "yyyy-mm-ddTHH:MM" as datetime-local
  *  did, so callers and the API are unchanged; a whole "2026-10-05T09:00" typed or pasted into the date splits into
- *  both parts. disabled/readonly/required follow the date input; a time change fires input and change on it. */
+ *  both parts. disabled/readonly/required follow the date input; a time change fires input and change on it.
+ *  The pair is one group named "<label>: date and time", so the label is announced for what the field holds. */
 export function dateTimeInput(input:HTMLInputElement,label:string,options:DateOptions&{allDay?:'start'|'end'}={}):HTMLElement{
   const start=String(input.value||'');input.value=start.slice(0,10);
   const box=dateInput(input,options),date=shown.get(input)!;
@@ -160,7 +161,7 @@ export function dateTimeInput(input:HTMLInputElement,label:string,options:DateOp
   time.addEventListener('input',e=>{if(!e.bubbles)return;e.stopPropagation();if(parseTime(time.value)||!time.value.trim())changed();});
   time.addEventListener('change',e=>{sync();e.stopPropagation();});
   new MutationObserver(sync).observe(input,{attributes:true,attributeFilter:['disabled','readonly','required']});
-  return el('div',{class:'datetime-box'},box,time);
+  return el('div',{class:'datetime-box',role:'group','aria-label':`${label}: date and time`},box,time);
 }
 
 /** One field for a pair of dates (first and last day, both included): two typeable inputs that keep their own

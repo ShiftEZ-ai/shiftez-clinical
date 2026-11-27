@@ -33,6 +33,7 @@ import {BASELINE_SOURCES,GAPS_SHOWN,nearestGaps} from './draft_baseline.js';
 import {issueList,findingIssue} from './issue_marker.js';
 import {leadContext,leadState,leadNeed,type LeadState} from './planner_teams.js';
 import {menu,opens} from './dom.js';  // the shared menu (UX › controls S2b)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 
 /** `ready` resolves once the deferred catalogue lists are loaded (app.ts ensureCatalogues): await it before reading them. */
@@ -65,7 +66,6 @@ function all(ctx:Context,kind:string):Row[]{return ctx.catalogues[kind]||[];}
 const rankOptions=(ctx:Context)=>options(all(ctx,'categories')).map(c=>({...c,tone:'duty-'+rankColour(c.value)}));
 /** Dated facts apply from their start, up to (but not including) their end. */
 export const activeOn=(r:Row|undefined,day:string)=>!!r&&!r.revoked&&r.active!==false&&(!r.starts_on||r.starts_on<=day)&&(!r.ends_on||r.ends_on>day);
-/** People as picker choices, grouped by their current rank. */
 /** Why this person may not lead a session of this duty type on this day ('' = may lead, or no lead setting). Only the
  *  fallback while the server's lead context (planner_teams.ts leadContext) is unavailable: a hint mirroring
  *  packages/domain/conditions.py over the loaded catalogues (one missing is not held against anyone); the server check
@@ -88,13 +88,18 @@ export function leadBlock(ctx:Context,typeId:string,personId:string,day:string){
   const kind=(f:string)=>RULE_FIELDS.find(x=>x.key===f)?.kind;
   return 'Cannot lead · who may lead: '+conditionsText(tree,(f,v)=>kind(f)?labelOf(lookup(ctx,kind(f)!,v)||{name:v}):v);
 }
+/** People as picker choices, the one place their order is set: A to Z by name, each with today's rank as its group and
+ *  that rank's place in the department's rank order (the `categories` catalogue as served, Configuration › Ranks: the
+ *  order the People collection groups by), No rank last. The one picker draws a single choice flat with the rank on
+ *  the row and a multiple choice in rank sections in that order, so a whole rank can be picked at once (picker.ts).
+ *  A person with two current ranks takes the first in that order. */
 export function peopleChoices(ctx:Context){
-  const day=today(ctx),rank=new Map<string,string>();
-  for(const m of all(ctx,'memberships'))if(activeOn(m,day)&&!rank.has(m.person_id))rank.set(m.person_id,labelOf(lookup(ctx,'categories',m.category_id))||'');
-  // Searchable by code, staff number, rota names and tags too; grouped by today's rank so a whole rank can be picked at once.
+  const day=today(ctx),ranks=all(ctx,'categories'),place=new Map(ranks.map((r,i)=>[r.id,i])),rank=new Map<string,number>();
+  for(const m of all(ctx,'memberships')){const at=place.get(m.category_id);if(activeOn(m,day)&&at!==undefined&&at<(rank.get(m.person_id)??ranks.length))rank.set(m.person_id,at);}
+  // Searchable by code, staff number, rota names and tags too.
   const person=new Map(all(ctx,'people').map(p=>[p.id,p]));
-  return options(all(ctx,'people')).map(o=>{const p=person.get(o.value);return {...o,group:rank.get(o.value)||'No rank',hint:String(p?.short_code||''),
-    keywords:[p?.staff_number,...((p?.aliases||[]) as string[]),...((p?.tags||[]) as string[])].filter(Boolean).join(' ')};}).sort((a,b)=>a.group.localeCompare(b.group)||a.label.localeCompare(b.label,undefined,{numeric:true}));
+  return options(all(ctx,'people')).map(o=>{const p=person.get(o.value),at=rank.get(o.value)??ranks.length;return {...o,group:at<ranks.length?labelOf(ranks[at]):'No rank',groupOrder:at,hint:String(p?.short_code||''),
+    keywords:[p?.staff_number,...((p?.aliases||[]) as string[]),...((p?.tags||[]) as string[])].filter(Boolean).join(' ')};}).sort(byLabel);
 }
 function lookup(ctx:Context,kind:'people',id:string):PersonRow|undefined;
 function lookup(ctx:Context,kind:string,id:string):Row|undefined;

@@ -92,6 +92,26 @@ def own_exclusions(copies, line, slot):
                   if 'conditions' not in x and x['op'] == 'none' and x['field'] in ('person_ids', OUTRANKED) for v in x['values'])
 
 
+@pytest.mark.parametrize('metric,limit', [('duties', 'max_duties'), ('scheduled_hours', 'max_hours')])
+def test_weekly_maximum_replaces_only_the_matching_workload_number(metric, limit):
+    row = made('workload_limit', [
+        {'numbers': {'min': n(2), 'max': n(5)}, 'settings': {'block_quota': {
+            **BLOCK, 'metric': metric, 'window_alignment': 'calendar_week'}}},
+        {'who': person(A), 'numbers': {'max': n(7)}, 'settings': {limit: {'window': 'week'}}, **BLOCK},
+    ])
+    rule = row['definition']['rule']
+    rule['catalogue_version'] = 2
+    assert outranking_by_number(row) == {(0, 'max'): [1]}
+    assert inherited(row)[L(1)]['min'] == {**n(2), 'from': L(0)}
+    copies = active_rules([row])
+    assert own_exclusions(copies, 'l0', 'min') == []
+    assert own_exclusions(copies, 'l0', 'max') == [L(1)]
+
+    rule['lines'][1]['settings'][limit]['include_overtime'] = False
+    assert outranking_by_number(row) == {}
+    assert inherited(row) == {}
+
+
 def test_the_copies_every_check_reads_before_and_after():
     """Before (a whole line replaced, as an explicit None for each number read) and after (blank inherits): the only
     difference is the minimum for everyone, which now holds for the person whose line leaves it blank."""
