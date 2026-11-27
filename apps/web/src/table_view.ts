@@ -681,6 +681,8 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
     // An option changed applies at once (a pending pause in typing is applied with it).
     const opts=o.options&&searchOptionControls({...o.options,set:next=>{o.options!.set(next);apply();}},input,o.onInput,spec.key&&`${spec.key}:Search options`);syncSearch=opts?.sync;
     const wrap=opts?el('div',{class:'dt-search-wrap'},opts.nodes[0],opts.nodes[1],input):el('label',{class:'dt-search-wrap'},icon('search'),input);
+    // The whole box takes the tap, as the label form does (a label here would hand a click to the options button).
+    if(opts)wrap.addEventListener('mousedown',e=>{if(e.target===wrap){e.preventDefault();input.focus();}});
     // The box never shrinks below its placeholder ("Search trai", D-156): app.css sizes its minimum from the length.
     wrap.style.setProperty('--ph',String(input.placeholder.length));search=input;parts.push(wrap);
   }

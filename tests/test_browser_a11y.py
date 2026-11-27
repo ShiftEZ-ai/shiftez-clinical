@@ -606,7 +606,13 @@ def test_selection_boxes_switches_links_and_search_reach_the_target_size(browser
         navigate(page, 'requests')
         whole_list(page)
         main = page.locator('#main')
-        measure(main.locator('.dt-toolbar .dt-search:visible'))
+        # The Search box, its edge and padding too, takes the tap and focuses the field.
+        search_box = main.locator('.dt-toolbar .dt-search-wrap:visible')
+        measure(search_box)
+        edge = search_box.first.bounding_box()
+        assert edge
+        page.mouse.click(edge['x'] + edge['width'] - 2, edge['y'] + 2)
+        expect(main.locator('.dt-toolbar .dt-search:visible')).to_be_focused()
         set_layout(page, 'Table')
         table = main.locator('.dt-table')
         measure(table.locator('tbody td.dt-check .dt-check-hit'))
