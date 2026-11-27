@@ -152,8 +152,9 @@ Mockup names and numbers are illustrative only; nothing from them is seeded into
   User agent control (unstyled native controls), and a box or glyph inside a larger target of the same action.
   Shared roots: a table's column grip is 24 px centred on the boundary (12 px into each heading; inside its heading at
   the table's edge), each heading stacked above the next; a resized heading clips its own button, so its text ends in
-  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Ctrl D is its
-  keyboard way, no pointer equivalent yet) and the native × of search fields.
+  an ellipsis and never runs into the next heading. Left: the sheet's 9 px fill handle (drag shortcut; Fill down in the
+  cell bar, then a click or tap on the pattern's last cell and on the last row, is its single-pointer way, and Ctrl D
+  its keyboard way) and the native × of search fields.
 - Touch targets (WCAG 2.2 SC 2.5.5 Target Size (Enhanced), level AAA, beyond the AA target): on a phone every interactive target is at least 44 × 44 CSS px, from one block
   in `app.css` (Touch targets) for the shared controls (buttons, icon buttons, collection toolbar tools, segmented
   options, menu rows, tabs, search fields, pickers, link buttons, the skip link). A checkbox or radio keeps its 24 px box; its target is its whole label row (at least 44 px tall), or, with no visible label (row selection), the centred invisible 44 px `::after`. Pills and chips that act as buttons,
