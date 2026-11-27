@@ -325,8 +325,13 @@ async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[
 // redraws reading only the draft. `inPlace`: every save since the last refresh was patched so (refreshOnce).
 let inPlace=true;
 window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(!patchDraft(d?.result,d?.kind||'')){forgetSchedule();inPlace=false;}});
-// R3: the edit's own message says what it cleared and what it broke (the Fix list's delta, server-computed).
-window.addEventListener('rota-saved',e=>toastClause(deltaWords((e as CustomEvent).detail?.result)));
+// Session saves use the same must-fix total as the Fix list and footer.
+window.addEventListener('rota-saved',e=>{
+  const {kind,result}=(e as CustomEvent).detail||{};
+  const summary=fixDeltaOf(result)?.summary;
+  const must=(kind==='shift.create'||kind==='shift.update')&&!summary?.checking?summary?.must:0;
+  toastClause(must?mustWords(must)+'.':deltaWords(result));
+});
 /** A draft edit's reply (every draft edit and its Undo answer alike, planning.changed): the draft's row in the rota list
  *  takes the reply's rota and health summary, the sidebar's open-places count follows, and the draft (and the calendar
  *  windows showing it) are read again: a reply carries only a summary of the check, not its findings and coverage.

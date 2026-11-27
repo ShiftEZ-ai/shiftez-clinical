@@ -159,8 +159,12 @@ def test_assignment_save_holds_submit_on_one_clock_and_says_the_check_once(brows
         expect(stopped).to_have_count(0, timeout=20000)
         page.wait_for_function("() => window.__said.some(t => t.startsWith('Rota checked'))")
         words = [t for t in said(page) if t.startswith(('Rota checked', 'The rota check'))]
-        assert len(words) == 2 and words[0] == STOPPED_SAID, words
-        assert re.fullmatch(r'Rota checked: [1-9]\d* must fix\.', words[1]), words
+        summary = h.get('coordinator', f'/api/workspaces/{w["id"]}/fix-list?view=lean')['summary']
+        before = (data['fix_list_delta']['summary'].get('since') or {}).get('cleared', 0)
+        cleared = max(0, (summary.get('since') or {}).get('cleared', 0) - before)
+        assert summary['must'] > 0
+        checked = f'{cleared} cleared. {summary["must"]} must fix left.' if cleared else f'{summary["must"]} must fix.'
+        assert words == [STOPPED_SAID, 'Rota checked: ' + checked], words
         if width > 400:
             submit = page.locator('.planner-bar').get_by_role('button', name='Submit for review…', exact=True)
             expect(submit).not_to_have_attribute('data-tip', WAITS)
