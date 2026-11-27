@@ -179,6 +179,7 @@ def test_template_numbers_are_edited_as_rows_and_old_copies_group_into_one_rule(
 
 
 def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_server, h):
+    from .governance_support import identity
     from .test_browser import wait_held
     from .test_rule_catalogue_api import approve
 
@@ -206,6 +207,7 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         replacement = review.get_by_role('checkbox', name=re.compile(r'^Rest standard'))
         activate = review.get_by_role('button', name='Activate', exact=True)
         warning = 'This proposal reduces mandatory safety protection and needs independent approval.'
+        pending = review.get_by_text('Selected safety rules stay active pending retirement approval.', exact=True)
         expect(replacement).to_be_checked()
         wait_held(page, held)
         expect(activate).to_be_disabled()
@@ -217,9 +219,11 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         expect(activate).to_be_enabled()
         retry.click()
         expect(review.get_by_text(warning, exact=True)).to_be_visible()
+        expect(pending).to_be_visible()
         expect(activate).to_have_accessible_description(warning)
         replacement.uncheck()
         expect(review.get_by_text(warning, exact=True)).not_to_be_visible()
+        expect(pending).not_to_be_visible()
         expect(activate).to_be_enabled()
         replacement.check()
         expect(review.get_by_text(warning, exact=True)).to_be_visible()
@@ -227,8 +231,13 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         review.get_by_label('Reason', exact=True).fill('Independent rest review')
         activate.click()
         expect(review).to_have_count(0)
+        expect(page.get_by_text('Rule activated; 1 retirement waiting for approval.', exact=True)).to_be_visible()
     finally:
         context.close()
+    assert any(p['id'] == old['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
+    identity(h, 'second_retirement_reviewer', ['approver'])
+    h.command('second_retirement_reviewer', 'policy.retire', {'reason': 'Independent retirement review'},
+              old['id'], old['revision'])
     assert any(p['id'] == old['id'] for p in h.get('approver', '/api/policies?status=retired')['policies'])
     assert any(p['id'] == new['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
 

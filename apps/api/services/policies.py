@@ -946,6 +946,26 @@ def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessor
         matching_scopes_only=True, from_day=day.isoformat())
 
 
+def deferred_activation_retirements(db, actor, policy, replaces_ids, *, predecessors=None):
+    """An extra older rule stays in force when the proposal does not preserve its protection."""
+    selected = set(replaces_ids).difference(policy.definition.get('merged_ids') or (),
+                                            [policy.definition.get('replaces_id')])
+    if not selected:
+        return set()
+    from .rule_effects import predecessor_rows
+    from .scoring_defaults import seeded_rows
+
+    rows = (predecessor_rows(db, actor, [policy], replaces_ids=selected)
+            if predecessors is None else predecessors)
+    entry = policy.definition.get('calendar_entry_id')
+    candidates = [record(old) for old in rows if old.id in selected and old.status == 'active'
+                  and old.definition['rule']['kind'] == policy.definition['rule']['kind']
+                  and (not entry or old.definition.get('calendar_entry_id') != entry)
+                  and s.safety_rule(old.definition)]
+    after = [{**record(policy), 'status': 'active'}]
+    return {old['id'] for old in seeded_rows(db, candidates) if weakens_safety_rules([old], after)}
+
+
 def _activation_independence(db, actor, policy, value):
     independent = person_key(db, policy.created_by) != person_key(db, actor.identity_id)
     if not independent:
@@ -980,8 +1000,11 @@ def prepare_activation(db, actor, command, require_checks=False):
     stamp = _activation_stamp(db, actor)
     commands = _activation_commands(command)
     pending, decisions = _activation_inputs(db, actor, commands)
+    deferred = {policy.id: deferred_activation_retirements(db, actor, policy, decision.replaces_ids)
+                for (policy, _), decision in zip(pending, decisions)}
     retired_ids = {old_id for (policy, _), decision in zip(pending, decisions)
-                   for old_id in (set(decision.replaces_ids) | set(policy.definition.get('merged_ids') or []) |
+                   for old_id in ((set(decision.replaces_ids) - deferred[policy.id]) |
+                                  set(policy.definition.get('merged_ids') or []) |
                                   ({policy.definition['replaces_id']} if policy.definition.get('replaces_id') else set()))}
     entries = {policy.definition['calendar_entry_id'] for policy, _ in pending if policy.definition.get('calendar_entry_id')}
     if entries:
@@ -1008,7 +1031,7 @@ def prepare_activation(db, actor, command, require_checks=False):
     return {'stamp': stamp,
             'policy_ids': [policy.id for policy, _ in pending],
             'workspace_ids': [workspace.id for workspace in workspaces],
-            'evidence': evidence, 'impact': impact,
+            'evidence': evidence, 'impact': impact, 'deferred_retirements': deferred,
             'phase_timings': dict(activation_phase_timings(db))}
 
 
@@ -1047,14 +1070,21 @@ def activate_policies(db, actor, commands, require_checks=False):
     # Retire the copies being replaced first, so the impact check never counts a rule twice. `replaced`: the rules
     # retired here that retiring the new rule does not bring back by itself (Undo restores them; grouped rules come
     # back with the retire).
-    replaced, retired_history = [], []
+    replaced, retired_history, pending_retirements = [], [], []
     for (policy, reason), value in zip(pending, decisions):
+        deferred = (prepared['deferred_retirements'][policy.id] if prepared is not None else
+                    deferred_activation_retirements(db, actor, policy, value.replaces_ids))
         for old_id in dict.fromkeys(value.replaces_ids):
             old = scoped(db, m.Policy, old_id, actor)
             require(old.status == "active", "WORKFLOW_STATE", "Only an active rule can be replaced", 409)
-            guard_goal_change(db, actor, [old.id])
             require(old.definition["rule"]["kind"] == policy.definition["rule"]["kind"], "REPLACEMENT_KIND",
                     "A rule can only replace active rules of the same type", 422)
+            if old_id in deferred:
+                pending_retirements.append(policy_transition(db, actor, Line(
+                    kind='policy.retire', target_id=old.id, expected_revision=old.revision,
+                    payload={'reason': reason}), start_retirement=True))
+                continue
+            guard_goal_change(db, actor, [old.id])
             old.status, old.active = "retired", False
             advance_revision(db, old)
             retired_history.append(("policy", old, f"Replaced by {policy.name}: {reason}"[:500]))
@@ -1103,6 +1133,7 @@ def activate_policies(db, actor, commands, require_checks=False):
         outbox(db, actor, f"rule:{policy.id}:{policy.revision}", "rule", {"policy_id": policy.id})
     bump_inputs(db, actor)
     return {"records": [record(p) for p, _ in pending], "impact": impact, "replaced": [record(p) for p in replaced],
+            **({"pending_retirements": pending_retirements} if pending_retirements else {}),
             "context_checks": sorted({ident for d in decisions for ident in d.check_job_ids}) if require_checks else [],
             "context_check_evidence": evidence,
             "unresolved_acknowledged": require_checks and all(d.acknowledge_unresolved for d in decisions)}
@@ -1201,7 +1232,7 @@ def transition_approvals_required(configured, policy, action):
     return max(configured, 2) if action == 'retire' and _safety_retirement(policy) else configured
 
 
-def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), minimum=1):
+def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), minimum=1, start_only=False):
     configured = db.get(m.Department, actor.department_id).policy_retire_approvals_required
     view = record(policy)
     required = max(minimum, transition_approvals_required(configured, view, action))
@@ -1216,7 +1247,7 @@ def transition_approval(db, actor, policy, action, reason, effects, *, excluded=
         "The rule proposer cannot approve its retirement or restoration", reason, policy.id,
         allow_self_approval=required == 1 and (
             not safety or independence.permission_for(db, actor, "rule.activate") is not None))
-    if approval := db.info.get("bulk", {}).get("policy_undo_approval"):
+    if not start_only and (approval := db.info.get("bulk", {}).get("policy_undo_approval")):
         return {**approval, "policy_revision": policy.revision, "action": action}
     if required == 1:
         return None
@@ -1224,13 +1255,14 @@ def transition_approval(db, actor, policy, action, reason, effects, *, excluded=
     last_revision, votes = transition_approval_state(db, actor, policy, excluded=excluded)
     approved = {key[1]: row.actor_id for key, row in votes.items()
         if key[0] == action and row.snapshot["decision_hash"] == decision_hash}
-    require(reviewer not in approved, "DUPLICATE_REVIEWER", "Each approval must represent a different person", 409)
-    db.add(m.DefinitionHistory(department_id=actor.department_id, kind="policy_transition_approval", object_id=policy.id,
-        object_revision=last_revision + 1,
-        snapshot={"policy_revision": policy.revision, "action": action, "decision_hash": decision_hash,
-                  "approved_by": actor.identity_id}, actor_id=actor.identity_id, reason=reason,
-        batch_id=db.info.get("bulk", {}).get("batch_id")))
-    approved[reviewer] = actor.identity_id
+    if not start_only or not approved:
+        require(reviewer not in approved, "DUPLICATE_REVIEWER", "Each approval must represent a different person", 409)
+        db.add(m.DefinitionHistory(department_id=actor.department_id, kind="policy_transition_approval", object_id=policy.id,
+            object_revision=last_revision + 1,
+            snapshot={"policy_revision": policy.revision, "action": action, "decision_hash": decision_hash,
+                      "approved_by": actor.identity_id}, actor_id=actor.identity_id, reason=reason,
+            batch_id=db.info.get("bulk", {}).get("batch_id")))
+        approved[reviewer] = actor.identity_id
     return {"approvals_required": required, "approvals_received": len(approved), "complete": len(approved) >= required,
             "policy_revision": policy.revision, "action": action, "approved_by": sorted(approved.values())}
 
@@ -1253,7 +1285,7 @@ def withdraw_transition_approval(db, actor, command):
     return {"record": record(policy), "withdrawn": action}
 
 
-def policy_transition(db, actor, command, require_checks=False):
+def policy_transition(db, actor, command, require_checks=False, *, start_retirement=False):
     require_role(actor, "approver")
     if command.kind == "policy.activate":
         result = activate_policies(db, actor, [command], require_checks)
@@ -1286,8 +1318,9 @@ def policy_transition(db, actor, command, require_checks=False):
             restoring.append((old, last))
     require_policy_version(db, actor, *(old.definition for old, _ in restoring), retained=[old for old, _ in restoring])
     approval = transition_approval(db, actor, policy, "retire", value.reason,
-        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason})
-    if approval and not approval["complete"]:
+        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason},
+        minimum=2 if start_retirement else 1, start_only=start_retirement)
+    if approval and (start_retirement or not approval["complete"]):
         return {"record": record(policy), "impact": [], "restored_ids": [], "restored": [], "approval": approval}
     retirement = {'retirement_approvers': approval['approved_by']} if policy.active and approval else None
     policy.status, policy.active = "retired", False

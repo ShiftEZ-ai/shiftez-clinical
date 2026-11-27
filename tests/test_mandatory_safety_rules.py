@@ -98,14 +98,22 @@ def test_review_and_activation_compare_the_selected_older_copy(h, monkeypatch):
     reduction = reviewer_client.post(path, json=decision)
     assert unchanged.status_code == reduction.status_code == 200
     assert unchanged.json() == {'policy_id': proposal['id'], 'weakens_safety': False}
-    assert reduction.json() == {'policy_id': proposal['id'], 'weakens_safety': True}
+    assert reduction.json() == {'policy_id': proposal['id'], 'weakens_safety': True,
+                                'pending_retirement_ids': [current['id']]}
     assert h.client('staff').post(path, json=decision).status_code == 403
     assert any(p['id'] == current['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
 
     refusal = h.command(who, 'policy.activate', decision, proposal['id'], proposal['revision'], status=403)
     assert refusal['error']['code'] == 'SELF_APPROVAL'
-    approved = h.command('approver', 'policy.activate', decision, proposal['id'], proposal['revision'])['record']
-    assert approved['status'] == 'active'
+    approved = h.command('approver', 'policy.activate', decision, proposal['id'], proposal['revision'])
+    assert approved['record']['status'] == 'active'
+    [waiting] = approved['pending_retirements']
+    assert waiting['record'] == current
+    assert waiting['approval']['approvals_received'] == 1 and not waiting['approval']['complete']
+    identity(h, 'second_retirement_reviewer', ['approver'])
+    retired = h.command('second_retirement_reviewer', 'policy.retire', {'reason': 'Independent retirement review'},
+                        current['id'], current['revision'])
+    assert retired['approval']['complete']
     assert any(p['id'] == current['id'] for p in h.get('approver', '/api/policies?status=retired')['policies'])
 
 
