@@ -196,7 +196,7 @@ def test_held_writes_explain_the_wait_and_do_not_queue(browser, live_server, h, 
         for control in (
             submit,
             page.get_by_role('button', name=re.compile(r'^Auto-schedule\b')),
-            page.get_by_role('button', name='Undo last edit', exact=True),
+            page.get_by_role('button', name='Undo last edit'),
             page.get_by_role('button', name='Add session', exact=True),
         ):
             expect(control).to_have_attribute('aria-disabled', 'true')

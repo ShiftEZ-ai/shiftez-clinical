@@ -31,7 +31,8 @@ def compact(db, actor, workspace):
         publication_id=publication_id, validation=check['validation'],
         allowed_actions=allowed_actions(db, actor, workspace, historical=historical,
                                         published=publication_id is not None))
-    metadata['can_undo'], can_redo = edit_availability(db, actor, workspace) if actor.permits('coordinator') else (False, False)
+    undo, can_redo = edit_availability(db, actor, workspace)
+    metadata.update(undo)
     fork = db.scalar(select(m.WorkspaceForkBase).options(load_only(m.WorkspaceForkBase.id,
         m.WorkspaceForkBase.source_workspace_id, m.WorkspaceForkBase.source_revision,
         m.WorkspaceForkBase.source_content_revision)).where(m.WorkspaceForkBase.workspace_id == workspace.id))

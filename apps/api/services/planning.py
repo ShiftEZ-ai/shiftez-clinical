@@ -411,7 +411,7 @@ def assignment_reply_available(db, command):
             return False
         if command.kind == 'workspace.undo':
             target = undo_target(db, workspace)
-            change = db.get(m.ChangeSet, target) if target else None
+            change = db.get(m.ChangeSet, target.id) if target else None
         else:
             change = db.scalar(latest_change(workspace, m.ChangeSet))
             if change is not None and not change.before_snapshot.get('_undo_of'):
@@ -634,7 +634,7 @@ def assignment_validation_scope(data, before, previous):
 
 def changed(db, actor, workspace, before, reason, *, content_changed=True, undoable=True,
             external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False,
-            staffed_creation=False, generation_apply=False):
+            staffed_creation=False, generation_apply=False, edit_action=None):
     """Every draft edit: one ChangeSet (one Undo) and a synchronous check. The reply says what changed, the same for a forward
     edit, an undo and a Resolve issues batch: the rota and its health summary, the sessions changed or removed, and the
     issues that came and went, so the open page patches it in place instead of reading the rota again."""
@@ -662,13 +662,18 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     else:
         before = {**before, '_review_action': 'return'}
     bulk = db.info.get("bulk")
+    edit_action = edit_action or db.info.get('_draft_edit_action')
     changes = bulk.setdefault("workspace_changes", {}) if bulk is not None else {}
     change = changes.get(workspace.id) if undoable else None
     # A failed preview savepoint expunges a newly created change set; never reuse that entry.
     if change is not None and change in db and not change.undone:
         change.resulting_content_revision = workspace.content_revision
+        edit_action = 'bulk.apply'
+        if change.before_snapshot.get('_edit_action') != edit_action:
+            change.before_snapshot = {**change.before_snapshot, '_edit_action': edit_action}
     else:
-        change = m.ChangeSet(workspace_id=workspace.id, before_snapshot=before,
+        change = m.ChangeSet(workspace_id=workspace.id,
+                             before_snapshot={**before, '_edit_action': edit_action} if undoable and edit_action else before,
                              resulting_content_revision=workspace.content_revision,
                              actor_id=actor.identity_id, reason=reason, undone=not undoable)
         db.add(change)
@@ -788,8 +793,11 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                        current_input_revision=current_organisation.get('input_revision'),
                        current_availability_revision=current_organisation.get('availability_revision'),
                        bounded=not generation_apply)
-    workspace_record = {**record(workspace, exclude=("validation",)),
-                        'can_undo': undoable or undo_target(db, workspace) is not None}
+    target = change if undoable else undo_target(db, workspace)
+    # A command receipt must not retain a colleague's identity. The detail read projects it for the viewer.
+    workspace_record = {**record(workspace, exclude=("validation",)), 'can_undo': target is not None,
+                        'undo_edit': describe_undo_target(db, actor, workspace, target, action=edit_action)
+                        if target is not None and target.actor_id == actor.identity_id else None}
     if undoable:
         workspace_record['undo_change_id'] = change.id
     from .people import with_adjustment_names
@@ -2191,7 +2199,8 @@ def latest_change(workspace, *columns, skip_single_sort=False, before=None):
 
 def edit_history_head(db, workspace, before=None):
     C = m.ChangeSet
-    return db.execute(latest_change(workspace, C.id, C.undone, C.actor_id,
+    return db.execute(latest_change(workspace, C.id, C.undone, C.actor_id, C.created_at,
+        C.before_snapshot['_edit_action'].as_string().label('edit_action'),
         C.before_snapshot['_undo_of'].as_string().label('undo_of'),
         skip_single_sort=True, before=before)).first()
 
@@ -2215,7 +2224,22 @@ def undo_target(db, workspace, head=None):
                 or before.head_revision is None or before.revision >= before.head_revision):
             return None
         head = edit_history_head(db, workspace, before)
-    return head.id if head is not None and not head.undone else None
+    return head if head is not None and not head.undone else None
+
+
+def describe_undo_target(db, actor, workspace, target, *, action=None, show_name=False):
+    if target is None:
+        return None
+    from packages.contracts.audit import AUDIT_ACTION_CATALOGUE, audit_summary
+    action = getattr(target, 'edit_action', action)
+    own = target.actor_id == actor.identity_id
+    name = None
+    if show_name and not own:
+        from .people import visible_identity_names
+        name = visible_identity_names(db, actor, [target.actor_id]).get(target.actor_id)
+    return {'id': target.id, 'revision': workspace.revision, 'own': own, 'author': name,
+            'label': audit_summary(action) if action in AUDIT_ACTION_CATALOGUE else 'changed the rota',
+            'at': aware(target.created_at).isoformat()}
 
 
 def put_back(db, actor, workspace, snapshot, current):
@@ -2250,9 +2274,10 @@ def undo(db, actor, command):
         db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
         draft(db, actor, command.target_id, command.expected_revision)
     target = undo_target(db, workspace)
-    require(value.undo_of is None or value.undo_of == target, "STALE_UNDO", "This edit can no longer be undone", 409)
+    require(value.undo_of is None or target is not None and value.undo_of == target.id,
+            "STALE_UNDO", "This edit can no longer be undone", 409)
     require(target is not None, "NO_UNDO", "Nothing left to undo", 409)
-    change = db.get(m.ChangeSet, target)
+    change = db.get(m.ChangeSet, target.id)
     current = workspace_content(db, workspace)
     require_change_authority(db, actor, workspace, current, after=change.before_snapshot)
     content_changed = put_back(db, actor, workspace, change.before_snapshot, current)
@@ -2285,16 +2310,24 @@ def undo(db, actor, command):
 
 
 def edit_availability(db, actor, workspace):
-    """Return Undo and Redo availability using the same edit lookup as both commands."""
-    if workspace.status != 'draft' or workspace.archived_at is not None:
-        return False, False
+    """Read the exact Undo edit and Redo availability with the same history lookup as both commands."""
+    if not actor.permits('coordinator') or workspace.status != 'draft' or workspace.archived_at is not None:
+        return {'can_undo': False, 'undo_edit': None}, False
     row = edit_history_head(db, workspace)
-    return (row is not None and undo_target(db, workspace, row) is not None,
-            row is not None and row.undo_of is not None and row.actor_id == actor.identity_id)
+    target = undo_target(db, workspace, row) if row is not None else None
+    return ({'can_undo': target is not None,
+             'undo_edit': describe_undo_target(db, actor, workspace, target, show_name=True)},
+            _has_redo(row, actor.identity_id))
 
 
 def redo_available(db, actor, workspace):
-    return edit_availability(db, actor, workspace)[1]
+    if workspace.status != 'draft' or workspace.archived_at is not None:
+        return False
+    return _has_redo(edit_history_head(db, workspace), actor.identity_id)
+
+
+def _has_redo(row, identity_id):
+    return row is not None and row.undo_of is not None and row.actor_id == identity_id
 
 
 def require_redo_placements(db, actor, workspace, snapshot, current):

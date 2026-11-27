@@ -136,8 +136,9 @@ def _workspace_edit_fields(result):
         return {}
     if any(not isinstance(result.get(key), dict) for key in ('validation', 'health', 'fix_list_delta')):
         return {}
-    return {key: value for key in ('delta', 'workspace', 'validation', 'health', 'fix_list_delta')
-            if (value := (delta.model_dump(mode='json') if key == 'delta' else result.get(key))) is not None}
+    return {'delta': delta.model_dump(mode='json'),
+            'workspace': {key: value for key, value in workspace.items() if key != 'undo_edit'},
+            'validation': result['validation'], 'health': result['health'], 'fix_list_delta': result['fix_list_delta']}
 
 
 def _attach_workspace_edit(changes, result):

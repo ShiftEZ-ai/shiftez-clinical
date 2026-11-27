@@ -939,7 +939,8 @@ def _finish_session_creation(db, actor, groups):
         # changed supplies the last revision increment and the one ChangeSet/Undo for the whole draft.
         workspace.revision -= 1
         workspace.content_revision -= 1
-        result = planning.changed(db, actor, workspace, group['before'], 'Create session')
+        result = planning.changed(db, actor, workspace, group['before'], 'Create session',
+                                  edit_action='shift.create' if len(group['replies']) == 1 else 'bulk.apply')
         shifts = {row['id']: row for row in result.pop('shifts')}
         created = {reply['shift_id'] for reply in group['replies']}
         peers = [row for sid, row in shifts.items() if sid not in created]

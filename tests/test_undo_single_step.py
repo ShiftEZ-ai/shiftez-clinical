@@ -1,4 +1,6 @@
 """Undo follows the active edit history and stops when its earliest edit has been undone."""
+from datetime import datetime
+
 REASON = 'Independent test review decision'
 
 
@@ -20,6 +22,31 @@ def test_undo_walks_back_available_edits_then_refuses(h):
     assert again['error']['code'] == 'NO_UNDO'
     assert again['error']['message'] == 'Nothing left to undo'
     assert h.detail(w)['shifts'] == []
+
+
+def test_the_undo_description_names_the_target_and_a_stale_target_cannot_undo_another_edit(h):
+    first = h.shift(h.workspace(), people=[], role='admin')['workspace']
+    edit = first['undo_edit']
+    assert edit['own'] and edit['id'] == first['undo_change_id']
+    assert edit['label'] == 'added a session'
+    assert datetime.fromisoformat(edit['at']).utcoffset() is not None
+    path = f"/api/workspaces/{first['id']}"
+    other = h.get('coordinator', path)['workspace']['undo_edit']
+    assert other == {**edit, 'own': False, 'author': other['author']}
+    assert other['author']
+    for view in ('compact', 'schedule'):
+        assert h.get('coordinator', f'{path}?view={view}')['workspace']['undo_edit'] == other
+    assert h.get('approver', path)['workspace']['undo_edit'] is None
+
+    second = h.shift(first, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[])['workspace']
+    refused = h.command('coordinator', 'workspace.undo', {'reason': REASON, 'undo_of': edit['id']},
+                        first['id'], second['revision'], status=409)
+    assert refused['error']['code'] == 'STALE_UNDO'
+    assert len(h.detail(first)['shifts']) == 2
+    undone = h.command('coordinator', 'workspace.undo', {'reason': REASON, 'undo_of': second['undo_edit']['id']},
+                       first['id'], second['revision'])['workspace']
+    assert undone['can_undo'] and undone['undo_edit'] is None
+    assert h.detail(first)['workspace']['undo_edit'] == {**other, 'revision': undone['revision']}
 
 
 def test_undo_stops_at_a_reopened_review_boundary(h):

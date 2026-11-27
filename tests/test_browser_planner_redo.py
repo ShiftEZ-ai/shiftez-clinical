@@ -1,5 +1,6 @@
 """SW3-A-06: the planner's Redo, beside Undo and in the Undo message, by button and keyboard."""
 import contextlib
+import re
 
 import pytest
 from playwright.sync_api import Error as PlaywrightError, expect
@@ -31,13 +32,15 @@ def test_undo_then_redo_from_the_bar_and_the_message(browser, live_server, h, vi
     try:
         open_rota(page, w['id'])
         bar = page.locator('.planner-bar')
-        expect(bar.get_by_role('button', name='Undo last edit', exact=True)).to_be_visible()
+        undo = bar.get_by_role('button', name='Undo last edit')
+        expect(undo).to_have_accessible_name(re.compile(r'^Undo last edit, You '))
+        expected = h.detail(w)['workspace']['undo_edit']
         expect(bar.get_by_role('button', name='Redo', exact=True)).to_have_count(0)  # nothing undone yet
         with command(page, 'workspace.undo') as undone:
-            bar.get_by_role('button', name='Undo last edit', exact=True).click()
+            undo.click()
         assert undone.value.ok, undone.value.text()
+        assert undone.value.request.post_data_json['payload']['undo_of'] == expected['id']
         assert people(h, w) == [[first]]
-        undo = bar.get_by_role('button', name='Undo last edit', exact=True)
         expect(undo).to_be_enabled()
         toast = page.locator('.toast').filter(has_text='Undone')
         expect(toast.get_by_role('button', name='Redo', exact=True)).to_be_visible()
@@ -53,10 +56,43 @@ def test_undo_then_redo_from_the_bar_and_the_message(browser, live_server, h, vi
         expect(page.locator('.toast').filter(has_text='Redone').get_by_role('button', name='Undo', exact=True)).to_be_visible()
         expect(page.locator('.planner-bar').get_by_role('button', name='Redo', exact=True)).to_have_count(0)
         with command(page, 'workspace.undo'):
-            page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True).click()
+            undo.click()
         with command(page, 'workspace.redo') as again:
             page.locator('.planner-bar').get_by_role('button', name='Redo', exact=True).click()
         assert again.value.ok and people(h, w) == [[second]]
+    finally:
+        context.close()
+
+
+def test_a_colleagues_edit_takes_a_second_press_on_the_undo_button(browser, live_server, h):
+    saved = h.shift(h.workspace(), people=[], role='admin')['workspace']
+    preview = h.detail(saved)['workspace']['undo_edit']
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        open_rota(page, saved['id'])
+        undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit')
+        words = re.compile(rf"{re.escape(preview['author'])} added a session · .+")
+        expect(undo).to_have_accessible_name(words)
+        expect(undo).to_have_attribute('data-tip', words)
+        requests = []
+        page.on('request', lambda request: requests.append(request.post_data_json['payload'])
+                if request.url.endswith('/api/commands') and request.method == 'POST'
+                and request.post_data_json.get('kind') == 'workspace.undo' else None)
+
+        undo.focus()
+        page.keyboard.press('Enter')
+        expect(undo).to_have_accessible_name(re.compile(r'^Confirm Undo\?'))
+        assert requests == []
+        page.keyboard.press('Escape')
+        expect(undo).to_have_accessible_name(re.compile(r'^Undo last edit,'))
+        page.keyboard.press('Enter')
+        assert requests == []
+        with command(page, 'workspace.undo') as undone:
+            page.keyboard.press('Enter')
+        assert undone.value.ok and requests[0]['undo_of'] == preview['id']
+        expect(page.locator('.toast').filter(has_text='Undone')).to_contain_text(
+            f"before {preview['author']} added a session")
+        assert h.detail(saved)['shifts'] == []
     finally:
         context.close()
 
@@ -75,7 +111,7 @@ def test_consecutive_undo_stops_when_the_edit_history_is_empty(browser, live_ser
 
         page.route(schedule_read, without_availability)
         open_rota(page, w['id'])
-        undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True)
+        undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit')
         expect(undo).to_have_attribute('aria-disabled', 'true')
         expect(undo).to_have_attribute('data-tip', 'Undo availability is unknown')
         page.unroute(schedule_read, without_availability)
@@ -109,10 +145,13 @@ def test_old_toast_cannot_undo_an_earlier_edit_after_toolbar_undo(browser, live_
         toast = page.locator('.toast').filter(has_text='Issue accepted')
         saved_undo = toast.get_by_role('button', name='Undo', exact=True)
         expect(saved_undo).to_be_visible()
-        toolbar_undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True)
+        toolbar_undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit')
+        target = h.detail(workspace)['workspace']['undo_edit']
+        expect(toolbar_undo).to_have_accessible_name(re.compile(rf'^Undo last edit, You {re.escape(target["label"])} · '))
         with command(page, 'workspace.undo') as undone:
             toolbar_undo.click()
         assert undone.value.ok, undone.value.text()
+        assert undone.value.request.post_data_json['payload']['undo_of'] == target['id']
         revision = undone.value.json()['workspace']['revision']
         with command(page, 'workspace.undo') as stale:
             saved_undo.click()
@@ -129,7 +168,7 @@ def test_keyboard_undo_and_redo_on_the_planner(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP, color_scheme='dark')
     try:
         open_rota(page, w['id'])
-        page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True).click()
+        page.locator('.planner-bar').get_by_role('button', name='Undo last edit').click()
         expect(page.locator('.toast').filter(has_text='Undone')).to_be_visible()
         assert people(h, w) == [[first]]
         page.locator('body').click(position={'x': 5, 'y': 5})
@@ -160,8 +199,8 @@ def test_redo_shows_beside_undo_from_the_undo_reply(browser, live_server, h):
     try:
         open_rota(page, w['id'])
         bar = page.locator('.planner-bar')
-        undo = bar.get_by_role('button', name='Undo last edit', exact=True)
-        expect(undo).to_have_attribute('data-tip', 'Undo (Ctrl Z)')
+        undo = bar.get_by_role('button', name='Undo last edit')
+        expect(undo).to_have_attribute('data-tip', re.compile(r'^Undo last edit, You .+ \(Ctrl Z\)$'))
         page.route(f"**/api/workspaces/{w['id']}*", lambda route: held.append(route) if route.request.method == 'GET' else route.continue_())
         with command(page, 'workspace.undo') as undone:
             undo.click()

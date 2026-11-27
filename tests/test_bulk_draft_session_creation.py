@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from apps.api import commands, models as m
 from apps.api.db import transaction
 from packages.contracts import schemas as s
+from packages.contracts.audit import audit_summary
 from .test_bulk import REASON, preview
 from .test_bulk_workspace_undo_composition import snapshot
 from .test_resources_calendars import pool, typ
@@ -64,6 +65,7 @@ def test_draft_session_import_reports_real_findings_is_atomic_idempotent_and_und
     assert typed.batch_id == typed.receipt_id
     assert typed.undoable and not typed.undo_partial
     detail = h.detail(workspace)
+    assert detail['workspace']['undo_edit']['label'] == audit_summary('bulk.apply')
     actual_ids = {shift['id'] for shift in detail['shifts']}
     assert len(actual_ids) == 2 and actual_ids.isdisjoint(trial_ids)
     assert {finding['shift_id'] for finding in typed.warnings} == actual_ids
