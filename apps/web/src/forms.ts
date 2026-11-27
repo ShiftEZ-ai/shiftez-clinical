@@ -970,11 +970,14 @@ export function shiftForm(ctx:Context,data:WorkspaceData,shift?:Row,like?:{shift
         assignNext=people[0];form.requestSubmit();});
     let assignNext='';
     if(shift)queueMicrotask(()=>{if(form.isConnected)sessionTabs(ctx,data,shift,form,person=>{addParticipant({id:'',revision:0,person_id:person,participation:'staff',start:shift.start,end:shift.end});notify('Added to this session. Check the impact below, then save.');});});
-    // A clean save is reported once, by the "Session added/saved" message with Undo; findings get their own warning.
+    // The save message offers Undo. When saving without someone, it also offers the fill panel.
     return async()=>{const next=assignNext;assignNext='';const result=await save();
+      // Saved: the panel holds nothing unsaved while the refresh runs, so the message's Assign (or any other way out)
+      // closes it and goes on at once instead of asking about changes the save already kept.
+      d.clean();
       const name=next&&fullNameOf(ctx.catalogues.people.find(p=>p.id===next)),saved=(result.shifts as Row[]|undefined)?.find(s=>s.id===result.shift_id);
       if(name&&saved&&ctx.fill)notify(shift?'Session saved.':'Session added.','success',undefined,undefined,{label:`Assign ${name} in the fill panel`,run:()=>ctx.fill!(ws.id,saved,name)});
-      if(!result.validation.valid)notify(`Draft saved with ${plural(result.validation.error_count,'mandatory finding')}. Resolve them before review.`,'warning');await ctx.refresh();};
+      await ctx.refresh();};
   },'Save draft session')});
 }
 
