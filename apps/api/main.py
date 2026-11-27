@@ -3913,7 +3913,7 @@ def create_app(settings: Settings | None = None, engine=None):
             require_role(actor, "coordinator")
             return {"imports": [reference_receipt(db, source) for source in db.scalars(
                 select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id,
-                    func.coalesce(m.ReferenceImport.manifest['format'].as_string(), '') != 'rotation_reference')
+                    func.coalesce(m.ReferenceImport.manifest['format'].as_string(), '') != s.ROTATION_REFERENCE_FORMAT)
                 .order_by(m.ReferenceImport.created_at.desc(), m.ReferenceImport.seq.desc()).limit(10))]}
 
     @app.get("/api/staff-imports")

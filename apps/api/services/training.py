@@ -308,7 +308,7 @@ def board(db, actor, start, end, programme_id=None):
     choices = rotation_choices(db, actor)
     S = m.SourceMapping
     reference_conflicts = sorted(set(db.scalars(select(S.target_id).where(S.department_id == dep,
-        S.target_kind == 'rotations', S.target_id.in_({r.id for r in rotations}),
+        S.target_kind == s.ROTATION_REFERENCE_FORMAT, S.target_id.in_({r.id for r in rotations}),
         S.source_key.endswith('/leave-conflict'))))) if rotations else []
     return {"start": start.isoformat(), "end": end.isoformat(), "names": names, "choices": choices,
             "people": [{"id": p.id, "display_name": p.display_name, "short_code": p.short_code, "notes": notes.get(p.id, 0)}
@@ -426,12 +426,12 @@ def reference_rotation_import(db, actor, payload, *, preview=False):
     rows = [_store_rotation(db, actor, row, value.reason) for row in file.rotations]
     created = _finish_rotations(db, actor, rows, value.reason, context)
     source = m.ReferenceImport(department_id=actor.department_id, archive_sha256=digest,
-        source_name=f'Reference rotations {digest}', manifest={'format': 'rotation_reference', 'count': len(rows)})
+        source_name=f'Reference rotations {digest}', manifest={'format': s.ROTATION_REFERENCE_FORMAT, 'count': len(rows)})
     db.add(source)
-    # Retain provenance and the visible conflict at import without keeping the file contents.
+    # Reference provenance is retained evidence, so it does not lock the live row against Undo.
     db.add_all(m.SourceMapping(department_id=actor.department_id, source_name=source.source_name,
         source_key=f'{number}/leave-conflict' if number in conflicts else str(number),
-        target_kind='rotations', target_id=row.id) for number, row in enumerate(rows, 1))
+        target_kind=s.ROTATION_REFERENCE_FORMAT, target_id=row.id) for number, row in enumerate(rows, 1))
     return {**review, 'created': created, 'rotation_scope': [
         {'cohort_id': cohort.id, 'programme_id': cohort.programme_id} for cohort in cohorts]}
 

@@ -7456,6 +7456,7 @@ class ReferenceRotationFile(Schema):
 
 
 REFERENCE_ROTATION_FILE_LIMIT = 500_000
+ROTATION_REFERENCE_FORMAT = 'rotation_reference'
 
 
 class ReferenceRotationImport(Schema):

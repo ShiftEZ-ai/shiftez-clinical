@@ -307,7 +307,7 @@ def test_rotation_create_change_plan_and_request_approval_recheck_leave(h):
 
 
 def test_reference_import_keeps_an_approved_leave_conflict_visible(h, monkeypatch):
-    from apps.api.services import independence
+    from apps.api.services import imports, independence
 
     _, value, _ = resident(h, create=False)
     monkeypatch.setattr(independence, 'today', lambda db, department_id: date(2026, 11, 1))
@@ -337,13 +337,33 @@ def test_reference_import_keeps_an_approved_leave_conflict_visible(h, monkeypatc
     imported = h.command('coordinator', 'rotation.import_reference', payload)
     assert imported['conflicts'] == preview['conflicts']
     rotation = imported['created'][0]
-    board = h.get('coordinator', '/api/rotation-board?start=2026-10-01&end=2026-11-01')
+    board_url = '/api/rotation-board?start=2026-10-01&end=2026-11-01'
+    board = h.get('coordinator', board_url)
     assert board['reference_leave_conflicts'] == [rotation['id']]
-    findings = evaluate(h.snapshot(h.workspace()))['findings']
+    workspace = h.workspace()
+    findings = evaluate(h.snapshot(workspace))['findings']
     assert any(f['code'] == 'ROTATION_LEAVE_NOT_ALLOWED' and f['severity'] == 'error'
                and f['detail']['rotation_id'] == rotation['id'] for f in findings)
     assert h.command('coordinator', 'rotation.import_reference', payload,
                      status=409)['error']['code'] == 'DUPLICATE_IMPORT'
+
+    with transaction(h.app.state.engine) as db:
+        reference = db.scalar(sa.select(m.ReferenceImport).where(m.ReferenceImport.department_id == h.seed['department_id']))
+        reference_id, source_name = reference.id, reference.source_name
+    monkeypatch.setattr(imports, '_IMPORT_MAPPING', {'literals': []})
+    no_duties = h.command('coordinator', 'import.reference_preview',
+        {'reference_import_id': reference_id, 'workspace_id': workspace['id']}, revision=workspace['revision'], status=422)
+    assert no_duties['error']['code'] == 'NO_SOURCE_DUTIES'
+
+    undo = {'items': [{'id': rotation['id'], 'revision': rotation['revision']}], 'reason': REASON}
+    assert h.command('admin', 'rotation.undo_plan', undo)['kept'] == 1
+    assert h.command('coordinator', 'rotation.undo_plan', undo)['removed_ids'] == [rotation['id']]
+    board = h.get('coordinator', board_url)
+    assert not board['rotations'] and not board['reference_leave_conflicts']
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.ReferenceImport, reference_id) is not None
+        mapping = db.scalar(sa.select(m.SourceMapping).where(m.SourceMapping.target_id == rotation['id']))
+        assert mapping.source_name == source_name and mapping.target_kind == s.ROTATION_REFERENCE_FORMAT
 
 
 def test_recheck_and_snapshot_carry_policy_and_shared_findings(h):
