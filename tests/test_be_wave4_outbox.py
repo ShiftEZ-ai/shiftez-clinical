@@ -1,5 +1,6 @@
 """Immediate Undo retracts queued notices; retained and already delivered evidence remains intact."""
 from .clock_support import freeze_clock
+from .governance_support import identity
 from datetime import timedelta
 from types import SimpleNamespace as NS
 
@@ -97,6 +98,7 @@ def test_request_withdrawal_and_pattern_end_retract_the_undelivered_request(h):
 
 def test_approved_leave_withdrawal_reaches_approver_when_submission_is_queued(h, monkeypatch):
     before = freeze_clock(monkeypatch)
+    identity(h, 'staff_two', ['staff'], h.seed['people'][1])
     row = request_row(h)
     approved = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Confirm leave'},
                          row['id'], row['revision'])['record']
