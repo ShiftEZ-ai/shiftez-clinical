@@ -756,6 +756,26 @@ def test_staff_can_withdraw_until_submission_and_undo_restores_previous_state(da
     assert len(facts(h)) == int(approved)
 
 
+@pytest.mark.parametrize('approved', [False, True], ids=['waiting', 'approved'])
+def test_overtime_withdrawal_notice_with_queued_submission(h, approved):
+    offer_rule(h)
+    row = offer(h)['record']
+    if approved:
+        row = decide(h, row)['record']
+    submission = f"request:{row['id']}"
+    withdrawn = decide(h, row, 'withdraw', 'staff')['record']
+    assert withdrawn['status'] == 'withdrawn'
+
+    with transaction(h.app.state.engine) as db:
+        event = db.scalar(select(m.Outbox).where(m.Outbox.event_key == submission))
+        assert event.state == 'superseded' and event.attempts == 0
+
+    process_one(h.app.state.engine)
+    notices = h.get('coordinator', '/api/notifications')['notifications']
+    assert sum(note['title'].endswith('availability for overtime request was withdrawn') for note in notices) == int(approved)
+    assert not any('New availability for overtime request' in note['title'] for note in notices)
+
+
 @pytest.mark.parametrize("role,eligible", [
     ("coordinator", {"overtime"}),
     ("approver", {"leave", "rotation", "outsider"}),

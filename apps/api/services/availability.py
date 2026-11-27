@@ -701,13 +701,17 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     row.decided_at = m.now()
     row.private_undo_note = None
     row.revision += 1
+    submission_key = f"request:{row.id}"
+    withdraw_approved_overtime = overtime and withdraw_approved
+    if withdraw_approved_overtime:
+        supersede_outbox(db, actor, submission_key)
     # A decision undone and made again is a new event (the revision tells them apart).
     outbox(db, actor, f"request-decision:{row.id}" + (f":{row.revision}" if row.revision > 2 else ""), "request",
            {"request_id": row.id, "person_id": row.person_id, "request_status": row.status, "request_kind": row.kind,
             **({'replace_action': row.details['replace_action'],
                 'publication_id': row.details['replace_action']['publication_id']}
                if row.kind == 'absence_report' and row.status == 'approved' else {})},
-           undo_of="request:" + row.id if value.decision == "withdraw" else ())
+           undo_of=submission_key if value.decision == "withdraw" and not withdraw_approved_overtime else ())
     item = absence_report_record(row, actor, db)
     if self_approval is not None:
         item["self_approved"] = True
