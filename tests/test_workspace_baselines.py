@@ -74,12 +74,13 @@ def test_draft_snapshot_overlays_live_catalogue_safety_rule_after_capture(h):
     assert policy["id"] in {row["id"] for row in snapshot["policies"]}
 
 
-def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, monkeypatch):
+@pytest.mark.parametrize("blocked", [False, True], ids=["current-workload-allows", "captured-safety-blocks"])
+def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, monkeypatch, blocked):
     from packages.domain.conditions import active_rules
     from packages.domain.time import aware
     from packages.domain.validation import evaluate, finding_observations
     from tests.clock_support import freeze_clock
-    from .test_rule_catalogue_api import approve, line, propose
+    from .test_rule_catalogue_api import approve, line, person, propose
     from .test_rule_catalogue_v2_api import proposed
 
     freeze_clock(monkeypatch, aware('2026-10-04T00:00:00+03:00'))
@@ -90,12 +91,13 @@ def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, mo
     for day in ('05', '06', '07'):
         rota = h.shift(rota, start=f'2026-10-{day}T08:00:00+03:00', end=f'2026-10-{day}T12:00:00+03:00')['workspace']
     cap = line(numbers={'max': {'value': 1}}, settings={'max_duties': {'window': 'week'}})
-    restriction = line(numbers={'apply': {}}, weekdays=[1], settings={'restriction': {}})
+    restricted = h.seed['people'][0 if blocked else 1]
+    restriction = line(who=person(restricted), numbers={'apply': {}}, weekdays=[1], settings={'restriction': {}})
     catalogue = 'workload_limit'
     old = approve(h, propose(h, catalogue, [cap, restriction], catalogue_version=2)['record'])
     rota = h.refresh_draft_baseline(h.detail(rota)['workspace'])
     revised = {**cap, 'numbers': {'max': {'value': 3}}}
-    live_restriction = {**restriction, 'weekdays': [2]}
+    live_restriction = {**restriction, 'weekdays': [4]}
     new = approve(h, propose(h, catalogue, [revised, live_restriction], catalogue_version=2,
                             policy_id=old['id'], revision=old['revision'])['record'])
 
@@ -105,10 +107,43 @@ def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, mo
     rules = active_rules(review)
     assert [(rule['id'], rule['definition']['rule']['maximum']) for rule in rules if rule['kind'] == 'max_duties'] == [(new['id'], 3)]
     kept = {tuple(rule['definition']['scope']['weekdays']) for rule in rules if rule['kind'] == 'restriction'}
-    assert kept == {(1,), (2,)}
+    assert kept == {(1,), (4,)}
     findings = list(finding_observations(evaluate(review)))
-    assert any(row['code'] == 'RESTRICTION' and row['severity'] == 'error' for row in findings)
+    assert any(row['code'] == 'RESTRICTION' and row['severity'] == 'error' for row in findings) is blocked
     assert not any(row['code'] == 'MAX_DUTIES' for row in findings)
+
+    submitted = h.lifecycle(h.detail(rota)['workspace'], 'submit', status=422 if blocked else 200)
+    if blocked:
+        assert submitted['error']['code'] == 'VALIDATION_FAILED'
+        assert any(row['code'] == 'RESTRICTION' and row['person_id'] == restricted
+                   for row in submitted['error']['details']['findings'])
+    else:
+        assert submitted['workspace']['status'] == 'submitted'
+        approved = h.lifecycle(submitted['workspace'], 'approve', role='approver')
+        assert approved['workspace']['status'] == 'approved'
+
+
+def test_review_keeps_stricter_cover_minimum_and_maximum_from_either_revision(h):
+    from packages.domain.conditions import active_rules
+    from .test_rule_catalogue_api import approve, line, propose
+
+    catalogue = 'people_per_session'
+    original = line(numbers={'min': {'value': 1}, 'max': {'value': 2},
+                             'target': {'value': 2, 'level': 'medium'}})
+    old = approve(h, propose(h, catalogue, [original])['record'])
+    rota = h.shift(h.workspace('Mixed cover numbers'))['workspace']
+    current = {**original, 'numbers': {'min': {'value': 2}, 'max': {'value': 4},
+                                      'target': {'value': 3, 'level': 'medium'}}}
+    approve(h, propose(h, catalogue, [current], policy_id=old['id'], revision=old['revision'])['record'])
+
+    with transaction(h.app.state.engine) as db:
+        review = domain_snapshot(db, db.get(m.Workspace, rota['id']), current_mandatory=True)
+    rules = [p['definition'] for p in active_rules(review)]
+    assert max(d['rule']['minimum'] for d in rules if d['rule']['kind'] == 'minimum_cover'
+               and d['severity'] == 'mandatory') == 2
+    assert min(d['rule']['maximum'] for d in rules if d['rule']['kind'] == 'maximum_participants') == 2
+    assert [d['rule']['minimum'] for d in rules if d['rule']['kind'] == 'minimum_cover'
+            and d['severity'] == 'advisory'] == [3]
 
 
 def test_safety_catalogue_conversion_binds_once_before_and_after_draft_capture(h):

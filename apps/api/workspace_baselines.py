@@ -269,7 +269,7 @@ def _captured_safety_numbers(policy):
         return policy
     projected = []
     for index, line in enumerate(rule.get("lines") or ()):
-        numbers = line["numbers"]
+        numbers = line.get("numbers") or {}
         kept = {}
         for key, number in numbers.items():
             slot = slot_for_number(entry, key, rule, line, numbers)
@@ -277,6 +277,11 @@ def _captured_safety_numbers(policy):
                 kept[key] = number
         if kept:
             projected.append((index, _with_catalogue_numbers(line, kept)))
+    if not projected:
+        return None
+    if len(projected) == len(rule["lines"]) and all(
+            line["numbers"] == rule["lines"][index]["numbers"] for index, line in projected):
+        return policy
     return {**policy, "definition": {**definition, "rule": {**rule, "lines": _indexed_catalogue_lines(projected)}}}
 
 
@@ -736,18 +741,20 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
                 if changed.intersection(p["definition"].get("merged_ids") or ())
                 or p["definition"].get("replaces_id") in changed})
         retained = []
-        current_by_id = {policy["id"]: policy for policy in current_policies}
+        current_by_id = {policy["id"]: policy for policy in active_current_policies}
         for policy in frozen_policies:
             ident = policy["id"]
             if s.safety_rule(policy["definition"]):
-                current_version = current_by_id.get(ident, policy)
-                if (policy["kind"] == "catalogue" and (current_version["status"] == "retired"
-                        or current_version.get("revision") != policy.get("revision"))):
+                current_version = current_by_id.get(ident)
+                if (policy["kind"] == "catalogue" and policy["status"] == "active" and policy.get("active", True)
+                        and (current_version is None or current_version["revision"] != policy["revision"])):
                     projected = _captured_safety_numbers(policy)
-                    if not projected["definition"]["rule"]["lines"]:
+                    if projected is None:
                         continue
-                    if projected["definition"]["rule"]["lines"] != policy["definition"]["rule"]["lines"]:
-                        policy = _distinct_live_policy(projected)
+                    # The current policy still supplies every live number. Keep an edited same-id
+                    # projection distinct so downstream maps preserve both safety obligations.
+                    if projected is not policy:
+                        policy = _distinct_live_policy(projected) if current_version is not None else projected
                 retained.append(policy)
             elif ident in live:
                 retained.append(live.pop(ident))
