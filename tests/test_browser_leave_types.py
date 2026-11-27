@@ -157,7 +157,7 @@ def test_coordinator_records_leave_with_a_type_and_the_timeline_shows_it(browser
         navigate(page, 'requests')
         whole_list(page)  # the whole list, not the decider's Waiting for you
         dialog = new_request(page, 'Leave or absence')
-        pick(dialog, 'People', ['Alex Morgan'])
+        pick(dialog, 'People', ['Staff 01(test)'])
         kind = dialog.get_by_label('Record as', exact=True)
         typ = dialog.get_by_label('Type', exact=True)
         expect(typ).to_be_visible()
@@ -186,10 +186,68 @@ def test_coordinator_records_leave_with_a_type_and_the_timeline_shows_it(browser
         context, page = sign_in(browser, live_server, 'coordinator')
         try:
             navigate(page, 'schedule/people/2026-10-04?edit=none')
-            alex_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Alex Morgan'))
-            jordan_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Jordan Lee'))
+            alex_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Staff 01(test)'))
+            jordan_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Staff 02(test)'))
             expect(alex_row.locator(f'.pg-cell.leave[data-tip="{blocking}"]')).to_have_count(1)
             expect(jordan_row.locator(f'.pg-cell.leave-soft[data-tip="{soft}"]')).to_have_count(1)
             expect(jordan_row.locator('.pg-cell.leave')).to_have_count(0)  # never shown as blocking
         finally:
             context.close()
+
+
+def test_admin_edits_and_undoes_leave_allowances(browser, live_server, h):
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        open_config(page, 'Leave types')
+        page.get_by_role('button', name='Leave allowances', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Leave allowances')
+        dialog.get_by_role('button', name='Add allowance', exact=True).click()
+        dialog.get_by_label('Leave type', exact=True).select_option(label='Annual')
+        dialog.get_by_label('Calendar days per year', exact=True).fill('15')
+        dialog.get_by_label('Reason', exact=True).fill('Set annual allowance')
+        save_dialog(dialog, 'Save allowances')
+        saved = h.get('admin', '/api/leave-balance-settings')['configuration']
+        assert saved['allowances'] == [{'leave_type_id': selected(h)['id'], 'days': 15,
+                                        'person_id': None, 'starts_on': None}]
+        page.locator('.toast', has_text='Leave allowances saved').get_by_role('button', name='Undo', exact=True).click()
+        expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
+        assert h.get('admin', '/api/leave-balance-settings')['configuration']['allowances'] == []
+    finally:
+        context.close()
+
+
+def test_admin_adds_a_dated_department_allowance(browser, live_server, h):
+    from .test_leave_balances import configure as configure_allowances
+
+    configure_allowances(h, 15)
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        open_config(page, 'Leave types')
+        page.get_by_role('button', name='Leave allowances', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Leave allowances')
+        prior = dialog.get_by_role('group', name='Allowance for closed leave years', exact=True)
+        expect(prior.get_by_label('Calendar days per year', exact=True)).to_be_disabled()
+        dialog.get_by_role('button', name='Add allowance', exact=True).click()
+        entry = dialog.get_by_role('group', name='Allowance', exact=True)
+        entry.get_by_label('Leave type', exact=True).select_option(label='Annual')
+        entry.get_by_label('Calendar days per year', exact=True).fill('20')
+        start = entry.get_by_label('First leave year starting on or after', exact=True)
+        expect(start).to_have_attribute('required', '')
+        start.fill('1 Jan 2027')
+        dialog.get_by_label('Reason', exact=True).fill('Set annual allowances')
+        save_dialog(dialog, 'Save allowances')
+        expect(page.locator('.toast', has_text='Leave allowances saved')).to_be_visible()
+        saved = h.get('admin', '/api/leave-balance-settings')['configuration']['allowances']
+        assert [(line['person_id'], line['starts_on'], line['days']) for line in saved] == [
+            (None, None, 15), (None, '2027-01-01', 20),
+        ]
+    finally:
+        context.close()
+
+    context, page = sign_in(browser, live_server, 'auditor')
+    try:
+        navigate(page, 'system/audit')
+        expect(page.get_by_text(re.compile(r'Annual from .*2027 · 15 calendar days → 20 calendar days'))).to_be_visible()
+        expect(page.get_by_text('Annual · No allowance → 15 calendar days', exact=True)).to_be_visible()
+    finally:
+        context.close()

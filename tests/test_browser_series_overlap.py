@@ -80,7 +80,7 @@ def test_double_booking_journey_warns_live_saves_with_acknowledgement_marks_both
         marks = page.locator('.clash-mark')
         expect(marks).to_have_count(2, timeout=15000)
         expect(marks.first).to_have_text('Double-booked')
-        expect(marks.first).to_have_attribute('data-tip', re.compile(f'{person} is already in '))
+        expect(marks.first).to_have_attribute('data-tip', re.compile(f'{re.escape(person)} is already in '))
         shot(page, f'series-overlap-schedule-{scheme}')
 
         # The rota check names both sessions and offers the same cancel actions.

@@ -549,7 +549,9 @@ def test_recipient_directory_never_names_a_private_return_duty(h):
         'private_reason': 'Private absence explanation'})
     options = h.get('staff', '/api/swaps/options?assignment_id=' + shifts[0]['participants'][0]['id'])
     recipient = next(r for r in options['recipients'] if r['id'] == h.seed['people'][1])
-    assert not recipient['eligible'] and 'UNAVAILABLE' in {f['code'] for f in recipient['findings']}
+    # A staff reader reads the neutral finding (issue 1659); the code that names absence stays out of the answer.
+    assert not recipient['eligible'] and 'COLLEAGUE_NOT_FREE' in {f['code'] for f in recipient['findings']}
+    assert 'UNAVAILABLE' not in str(options)
     assert 'PRIVATE RETURN LABEL' not in str(options) and 'Private absence explanation' not in str(options)
     assert '05 Oct' not in recipient['message']
 

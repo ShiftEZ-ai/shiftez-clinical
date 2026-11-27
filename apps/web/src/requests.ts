@@ -13,7 +13,7 @@ import {dataTable,openFiltered,tableFilters,tableFiltered,tableAsOf,tableSearch,
 import {dockPanel,rowMark,type Dock,type PanelPosition} from './side_panel.js';
 import {editRoles,type BulkAction} from './bulk.js';
 import {runBulk,openChange} from './bulk_change.js';
-import {availabilityFields,availabilityEditForm,calendarProtectionPanel,peopleChoices,catalogueEntryOf,type Context} from './forms.js';
+import {availabilityFields,availabilityEditForm,calendarProtectionPanel,peopleChoices,catalogueEntryOf,REQUEST_FORM_KINDS,type Context} from './forms.js';
 import {daysText,numbersText,numberLabel,noNumberText,amountWords} from './rule_catalogue.js';
 import {wishData,wishFields,wishesPanel,periodName,oneOffWish,wishKindLabel,wishWhenParts} from './wishes.js';
 import {swapActions,swapNext,swapOptions,offerFields} from './governance.js';
@@ -24,6 +24,7 @@ import {REQUEST_SORT_FIELDS,MAX_REQUEST_DECISIONS,ABSENCE_REPORT_LABEL,type REQU
 import {ruleReview} from './rule_review.js';
 import {levelWords} from './rule_view.js';
 import {leaveTypeName} from './findings.js';
+import {approveWithBalance,loadLeaveBalances} from './leave_balances.js';
 import type {Row} from './types.js';
 import {mayDecide} from './independence.js';
 import {absenceWords} from './published_changes_api.js';
@@ -180,6 +181,7 @@ export async function requestsPage(ctx:Context,target:HTMLElement,hooks:RequestH
   // A phone: the primary is one icon in the title row (as on Home), not a row of its own.
   if(!person)target.append(sectionHead('Requests','',!kinds.length?null:phoneQuery.matches?iconButton(TERMS.newRequest,'plus',()=>open(),{class:'primary phone-primary'})
     :withIcon(button(TERMS.newRequest,()=>open(),'primary'),'plus')));
+  if(!person&&!scope&&me.person_id)target.append(loadLeaveBalances('/api/my-leave-balances'));
   const wishes=!person&&page.wishes?wishControls(ctx,page.wishes):null;
   const list=el('div',{class:'requests'});
   target.append(person?list:el('section',{class:'panel'},list));
@@ -593,15 +595,19 @@ function impactWords(r:Row,own=false){
   if(own&&ownDuty(r))return ownDuty(r);
   const drafts=draftDuties(r);if(!n&&!drafts)return r.stage!=='waiting'?'':r.schedule_impact?'No duty affected':'No published duty affected';
   const days=[...new Set((r.impact as Row[]).map(i=>i.day))],list=days.slice(0,2).map(shortDay).join(', ')+(days.length>2?' '+moreWords(days.length-2):'');
-  const rotas=[...new Set(((r.schedule_impact.duties||[]) as Row[]).filter(d=>!d.publication_id&&d.rota_name).map(d=>String(d.rota_name)))];
+  const duties=(r.schedule_impact?.duties||[]) as Row[];
+  const rotaNames=(published:boolean)=>[...new Set(duties.filter(d=>Boolean(d.publication_id)===published&&d.rota_name).map(d=>String(d.rota_name)))].join(', ');
+  const publishedRotas=n?rotaNames(true):'',published=statusLabel('published');
   return [n?(r.stage==='waiting'?`Approving opens ${plural(n,'place')} · ${list}`:`${plural(n,'place')} to cover · ${list}`):'',
-    drafts?`${plural(drafts,'duty','duties')} in ${rotas.length?rotas.join(', '):'a rota being planned'} (not yet published)`:''].filter(Boolean).join(' · ');
+    n?(publishedRotas?`${publishedRotas} (${published})`:published):'',
+    drafts?`${plural(drafts,'duty','duties')} in ${rotaNames(false)||'a rota being planned'} (not yet published)`:''].filter(Boolean).join(' · ');
 }
 /** Every rota duty it overlaps, published or still being planned (staff see only their published ones). */
 function scheduleWords(s:Row){
   if(!s.count)return 'No duty affected';
   return `Affects ${plural(s.count,'duty','duties')} · `+(s.draft_count?`${s.published_count} published, ${s.draft_count} not yet published`:'published');
 }
+const publishedCover=(r:Row)=>r.source==='request'&&r.impact_count?'Approving records the absence. The coordinator arranges cover for its published duties.':'';
 /** Why a request is where it is (the status tip and the side panel). */
 function stageDetail(r:Row,ctx?:Context){
   if(r.source==='swap')return swapNext(r,ctx);
@@ -636,7 +642,7 @@ const ownDecision=(ctx:Context,r:Row)=>ownRequest(ctx,r)||(!!ctx.me.person_id&&r
 function decidable(r:Row){
   return r.can_decide===true&&(r.source==='scheduling_fact'||r.stage==='waiting');
 }
-const decide=(r:Row,approve:boolean,reason:string)=>r.source==='request'?command('request.decide',{decision:approve?'approve':'reject',reason},r.id,r.revision)
+const decide=(r:Row,approve:boolean,reason:string,balance_confirmation?:string)=>r.source==='request'?command('request.decide',{decision:approve?'approve':'reject',reason,balance_confirmation},r.id,r.revision)
   :command('availability_pattern.decide',{decision:approve?'approve':'decline',reason},r.id,r.revision);
 /** Recorded leave and availability (coordinators): the universal Change… (retype, re-date, retract) for the records
  *  selected, previewed and applied as one change with one Undo. Operator bulk is desktop only. */
@@ -658,9 +664,9 @@ function bulkDecide(ctx:Context,rows:Row[]):BulkAction[]{
       // as a single Approve does.
       if(!approve){declineMany(ctx,open,done);return;}
       confirmAction(`Approve ${plural(open.length,'request')}`,'Each person is told.',
-        reason=>holdUndo(async()=>{const reply=await command<{records:Row[]}>('request.decide_many',{
-          items:open.map(r=>({id:r.id,expected_revision:r.revision,source:r.source})),decision:'approve',reason});
-          done();notify(`${reply.records.length} requests approved.`);await ctx.refresh();}),'Approve all',undefined,true,false,'Reason',true);}}));
+        reason=>approveWithBalance(undefined,confirmations=>holdUndo(()=>command<{records:Row[]}>('request.decide_many',{
+          items:open.map(r=>({id:r.id,expected_revision:r.revision,source:r.source,balance_confirmation:confirmations.get(r.id)})),decision:'approve',reason})),
+          async reply=>{done();notify(`${reply.records.length} requests approved.`);await ctx.refresh();}),'Approve all',undefined,true,false,'Reason',true);}}));
 }
 /** Decline several: the required reason, what it does to the schedule, and the armed confirm; a dialog on a desktop and
  *  a bottom sheet on a phone. */
@@ -691,10 +697,10 @@ function actions(ctx:Context,r:Row,hooks:RequestHooks):{buttons:HTMLElement[];me
         async reason=>{await command(`${family}.decline`,{reason},r.id,r.revision);notify('Declined.');void ctx.refresh();},'Decline'),'ghost small'));
   }else if(decidable(r)){
     // A decision's dialog closes once it is saved; the list reloads behind it (LIVE-57), never under a "Saving…" dialog.
-    const self=ownDecision(ctx,r);
+    const self=ownDecision(ctx,r),cover=publishedCover(r);
     const words=r.source==='pattern'?'counts as unavailable at these times in every rota check':isOvertime(r)?'may be offered overtime on these days, within the department’s limits':impactWords(r)||'is told';
-    buttons.push(button('Approve',()=>confirmAction(`Approve ${kindTitle(r).toLowerCase()}`,`${who} · ${when(r,ctx.me.organisation.timezone)}. ${words[0].toUpperCase()+words.slice(1)}.${r.source==='request'&&r.impact_count?' Approving records the absence; the coordinator arranges cover for its published duties.':''}${r.source==='request'&&draftDuties(r)?' On rotas being planned, each overlapping duty shows as a conflict to replace.':''}`,
-      async reason=>{await decide(r,true,reason);notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();},'Approve',self?selfApprovedBadge():undefined,!self,false,'Reason',true),'secondary small'),
+    buttons.push(button('Approve',()=>confirmAction(`Approve ${kindTitle(r).toLowerCase()}`,`${who} · ${when(r,ctx.me.organisation.timezone)}. ${words[0].toUpperCase()+words.slice(1)}.${cover?' '+cover:''}${r.source==='request'&&draftDuties(r)?' On rotas being planned, each overlapping duty shows as a conflict to replace.':''}`,
+      reason=>approveWithBalance(r.id,confirmations=>decide(r,true,reason,confirmations.get(r.id)),()=>{notify(r.source==='pattern'?'Weekly availability approved.':`Approved · ${who} is told.`);void ctx.refresh();}),'Approve',self?selfApprovedBadge():undefined,!self,false,'Reason',true),'secondary small'),
       button('Decline',()=>confirmAction(`Decline ${kindTitle(r).toLowerCase()}`,'Say why, so they can plan around it.',async reason=>{await decide(r,false,reason);notify(r.source==='pattern'?'Weekly availability declined.':`Declined · ${who} is told.`);void ctx.refresh();},'Decline',self?selfApprovedBadge():undefined),'ghost small'));
   }
   // An approved (or later retired) calendar protection is managed (Retire, Undo, Restore) in its own panel, reached from its
@@ -709,8 +715,11 @@ function actions(ctx:Context,r:Row,hooks:RequestHooks):{buttons:HTMLElement[];me
     menu.push({label:'Withdraw wish',icon:'close',danger:true,run:async()=>{await command('wish.withdraw',{reason:'Withdrawn'},r.id,r.revision);notify('Wish withdrawn. Its points are free again.');await ctx.refresh();}});
   }
   // Their own "Can't make it" waiting for cover: Withdraw is one press on the row (the coordinator is told), with Undo.
+  if(r.source==='request'&&r.stage==='waiting'&&r.created_by===ctx.me.identity_id&&REQUEST_FORM_KINDS.some(kind=>kind.value===r.kind))
+    buttons.push(button('Change request',()=>formDialog('Change request','',form=>availabilityFields(ctx,form,true,{edit:r}),'Save changes'),'ghost small'));
   if(isAbsenceReport(r)&&r.stage==='waiting'&&mine(ctx,r))buttons.push(withdrawReport(r,()=>void ctx.refresh()));
-  else if(r.source==='request'&&(r.stage==='waiting'||isOvertime(r)&&r.stage==='approved')&&r.created_by===ctx.me.identity_id)menu.push({label:isOvertime(r)?'Withdraw offer':'Withdraw request',icon:'close',danger:true,run:()=>confirmAction(isOvertime(r)?'Withdraw offer':'Withdraw request',`${title(r)} · ${when(r,ctx.me.organisation.timezone)}. ${isOvertime(r)?`${r.person_id===ctx.me.person_id?'You':r.person_name||'They'} will no longer be offered overtime on these days.`:'It will no longer wait for a decision.'}`,
+  else if(r.source==='request'&&(r.stage==='waiting'||r.stage==='approved'&&(isOvertime(r)||r.can_withdraw_approved_leave===true))
+      &&(r.created_by===ctx.me.identity_id||ownRequest(ctx,r)))menu.push({label:isOvertime(r)?'Withdraw offer':'Withdraw request',icon:'close',danger:true,run:()=>confirmAction(isOvertime(r)?'Withdraw offer':'Withdraw request',`${title(r)} · ${when(r,ctx.me.organisation.timezone)}. ${isOvertime(r)?`${r.person_id===ctx.me.person_id?'You':r.person_name||'They'} will no longer be offered overtime on these days.`:r.stage==='approved'?'The approved leave is withdrawn.':'It will no longer wait for a decision.'}`,
     async reason=>{await command('request.decide',{decision:'withdraw',reason},r.id,r.revision);notify(isOvertime(r)?'Offer withdrawn.':'Request withdrawn.');await ctx.refresh();},isOvertime(r)?'Withdraw offer':'Withdraw request',undefined,true)});
   if(r.source==='request'&&r.stage==='approved'&&coordinator&&!isOvertime(r))menu.push({label:r.workspace_id?'Change rota link':'Link rota',icon:'calendar',run:()=>linkRota(ctx,r)});
   // A rare correction: in the menu, not a button on every row.
@@ -779,7 +788,7 @@ function requestPeople(ctx:Context,r:Row,labelled=false):Node|string{
   const people=r.source==='swap'?[[r.proposer_person_id,r.proposer_name],[r.recipient_person_id,r.recipient_name]].filter(([id])=>id):[[r.person_id,r.person_name]];
   return el('span',{},...people.flatMap(([id,name],i)=>[...(i?[' · ']:[]),id?personLink(id,labelled&&name?personName(id,name):name||'Person',ctx.navigate):name||'—']));
 }
-const EVENTS:Record<string,string>={'request.link_rota':'Rota linked','request.create':'Submitted','request.withdraw':'Withdrawn','wish.create':'Added',
+const EVENTS:Record<string,string>={'request.link_rota':'Rota linked','request.create':'Submitted','request.edit':'Changed','request.undo_edit':'Change undone','request.withdraw':'Withdrawn','wish.create':'Added',
   'availability.record':'Recorded','availability.update':'Changed','availability.restore':'Restored','availability.undo_create':'Removed','availability_pattern.propose':'Proposed','availability_pattern.restore':'Restored','availability.retract':'Retracted','availability_pattern.end':'Ended','wish.update':'Changed','wish.withdraw':'Withdrawn','wish.restore':'Restored',
   'swap.offered':'Offered','swap.accept':'Accepted','swap.counteroffer':'Offered a duty in return','swap.confirm':'Confirmed','swap.prepare':'Rota change prepared',
   'swap.prepare_refused':'Not prepared automatically · needs a coordinator','swap.publish_refused':'Not published automatically · needs a coordinator','swap.published':'Published',
@@ -824,16 +833,22 @@ function fillPanel(ctx:Context,id:string,hooks:RequestHooks,setQuery:(change:(q:
     const why=decidable(r)&&r.source!=='scheduling_fact'?'':stageDetail(r,ctx);
     // schedule_impact (published and draft duties) when the server sends it; otherwise the publication-only impact.
     const s:Row|undefined=r.schedule_impact,duties:Row[]=s?s.duties:r.impact||[],impact:number|undefined=s?s.count:r.impact_count;
+    const balance=r.source==='request'&&r.kind==='leave'&&(own||r.can_decide===true)
+      ?loadLeaveBalances(`/api/requests/${encodeURIComponent(r.id)}/leave-balances`,r.stage==='waiting'):null;
+    const cover=decidable(r)?publishedCover(r):'';
     d.body.replaceChildren(
       el('div',{class:'request-status'},statusBadge(r.stage,requestStageWord(r,ctx)),r.self_approved?selfApprovedBadge():null,why?el('span',{class:'muted'},why):null),
       el('dl',{class:'request-facts'},...facts.flatMap(([k,v])=>[el('dt',{},k),el('dd',/^(Details|Reason|Decision)/.test(k)?{'data-private':''}:{},v)])),
+      ...(balance?[balance]:[]),
       ...(impact!==undefined?[el('section',{class:'request-section'},el('h3',{},'Schedule'),el('p',{},own&&ownDuty(r)?ownDuty(r):s?scheduleWords(s):impactWords(r,own)),
         duties.length?el('ul',{class:'request-impact-list'},...duties.map(i=>el('li',{},el('span',{},[shortDay(i.day),i.start?`${formatTime(i.start,zone)}–${formatTime(i.end,zone)}`:'',i.type,i.rota_name].filter(Boolean).join(' · '),
-            i.status?statusBadge(i.status):null),
+            i.publication_id||i.status?statusBadge(i.publication_id?'published':i.status):null),
           button('Show in Schedule',()=>{d.close();hooks.showDay(i.day,r.person_id);},'ghost small',{'aria-label':`Show ${shortDay(i.day)} in Schedule`})))):null,
-        impact>duties.length?el('p',{class:'muted'},`and ${impact-duties.length} more`):null)]:[]),
+        impact>duties.length?el('p',{class:'muted'},`and ${impact-duties.length} more`):null,
+        cover?el('p',{},cover):null)]:[]),
       el('section',{class:'request-section'},el('h3',{},'History'),el('ol',{class:'request-history'},...data.history.filter(e=>!(e.action==='created'&&data.history.some(x=>x!==e&&eventWord(r,x.action)===eventWord(r,'created')))).map(e=>el('li',{},
-        el('span',{class:'request-history-what'},el('strong',{},eventWord(r,e.action,data.history.some(x=>x.action.endsWith('.undo')))),e.actor?` · ${e.actor}`:'',e.self_approved?selfApprovedBadge():''),
+        el('span',{class:'request-history-what'},el('strong',{},eventWord(r,e.action,data.history.some(x=>x.action.endsWith('.undo')))),e.actor?` · ${e.actor}`:'',e.self_approved?selfApprovedBadge():'',
+          e.leave_balance_overdrawn?badge('Approved below zero','warn'):null),
         // An undo's reason is the generic "Undo": "Decision undone" says it all.
         el('small',{class:'muted'},`${formatDate(e.at,zone)} ${formatTime(e.at,zone)}`),e.reason&&!(e.action.endsWith('.undo')&&/^Undo\b/.test(e.reason))?el('p',{class:'request-history-why'},e.reason):null)))),
       ...(buttons.length||menu.length?[el('div',{class:'request-actions request-foot'},...buttons,...menu.filter(a=>a.label!=='Show in Schedule').map(a=>{

@@ -144,19 +144,19 @@ def test_a_blocked_run_shows_each_conflict_as_a_card_with_who_which_session_and_
         kind = found.get_by_role('list', name=re.compile(rf"^{re.escape(rule['name'])} \(\d+\)$"))
         expect(kind.locator(':scope > .issue-card')).to_have_count(5)  # the first five of seven
         card = kind.locator(':scope > .issue-card').first
-        expect(card).to_contain_text('Alex Morgan')
+        expect(card).to_contain_text('Staff 01(test)')
         expect(card).to_contain_text(re.compile(r'Clinical review session · .+ · \w{3} \d+ Oct 2026 · \d\d:\d\d–\d\d:\d\d'))
-        expect(card).to_contain_text(f"Alex Morgan: {rule['name']}")  # what is wrong: the rule it breaks
+        expect(card).to_contain_text(f"Staff 01(test): {rule['name']}")  # what is wrong: the rule it breaks
         expect(card).to_contain_text('Mandatory rule')
         # The one issue list (UIUX-AUDIT C1): a card carries the D78 shape (triangle for must fix), never a colour-only dot.
         expect(card.locator('.iss-glyph.error')).to_have_count(1)
         expect(found.locator('.issue-dot')).to_have_count(0)
         for name in ('Show on schedule', 'Details'):
             expect(card.get_by_role('button', name=name, exact=True)).to_be_visible()
-        expect(card.get_by_role('button', name='Pick someone else instead of Alex Morgan', exact=True)).to_be_visible()
+        expect(card.get_by_role('button', name='Pick someone else instead of Staff 01(test)', exact=True)).to_be_visible()
         found.get_by_role('button', name=re.compile(r'^Show all \d+$')).click()
         assert kind.locator(':scope > .issue-card').count() > 5
-        card.get_by_role('button', name='Remove Alex Morgan from this session', exact=True).click()
+        card.get_by_role('button', name='Remove Staff 01(test) from this session', exact=True).click()
         expect(page.locator('.toast').last.get_by_role('button', name='Undo')).to_be_visible()
     finally:
         context.close()

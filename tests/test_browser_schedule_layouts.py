@@ -35,9 +35,12 @@ def test_month_is_the_week_grid_in_bands_with_more(browser, live_server, h):
         expect(grid).to_be_visible()
         assert grid.locator(".mo-wk").count() >= 5  # one band per week of October
         expect(grid.locator(".wk-day.mo-out").first).to_be_visible()  # September or November fills the first or last band
+        assert grid.locator(".wk-day.mo-out").first.evaluate("n=>getComputedStyle(n).opacity") == "1"  # a muted token, never a fade (WCAG 2.2 SC 1.4.3)
         cell = grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · "))
         # Comfortable shows two people, then "+3", which lists the whole lane for that day.
         expect(cell.locator(".pchip:not(.more)")).to_have_count(2)
+        tops = cell.evaluate("c=>[...c.children].filter(n=>n.matches('.pchip,.team-box,.wk-open-row')).map(n=>n.getBoundingClientRect().top)")
+        assert len(tops) >= 2 and all(round(b - a, 1) >= 24 for a, b in zip(tops, tops[1:])), tops  # WCAG 2.2 SC 2.5.8 spacing: 20 px pills at a 24 px pitch
         more = cell.get_by_role("button", name=re.compile(r"^3 more entries on 4 Oct 2026, .+: show all$"))
         expect(more).to_have_text("+3")  # +N everywhere, never "+N more" (DESIGN D8, 1aeb88039); its name says the rest
         more.click()
@@ -82,7 +85,7 @@ def test_month_lanes_name_each_clinic_in_full_and_people_by_short_name(browser, 
             label = head.locator(".clamp-2")
             expect(label).to_have_attribute("title", name)
             assert label.evaluate("n => n.scrollHeight <= n.clientHeight + 1"), name  # the whole name fits its two lines
-        expect(grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · ")).first.locator(".pchip").first).to_contain_text("A. Morgan")
+        expect(grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · ")).first.locator(".pchip").first).to_contain_text("S. 01(test)")
     finally:
         context.close()
 

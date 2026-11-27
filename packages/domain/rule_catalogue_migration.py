@@ -181,8 +181,29 @@ def lines_of(p, *, validate=True):
     return entry['id'], out
 
 
-def catalogue_row(entry_id, rules, lines, previous=None, department_id=None, row_id='00000000-0000-4000-9000-000000000000'):
+def catalogue_row(entry_id, members, previous=None, department_id=None, row_id='00000000-0000-4000-9000-000000000000'):
     """The proposed catalogue rule (a policy input and, for the proof, the row it becomes)."""
+    rules = [policy for policy, _ in members]
+    previous_rule = previous['definition']['rule'] if previous else {}
+    lines = list(previous_rule.get('lines') or ())
+    limit = {'duties_per_week': 'max_duties', 'hours_per_week': 'max_hours'}.get(entry_id)
+    kinds = {policy['definition']['rule']['kind'] for policy in rules}
+    if limit and lines:
+        entry = CATALOGUE_BY_ID[entry_id]
+        kinds.update(slot_for_number(entry, key, previous_rule, line, line['numbers'])['kind']
+                     for line in lines for key in line['numbers'])
+    separate = limit and {limit, 'block_quota'} <= kinds
+    for order, (policy, projected) in enumerate(members):
+        kind = policy['definition']['rule']['kind']
+        if not separate:
+            lines.extend(projected)
+            continue
+        # Independent primitive rules retain their own precedence when they share a weekly entry.
+        lines.extend({**line, 'source_bindings': {key: {
+            'policy_id': policy['id'], 'revision': policy.get('revision', 1), 'line_id': line['id'],
+            'number_key': key, 'slot': key, 'primitive_kind': kind,
+            'precedence_partition': policy['id'], 'source_order': order,
+        } for key in line['numbers']}} for line in projected)
     starts = min([str(p['starts_on']) for p in rules] + ([str(previous['starts_on'])] if previous else []))
     definition = {'rule': {'kind': 'catalogue', 'id': entry_id, 'on': True, 'settings': {}, 'lines': lines},
                   'exception_allowed': all(p['definition'].get('exception_allowed') for p in rules),
@@ -274,9 +295,7 @@ def _plan(policies, held, week_start, department_id, in_force):
         report += kept
         if members:
             rules = [p for p, _ in members]
-            lines = [line for previous in [catalogue.get(entry_id)] if previous for line in previous['definition']['rule']['lines']]
-            lines += [line for _, ls in members for line in ls]
-            payload, row = catalogue_row(entry_id, rules, lines, catalogue.get(entry_id), department_id, row_id)
+            payload, row = catalogue_row(entry_id, members, catalogue.get(entry_id), department_id, row_id)
             proposals.append({'catalogue_id': entry_id, 'rule_ids': [p['id'] for p in rules], 'payload': payload, 'row': row,
                               'replaces_id': catalogue[entry_id]['id'] if entry_id in catalogue else None})
     return proposals, sorted(report, key=lambda r: (r['name'], r['rule_id']))
@@ -291,11 +310,10 @@ def _resolved(entry_id, members, previous, department_id, row_id, week_start):
     """The rules of one entry that read exactly the same as lines of one catalogue rule (and the others, reported)."""
     report, alone = [], {}
     while members:
-        rules = [p for p, _ in members]
         lines = ([line for line in previous['definition']['rule']['lines']] if previous else []) + [line for _, ls in members for line in ls]
         origin = {line['id']: p for p, ls in members for line in ls}
         try:
-            payload, row = catalogue_row(entry_id, rules, lines, previous, department_id, row_id)
+            payload, row = catalogue_row(entry_id, members, previous, department_id, row_id)
             copies = active_rules([row])
         except (ValueError, KeyError) as error:  # one rule's lines are not valid catalogue lines: find it alone
             # Each rule is checked alone once (not once per rule removed: that was quadratic at department scale).
@@ -362,7 +380,7 @@ def _source(line, origin, previous):
 
 def _valid_alone(entry_id, p, lines, department_id, row_id):
     try:
-        active_rules([catalogue_row(entry_id, [p], lines, None, department_id, row_id)[1]])
+        active_rules([catalogue_row(entry_id, [(p, lines)], None, department_id, row_id)[1]])
         return True
     except (ValueError, KeyError):
         return False
@@ -933,13 +951,16 @@ def plan_v2(policies, held=None, week_start=0, department_id=None, *, tag_ids=()
                 source_line_id = line['id']
                 original_entry = catalogue_entry(entry_id, version)
                 pins = {}
+                prior_pins = (line.get('source_bindings') or {}) if version == 1 else {}
                 selected_fields = {}
                 for key in line['numbers']:
                     slot = slot_for_number(original_entry, key, old_rule, line, list(line['numbers']))
                     selected_fields.setdefault(slot['kind'], set()).add(slot['field'])
                     pins[key] = {'policy_id': p['id'], 'revision': p.get('revision', 1), 'line_id': source_line_id,
                                  'line_index': n if n >= 0 else None, 'number_key': key, 'slot': key,
-                                 'primitive_kind': slot['kind'], 'precedence_partition': p['id'], 'source_order': order,
+                                 'primitive_kind': slot['kind'],
+                                 'precedence_partition': prior_pins.get(key, {}).get('precedence_partition', p['id']),
+                                 'source_order': order,
                                  'exception_allowed': bool(d.get('exception_allowed')), 'catalogue_id': entry_id, 'catalogue_version': version}
                 line['source_bindings'] = pins
                 line['id'] = _derived('v2-line', p['id'], source_line_id)

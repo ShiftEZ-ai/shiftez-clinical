@@ -17,8 +17,9 @@ from packages.domain.rule_catalogue_migration import held_reasons, id_map, plan
 from packages.domain.rule_groups import expanded
 from packages.domain.rule_lines import duplicates, outranking
 from packages.domain.validation import evaluate
-from .test_rule_catalogue_guard import world
-from .test_rule_simplification import LABELS, PERSON, PROGRAMME, SERVICE, WEEK_START, production_families, quota, rule
+from .test_rule_catalogue_guard import legacy_rules, world
+from .test_rule_simplification import (LABELS, PERSON, PROGRAMME, SERVICE, WEEK_START, configure_baseline_rehearsal,
+                                      production_families, quota, rule)
 from .test_rule_templates import activate
 
 
@@ -320,7 +321,7 @@ def test_migration_through_governance_checks_the_same_and_undoes(h):
 
 def test_the_script_dry_run_and_baseline(h, monkeypatch, capsys):
     import scripts.catalogue_rules as tool
-    world(h)
+    legacy_rules(h)
     args = SimpleNamespace(who='coordinator', department=None, propose=False, activate=False, undo=False, baseline=False, only=[],
                            reason='', only_reason=None, solve=False, no_model=False, acknowledge_unresolved=False, json=False)
     with transaction(h.app.state.engine) as db:
@@ -328,8 +329,9 @@ def test_the_script_dry_run_and_baseline(h, monkeypatch, capsys):
         tool.preview(db, tool.actor_for(db, h.seed['identities']['coordinator']), args)
     out = capsys.readouterr().out
     assert '6 rules in force: 6 move into' in out and 'IDENTICAL' in out
-    monkeypatch.setattr(tool, 'baseline_refusals', lambda db: {})
-    tool.baseline(h.app.state.engine, SimpleNamespace(**{**vars(args), 'baseline': True, 'propose': True, 'reason': 'Baseline rehearsal'}))
+    configure_baseline_rehearsal(monkeypatch, tool)
+    baseline = SimpleNamespace(**{**vars(args), 'baseline': True, 'propose': True, 'reason': 'Baseline rehearsal'})
+    tool.baseline(h.app.state.engine, baseline)
     with transaction(h.app.state.engine) as db:
         made = [p for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))]
         assert made and all(p.kind == 'catalogue' for p in made)
@@ -338,3 +340,6 @@ def test_the_script_dry_run_and_baseline(h, monkeypatch, capsys):
                                                          'only_reason': 'Baseline rehearsal'}))
     with transaction(h.app.state.engine) as db:
         assert {p.id for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))} == original
+    h.workspace()
+    with pytest.raises(SystemExit, match='1 rotas'):
+        tool.baseline(h.app.state.engine, baseline)

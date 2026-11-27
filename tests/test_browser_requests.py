@@ -60,6 +60,72 @@ def no_horizontal_scroll(page):
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
 
 
+@pytest.mark.parametrize('viewport', [{'width': 1440, 'height': 1000}, PHONE])
+def test_change_a_waiting_request_and_undo(browser, live_server, h, viewport):
+    person = h.seed['people'][0]
+    start = f'{day()}T09:00:00+03:00'
+    request = h.command('staff', 'request.create', {'person_id': person, 'start': start,
+        'end': f'{day()}T11:00:09.654321+03:00', 'kind': 'administrative', 'private_reason': 'Initial request note'})['record']
+    url = '/api/requests/all?id=' + request['id']
+    context, page = sign_in(browser, live_server, 'staff', viewport=viewport)
+    try:
+        navigate(page, 'requests')
+        page.get_by_role('button', name='Change request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change request', exact=True)
+        expect(dialog.get_by_label('Reason', exact=True)).to_have_value('Initial request note')
+        dialog.get_by_label('Request type', exact=True).select_option('meeting')
+        dialog.get_by_label('Request from', exact=True).fill(day(-1))
+        dialog.get_by_label('Reason', exact=True).fill('Updated request note')
+        dialog.get_by_role('button', name='Save changes', exact=True).click()
+        toast = page.locator('#toast-tray .toast').filter(has_text='Request updated')
+        expect(toast).to_be_visible()
+        after = h.get('staff', url)['item']
+        assert (after['stage'], after['kind'], after['private_reason']) == ('waiting', 'meeting', 'Updated request note')
+        assert after['start'] != request['start']
+        assert after['end'] == request['end']
+
+        toast.get_by_role('button', name='Undo', exact=True).click()
+        expect(page.locator('#toast-tray')).to_contain_text('Undone')
+        restored = h.get('staff', url)['item']
+        for field in ('start', 'end', 'kind'):
+            assert restored[field] == request[field]
+        assert restored['private_reason'] == 'Initial request note'
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('zone,start,end,from_time,until_time,other', [
+    pytest.param('Europe/London', '2026-10-25T01:15:07.123456+01:00', '2026-10-25T01:30:09.654321+01:00',
+                 '01:15', '01:30', ('2026-10-25T01:15:00+00:00', '2026-10-25T01:30:00+00:00'), id='repeated-hour'),
+    pytest.param('America/Havana', '2026-11-01T00:00:00-04:00', '2026-11-01T00:00:00-05:00',
+                 '00:00', '00:00', None, id='repeated-midnight'),
+])
+def test_reason_edit_keeps_precise_times_in_repeated_hour(browser, live_server, h, zone, start, end, from_time, until_time, other):
+    with transaction(h.app.state.engine, write=True) as db:
+        department = db.get(m.Department, h.seed['department_id'])
+        db.get(m.Organisation, department.organisation_id).timezone = zone
+    payload = {'person_id': h.seed['people'][0], 'kind': 'meeting', 'private_reason': 'Initial request note'}
+    if other:
+        h.command('staff', 'request.create', {**payload, 'start': other[0], 'end': other[1]})
+    request = h.command('staff', 'request.create', {**payload, 'start': start, 'end': end})['record']
+    context, page = sign_in(browser, live_server, 'staff')
+    try:
+        page.evaluate("id => location.hash = 'requests?open=' + id", request['id'])
+        page.get_by_role('button', name='Change request', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Change request', exact=True)
+        expect(dialog.get_by_label('All day', exact=True)).not_to_be_checked()
+        expect(dialog.get_by_label('Request from time', exact=True)).to_have_value(from_time)
+        expect(dialog.get_by_label('Request until time', exact=True)).to_have_value(until_time)
+        dialog.get_by_label('Reason', exact=True).fill('Updated request note')
+        dialog.get_by_role('button', name='Save changes', exact=True).click()
+        expect(page.locator('#toast-tray')).to_contain_text('Request updated')
+        updated = h.get('staff', '/api/requests/all?id=' + request['id'])['item']
+        assert (updated['start'], updated['end']) == (request['start'], request['end'])
+        assert updated['private_reason'] == 'Updated request note'
+    finally:
+        context.close()
+
+
 CONTRAST = '''els => els.map(el => {
   const rgb = c => (c.match(/[\\d.]+/g) || []).map(Number);
   const lum = ([r, g, b]) => { const f = v => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; }; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };
@@ -667,7 +733,7 @@ def test_a_pre_save_requests_reload_cannot_replace_confirmed_decisions(browser, 
         whole_list(page)  # the whole list, not the decider's Waiting for you
         def hold_search(route):
             nonlocal captured
-            if captured or parse_qs(urlparse(route.request.url).query).get('q') != ['Jordan']:
+            if captured or parse_qs(urlparse(route.request.url).query).get('q') != ['Staff 02']:
                 return route.continue_()
             captured = True
             response = route_fetch(route)
@@ -676,7 +742,7 @@ def test_a_pre_save_requests_reload_cannot_replace_confirmed_decisions(browser, 
             else:
                 held.append((route, response))
         page.route('**/api/requests/all?*', hold_search)
-        page.get_by_role('searchbox', name='Search requests').fill('Jordan')
+        page.get_by_role('searchbox', name='Search requests').fill('Staff 02')
         wait_held(page, held)
         for n in range(3):
             rows(page).nth(n).locator('input.bulk-check').check()
@@ -690,7 +756,7 @@ def test_a_pre_save_requests_reload_cannot_replace_confirmed_decisions(browser, 
         expect(dialog).to_have_count(0)
         expect(rows(page).get_by_text('Approved', exact=True)).to_have_count(3)
         route, response = held.pop(0)
-        with page.expect_response(lambda r: parse_qs(urlparse(r.url).query).get('q') == ['Jordan']) as delivered:
+        with page.expect_response(lambda r: parse_qs(urlparse(r.url).query).get('q') == ['Staff 02']) as delivered:
             route.fulfill(response=response)
         delivered.value.finished()
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
@@ -928,7 +994,7 @@ def test_a_declined_swap_is_open_again_after_undo(browser, live_server, h):
         dialog.get_by_role('button', name='Decline swap', exact=True).click()
         expect(row(page, 'Swap')).to_contain_text('Declined')
         page.locator('#toast-tray .toast', has_text='Swap declined.').get_by_role('button', name='Undo', exact=True).click()
-        expect(row(page, 'Swap').locator('.badge')).to_contain_text('Waiting for Jordan Lee')
+        expect(row(page, 'Swap').locator('.badge')).to_contain_text('Waiting for Staff 02(test)')
         expect(rows(page)).to_have_count(1)  # one thread: the reopened swap, not the declined one beside it
     finally:
         context.close()
@@ -937,7 +1003,7 @@ def test_a_declined_swap_is_open_again_after_undo(browser, live_server, h):
         navigate(page, 'requests?type=swap')
         expect(row(page, 'Swap').get_by_role('button', name='Offer a duty in return', exact=True)).to_be_visible()
         rows(page).first.locator('td').nth(1).click()
-        expect(page.get_by_role('region', name=re.compile('Jordan Lee')).locator('.request-history')).to_contain_text('Step undone')
+        expect(page.get_by_role('region', name=re.compile('Staff 02\\(test\\)')).locator('.request-history')).to_contain_text('Step undone')
     finally:
         context.close()
 
@@ -1122,7 +1188,7 @@ def test_your_own_request_reads_as_yours_and_a_decider_keeps_the_decision_in_rea
         panel = page.locator('.request-panel')
         expect(panel.locator('.request-facts')).to_be_visible()
         expect(panel.locator('.request-facts dt', has_text='Person')).to_have_count(0)
-        expect(panel.locator('.side-head small:not(.side-pos)')).not_to_contain_text('Alex Morgan')
+        expect(panel.locator('.side-head small:not(.side-pos)')).not_to_contain_text('Staff 01(test)')
         expect(panel.get_by_text(re.compile(r"^You're on duty"))).to_be_visible()
         expect(panel.get_by_text('Approving opens', exact=False)).to_have_count(0)
     finally:
@@ -1295,7 +1361,9 @@ def test_request_type_change_keeps_person(browser, live_server, h):
         dialog = new_request(page, 'Other request')
         person = dialog.get_by_label('Person', exact=True)
         person.select_option(other['id'])
-        expect(person.locator('optgroup')).not_to_have_count(0)  # grouped by rank, as every people choice
+        # The shared people list: one flat list for a single choice, each person carrying their rank for the row.
+        expect(person.locator('optgroup')).to_have_count(0)
+        expect(person.locator('option[data-group]')).not_to_have_count(0)
         dialog.get_by_role('radio', name=re.compile('^Leave or absence')).check()
         # A short people list is checkboxes (a long one the shared picker's hidden <select multiple>).
         expect(dialog.locator('fieldset[name="People"] input:checked')).to_have_attribute('value', other['id'])
@@ -1344,5 +1412,37 @@ def test_overtime_offer_names_uncovered_days_before_sending(browser, live_server
         expect(dialog.get_by_text(re.compile(r"can’t be offered overtime on \d{1,2} \w{3} \d{4}"))).to_be_visible()
         assert not [body for body in sent if 'request.create' in body]
         expect(page.locator('#save-state')).not_to_contain_text('Not saved')
+    finally:
+        context.close()
+
+
+def test_leave_balance_on_phone_and_negative_approval_confirmation(browser, live_server, h):
+    from .test_leave_balances import configure, request_between
+
+    configure(h, 0)
+    made = request_between(h, day(), day(1))
+    context, page = sign_in(browser, live_server, 'staff', PHONE)
+    try:
+        navigate(page, 'requests')
+        expect(page.get_by_text('0 calendar days remaining', exact=False)).to_be_visible()
+        no_horizontal_scroll(page)
+    finally:
+        context.close()
+    context, page = sign_in(browser, live_server, 'approver', PHONE)
+    try:
+        navigate(page, f"requests?open={made['id']}")
+        panel = page.locator('.request-panel')
+        expect(panel.get_by_text('-1 calendar day after approval', exact=False)).to_be_visible()
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        page.get_by_role('dialog', name='Approve leave').get_by_role('button', name='Approve', exact=True).click()
+        warning = page.get_by_role('dialog', name='Confirm negative leave balance')
+        expect(warning.get_by_text('-1 calendar day after approval', exact=False)).to_be_visible()
+        no_horizontal_scroll(page)
+        warning.get_by_role('button', name='Cancel', exact=True).click()
+        expect(panel.get_by_role('button', name='Approve', exact=True)).to_be_visible()
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        page.get_by_role('dialog', name='Approve leave').get_by_role('button', name='Approve', exact=True).click()
+        warning.get_by_role('button', name='Approve below zero', exact=True).click()
+        expect(panel.locator('.request-history')).to_contain_text('Approved below zero')
     finally:
         context.close()

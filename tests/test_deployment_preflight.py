@@ -1,5 +1,7 @@
 """Real local settings/files/SQLite checks; PG/containers have separate real gates."""
+from contextlib import contextmanager
 from dataclasses import replace
+from datetime import timedelta
 import json
 import os
 from pathlib import Path
@@ -7,12 +9,15 @@ import secrets
 import stat
 import subprocess
 import sys
+from types import SimpleNamespace
 from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
+from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.settings import Settings, secret_from_env, MAX_SECRET_BYTES
+from packages.contracts.schemas import INSTALLATION_ADMIN_ROLE
 from scripts import backup, preflight
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -325,11 +330,41 @@ def test_invalid_bootstrap_request_cannot_migrate_or_create_a_database(tmp_path,
     assert result.returncode!=0 and not path.exists()
 
 
+def test_first_admin_recovery_validates_reason_before_opening_database(tmp_path, monkeypatch, capsys):
+    from scripts import manage
+
+    clean_env(monkeypatch)
+    database = tmp_path / "unopened.db"
+    output = tmp_path / "unused"
+    monkeypatch.setattr(sys, "argv", ["manage.py", "reissue-first-admin", "--database-url",
+                        "sqlite:///" + str(database), "--output", str(output), "--reason", "x"])
+    with pytest.raises(SystemExit):
+        manage.main()
+    assert "Enter a valid reason for replacing the first administrator invitation" in capsys.readouterr().err
+    assert not database.exists() and not output.exists()
+
+
+def test_first_admin_recovery_refuses_non_posix_before_opening_database(tmp_path, monkeypatch):
+    from scripts import manage
+
+    def refuse_database(*_args, **_kwargs):
+        pytest.fail("An unsupported platform must not touch the database")
+
+    output = tmp_path / "unused"
+    monkeypatch.setattr(manage, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(manage, "make_engine", refuse_database)
+    with pytest.raises(RuntimeError, match="needs a POSIX host"):
+        manage.reissue_first_admin(Settings(environment="test"), "Replace setup link", output)
+    assert not output.exists()
+
+
 @pytest.mark.postgres
 def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgres_worker_url, tmp_path, monkeypatch, capsys):
     from apps.api.main import create_app
+    from apps.api.services import accounts
     from scripts import manage
     from .conftest import postgres_database
+    from .test_accounts import race_account_writes, race_link_acceptance
 
     with postgres_database(postgres_worker_url, "rota_test_" + uuid4().hex) as url:
         clean_env(monkeypatch)
@@ -346,24 +381,205 @@ def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgr
                         "--username", "first-admin", "--email", "first-admin@example.test",
                         "--display-name", "Administrator (test)", "--reason", "Initialize test installation"])
         manage.main()
-        link = capsys.readouterr().out.splitlines()[-1]
-        if not link.startswith(origin + "/invite/"):
+        original = capsys.readouterr().out.splitlines()[-1]
+        if not original.startswith(origin + "/invite/"):
             pytest.fail("Bootstrap did not return an invitation")
+        output_dir = tmp_path / "private"
+        output_dir.mkdir(mode=0o700)
         app = create_app(Settings.from_env())
         try:
+            def reissue(filename):
+                output = output_dir / filename
+                monkeypatch.setattr(sys, "argv", ["manage.py", "reissue-first-admin", "--output", str(output),
+                                    "--reason", "Replace unusable setup link"])
+                manage.main()
+                if capsys.readouterr().out:
+                    pytest.fail("Recovery wrote to standard output")
+                assert not output.stat().st_mode & 0o077
+                return output.read_text(encoding="utf-8").strip()
+
+            def refuse_migration(*_args, **_kwargs):
+                pytest.fail("Reissuing a first administrator link must never migrate the database")
+
+            monkeypatch.setattr(manage, "check_migrations", refuse_migration)
+            monkeypatch.setattr(manage, "migrate", refuse_migration)
+            with transaction(app.state.engine) as db:
+                account = db.scalars(select(m.Account)).one()
+                identity_id = account.identity_id
+
+            def disable_pending():
+                # Exercise the row lock without the global writer lock or the API's last-admin guard.
+                with transaction(app.state.engine, write=True, serialize=False) as db:
+                    accounts.lock_link_account(db, identity_id)
+                    db.get(m.Identity, identity_id).disabled = True
+
+            disabled, refused = race_account_writes(monkeypatch, disable_pending, lambda: reissue("disabled"))
+            disabled.result()
+            with pytest.raises(RuntimeError, match="No unique pending first administrator"):
+                refused.result()
+            assert not (output_dir / "disabled").exists()
+            with transaction(app.state.engine, write=True) as db:
+                db.get(m.Identity, identity_id).disabled = False
+
+            def fail_output(_fd):
+                raise OSError("Synthetic output flush failure")
+
+            fstat = os.fstat
+
+            def interrupt_identity_capture(fd):
+                identity = fstat(fd)
+                files = [*output_dir.glob("first-replacement"), *output_dir.glob(".first-admin-*/link")]
+                if any(os.path.samestat(identity, file.stat()) for file in files):
+                    raise KeyboardInterrupt
+                return identity
+
+            sync = os.fsync
+
+            def fail_directory(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise OSError("Synthetic directory sync failure")
+                sync(fd)
+
+            def interrupt_directory(fd):
+                if stat.S_ISDIR(os.fstat(fd).st_mode):
+                    raise KeyboardInterrupt
+                sync(fd)
+
+            def lose_commit_acknowledgement(error):
+                @contextmanager
+                def interrupted(*args, **kwargs):
+                    with transaction(*args, **kwargs) as db:
+                        yield db
+                    raise error
+                return interrupted
+
             with TestClient(app, base_url=origin, headers={"origin": origin}) as client:
                 password = secrets.token_urlsafe(28)
-                token = link.rsplit("/", 1)[1]
-                setup = client.post("/api/account-links/" + token, json={"password": password})
-                assert setup.status_code == 200
-                assert client.post("/api/account-links/" + token, json={"password": password}).status_code == 404
+
+                def accept(link):
+                    return client.post("/api/account-links/" + link.rsplit("/", 1)[1], json={"password": password})
+
+                occupied = output_dir / "occupied"
+                occupied.write_text("Retained file", encoding="utf-8")
+                with pytest.raises(FileExistsError):
+                    reissue("occupied")
+                assert occupied.read_text(encoding="utf-8") == "Retained file"
+                with monkeypatch.context() as patch:
+                    patch.setattr(manage.os, "fstat", interrupt_identity_capture)
+                    with pytest.raises(KeyboardInterrupt):
+                        reissue("first-replacement")
+                assert sorted(output_dir.iterdir()) == [occupied]
+                with monkeypatch.context() as patch:
+                    patch.setattr(manage.os, "fsync", fail_output)
+                    with pytest.raises(OSError, match="Synthetic output flush failure"):
+                        reissue("failed-write")
+                assert not (output_dir / "failed-write").exists()
+                with monkeypatch.context() as patch:
+                    patch.setattr(manage.os, "fsync", fail_directory)
+                    with pytest.raises(OSError, match="Synthetic directory sync failure"):
+                        reissue("failed-directory")
+                assert not (output_dir / "failed-directory").exists()
+                with monkeypatch.context() as patch:
+                    patch.setattr(manage.os, "fsync", interrupt_directory)
+                    with pytest.raises(KeyboardInterrupt):
+                        reissue("interrupted-directory")
+                assert not (output_dir / "interrupted-directory").exists()
+                assert client.get("/api/account-links/" + original.rsplit("/", 1)[1]).status_code == 200
+
+                old_acceptance, replacement = race_link_acceptance(monkeypatch, acceptance_first=False,
+                    accept=lambda: accept(original), write=lambda: reissue("first-replacement"))
+                previous = replacement.result()
+                assert old_acceptance.result().status_code == 404
+                with transaction(app.state.engine, write=True) as db:
+                    active = db.scalars(select(m.AccountLink).where(m.AccountLink.revoked_at.is_(None))).one()
+                    active.expires_at = m.now() - timedelta(hours=1)
+                replacements = [previous]
+                for filename, error in (("second-replacement", OSError("Synthetic lost commit acknowledgement")),
+                                        ("third-replacement", KeyboardInterrupt())):
+                    with monkeypatch.context() as patch:
+                        patch.setattr(manage, "transaction", lose_commit_acknowledgement(error))
+                        with pytest.raises(RuntimeError, match="Could not confirm the recovery transaction"):
+                            reissue(filename)
+                    if capsys.readouterr().out:
+                        pytest.fail("Recovery wrote to standard output")
+                    output = output_dir / filename
+                    assert not output.stat().st_mode & 0o077
+                    replacements.append(output.read_text(encoding="utf-8").strip())
+                *retired, link = replacements
+                for older in retired:
+                    assert accept(older).status_code == 404
+                setup, rejected_recovery = race_link_acceptance(monkeypatch, acceptance_first=True,
+                    accept=lambda: accept(link), write=lambda: reissue("accepted-during-recovery"))
+                assert setup.result().status_code == 200
+                with pytest.raises(RuntimeError, match="No unique pending first administrator"):
+                    rejected_recovery.result()
+                assert not (output_dir / "accepted-during-recovery").exists()
+                assert accept(link).status_code == 404
                 login = client.post("/auth/login", json={"username": "first-admin", "password": password})
                 assert login.status_code == 200
                 me = client.get("/api/me")
                 assert me.status_code == 200 and "admin" in me.json()["roles"]
+                assert INSTALLATION_ADMIN_ROLE in me.json()["roles"]
                 assert "operator" not in me.json()["roles"]
+                branding = client.get("/api/admin/branding")
+                assert branding.status_code == 200 and branding.json()["can_edit"]
+            with transaction(app.state.engine) as db:
+                receipts = list(db.scalars(select(m.CommandReceipt)))
+                events = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.action == "account.resend")))
+                assert len(events) == 3 and {event.reason for event in events} == {"Replace unusable setup link"}
+                marker = db.scalars(select(m.AuditEvent).where(m.AuditEvent.action == manage.BOOTSTRAP_AUDIT_ACTION)).one()
+                for payload in [receipt.result for receipt in receipts] + [event.detail for event in events] + [marker.detail]:
+                    if any(url.rsplit("/", 1)[1] in json.dumps(payload) for url in (original, *replacements)):
+                        pytest.fail("A setup token was persisted in a receipt or audit record")
+            with pytest.raises(RuntimeError, match="No unique pending first administrator"):
+                reissue("already-accepted")
+            assert not (output_dir / "already-accepted").exists()
         finally:
             app.state.engine.dispose()
+
+
+@pytest.mark.postgres
+def test_first_admin_recovery_refuses_generic_invite_with_coincident_transaction_ids(
+        postgres_worker_url, tmp_path):
+    from apps.api.db import make_engine
+    from scripts import manage
+    from scripts.system_command import apply, maintenance_identity
+    from .conftest import postgres_database
+
+    with postgres_database(postgres_worker_url, "rota_test_" + uuid4().hex) as url:
+        manage.migrate(url)
+        users = tmp_path / "users.yml"
+        users.write_text('{"users": {}}', encoding="utf-8")
+        settings = Settings(environment="test", database_url=url, identity_users_file=str(users))
+        engine = make_engine(url, settings=settings)
+        try:
+            with transaction(engine, write=True) as db:
+                org = m.Organisation(name="Organisation (test)")
+                db.add(org)
+                db.flush()
+                dept = m.Department(organisation_id=org.id, name="Department (test)")
+                db.add(dept)
+                db.flush()
+                actor = maintenance_identity(db, m, select)
+                apply(db, actor, dept, [{"kind": "account.invite", "payload": {
+                    "roles": ["admin"], "username": "pending.admin", "display_name": "Pending admin (test)",
+                    "email": "pending.admin@example.test", "reason": "Synthetic maintenance invitation"}}],
+                    "first-admin-" + m.uid(), settings)
+            with transaction(engine) as db:
+                assert db.scalar(text("""SELECT o.xmin = a.xmin AND d.xmin = a.xmin
+                    FROM audit_events a JOIN departments d ON d.id = a.department_id
+                    JOIN organisations o ON o.id = d.organisation_id WHERE a.action = 'account.invite'"""))
+            directory = tmp_path / "private"
+            directory.mkdir(mode=0o700)
+            output = directory / "unverified"
+            with pytest.raises(RuntimeError, match="ask the installation owner for verified recovery"):
+                manage.reissue_first_admin(settings, "Synthetic recovery attempt", output)
+            assert not output.exists()
+            with transaction(engine) as db:
+                link = db.scalars(select(m.AccountLink)).one()
+                assert link.revoked_at is None and link.used_at is None
+        finally:
+            engine.dispose()
 
 
 def test_explicit_database_url_file_is_shared_by_migration_and_backup_clis(tmp_path,monkeypatch):

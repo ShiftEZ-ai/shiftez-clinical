@@ -9,19 +9,21 @@ import secrets
 from threading import BoundedSemaphore
 from zoneinfo import ZoneInfo
 from argon2.exceptions import VerificationError, InvalidHashError
-from sqlalchemy import and_, delete, inspect, or_, select, text, update
+from sqlalchemy import and_, delete, inspect, null, or_, select, text, update
+from sqlalchemy.orm import aliased
 from .models import (Account, AuditEvent, AuthLoginEvent, Department, Identity, Organisation, RateLimit, RoleBinding,
                      Session, now)
 from .errors import Problem, require
 from .settings import password_login_enabled
 from packages.domain.time import aware
-from packages.contracts.schemas import CATALOGUE_READS, EXPLICIT_ROLES, PERMISSIONS, ROLE_NAMES
+from packages.contracts.schemas import CATALOGUE_READS, EXPLICIT_ROLES, INSTALLATION_ADMIN_ROLE, PERMISSIONS, ROLE_NAMES
 
 from .identity_store import HASHER as PASSWORDS, _DUMMY as _DUMMY_HASH
 from .db import current_request_parent, liveness_write, log_row_lock_diagnostic
 # Bound concurrent 64 MiB verification/rehash work within the API's 1 GiB memory budget.
 PASSWORD_VERIFICATIONS = BoundedSemaphore(4)
 LOGIN_ACCOUNT_BUCKET_COUNT = 1 << 16
+_PASSWORD_SESSION_REFUSALS = {"DEPARTMENT_REQUIRED", "UNPROVISIONED_IDENTITY", "FORBIDDEN"}
 CATALOGUE_READ_ROLES = PERMISSIONS["catalogue.read"]
 log = logging.getLogger("rota.auth")
 
@@ -79,7 +81,7 @@ def _local_today(db, department_id):
 
 
 def _effective(roles):
-    # Admin inherits department powers; system and audit access need explicit bindings.
+    # Admin inherits department powers; installation and audit roles require explicit bindings.
     roles = frozenset(roles)
     return roles | (set(ROLE_NAMES) - EXPLICIT_ROLES) if "admin" in roles else roles
 
@@ -91,14 +93,47 @@ def _live(binding, today):
     return not binding.revoked and binding.starts_on <= today and (binding.ends_on is None or today < binding.ends_on)
 
 
+def _installation_admin_grants():
+    return select(RoleBinding.starts_on, RoleBinding.ends_on, RoleBinding.revoked, Organisation.timezone).join_from(RoleBinding,
+        Department, Department.id == RoleBinding.department_id).join(
+        Organisation, Organisation.id == Department.organisation_id).join(
+        Identity, Identity.id == RoleBinding.identity_id).outerjoin(
+        Account, Account.identity_id == Identity.id).where(
+        RoleBinding.role == INSTALLATION_ADMIN_ROLE, RoleBinding.revoked.is_(False), Identity.disabled.is_(False),
+        or_(Account.id.is_(None), Account.accepted_at.is_not(None)))
+
+
+def _live_installation_grant(binding, timezone, moment):
+    return _live(binding, moment.astimezone(ZoneInfo(timezone)).date())
+
+
+def has_installation_admin(db, identity_id=None, *, excluding_binding_id=None, excluding_identities=(), permanent=False):
+    """Check installation-wide grants on the local day of each binding's department."""
+    query = _installation_admin_grants()
+    if identity_id is not None:
+        query = query.where(RoleBinding.identity_id == identity_id)
+    if excluding_binding_id is not None:
+        query = query.where(RoleBinding.id != excluding_binding_id)
+    if excluding_identities:
+        query = query.where(RoleBinding.identity_id.not_in(excluding_identities))
+    if permanent:
+        query = query.where(RoleBinding.ends_on.is_(None))
+    moment = now()
+    with db.execute(query.execution_options(stream_results=True)) as rows:
+        return any(_live_installation_grant(row, row.timezone, moment) for row in rows)
+
+
+def _department_grants(department_id, identity_id=None):
+    query = select(RoleBinding).where(RoleBinding.department_id == department_id)
+    return query if identity_id is None else query.where(RoleBinding.identity_id == identity_id)
+
+
 def role_bindings(db, department_id, identity_id=None):
     """Load dated grants once; a window can evaluate them on several dates."""
     # READ COMMITTED readers must still see a revocation committed after authentication.
     memo = db.info.get('_request_authority')
     key = (RoleBinding, department_id, identity_id)
-    query = select(RoleBinding).where(RoleBinding.department_id == department_id)
-    if identity_id is not None:
-        query = query.where(RoleBinding.identity_id == identity_id)
+    query = _department_grants(department_id, identity_id)
     if memo is None or not db.autoflush or db.new or db.dirty or db.deleted:
         return list(db.scalars(query))
     if key not in memo:
@@ -118,6 +153,26 @@ def held_roles(db, identity_id: str, department_id: str, *, day=None, bindings=N
 def current_roles(db, identity_id: str, department_id: str) -> frozenset[str]:
     """Granted roles plus an administrator's department powers."""
     return _effective(held_roles(db, identity_id, department_id))
+
+
+def _session_roles(db, identity_id, department_id, moment):
+    # Both reads use the identity index and share one database snapshot.
+    department = _department_grants(department_id, identity_id).add_columns(null().label('timezone'))
+    installation = _installation_admin_grants().where(RoleBinding.identity_id == identity_id).with_only_columns(
+        RoleBinding, Organisation.timezone)
+    grants = department.union_all(installation).subquery()
+    rows = db.execute(select(aliased(RoleBinding, grants), grants.c.timezone)).all()
+    bindings = tuple(binding for binding, zone in rows if zone is None)
+    memo = db.info.get('_request_authority')
+    if memo is not None and db.autoflush and not (db.new or db.dirty or db.deleted):
+        memo[RoleBinding, department_id, identity_id] = bindings
+    roles = held_roles(db, identity_id, department_id, bindings=bindings)
+    if not roles:
+        return roles
+    roles -= {INSTALLATION_ADMIN_ROLE}
+    if any(_live_installation_grant(binding, zone, moment) for binding, zone in rows if zone is not None):
+        roles |= {INSTALLATION_ADMIN_ROLE}
+    return _effective(roles)
 
 
 def department_roles(db, department_id: str, effective: bool = True, *, day=None, bindings=None) -> dict[str, frozenset[str]]:
@@ -154,7 +209,7 @@ def authenticate(db, token: str | None, csrf: str | None = None, write: bool = F
     if write:
         require(bool(csrf) and secrets.compare_digest(session.csrf_hash, digest(csrf)),
                 "CSRF_FAILED", "Refresh your session before saving", 403)
-    roles = current_roles(db, identity.id, session.department_id)
+    roles = _session_roles(db, identity.id, session.department_id, moment)
     require(bool(roles), "FORBIDDEN", "No active access binding for this department", 403)
     actor = Actor(identity.id, department.id, department.organisation_id, identity.display_name,
                   roles, identity.person_id, session.id)
@@ -425,7 +480,8 @@ def login_event(db, keys, outcome, correlation_id, session_id=None, *, window, k
     if outcome != "success":
         from .rate_limit import hit
         # Untrusted input shares outcome counters; callers can request one retained row per attempt.
-        subject = keys[0] if known_identity and outcome in {"INVALID_LOGIN", "DEPARTMENT_REQUIRED", "SIGN_IN_BUSY"} else "rejected"
+        account_outcome = outcome in _PASSWORD_SESSION_REFUSALS or outcome in {"INVALID_LOGIN", "SIGN_IN_BUSY"}
+        subject = keys[0] if known_identity and account_outcome else "rejected"
         hits, _ = hit(db.connection(), "login-audit:" + outcome, subject, window, now())
         if hits != 1 and not record_each:
             return
@@ -681,16 +737,17 @@ def password_login(engine, data, peer: str, settings, *, user_agent=None, correl
             try:
                 values = issue_session(db, current_identity, data.department_id, settings, user_agent=user_agent, peer=peer,
                                        correlation_id=correlation_id, method="password", remember_me=data.remember_me)
+            except Problem as exc:
+                if exc.code in _PASSWORD_SESSION_REFUSALS:
+                    problem = exc
+            else:
                 if previous_token:
                     previous = db.scalar(select(Session).where(Session.token_hash == digest(previous_token)).with_for_update())
                     if previous and not previous.revoked:
                         revoke_session(previous)
                         prior_identity = db.get(Identity, previous.identity_id)
                         session_event(db, previous, prior_identity.person_id, "auth.session_revoke", correlation_id=correlation_id)
-            except Problem as exc:
-                if exc.code == "DEPARTMENT_REQUIRED":
-                    problem = exc
-        if values is not None or problem.code == "DEPARTMENT_REQUIRED":
+        if values is not None or problem.code != "INVALID_LOGIN":
             _release_failure_reservation(db)
         login_event(db, keys, "success" if values else problem.code, correlation_id, values["session_id"] if values else None,
                     window=window, known_identity=bool(current_account or current_identity))

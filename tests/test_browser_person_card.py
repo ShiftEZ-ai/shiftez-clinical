@@ -40,7 +40,7 @@ def retype(h, typ, **changes):
 
 
 def fixture(h):
-    """A trainee on duty now, supervised by the staff account's own person, with a mobile and an MCD pager."""
+    """A trainee on duty now, supervised by the staff account's own person, with a mobile and a pager."""
     zone = h.get('staff', '/api/me')['organisation']['timezone']
     now = clock_now().astimezone(ZoneInfo(zone)).replace(second=0, microsecond=0)  # the app's clock, not the wall's
     start = max(now.replace(hour=0, minute=0), now - timedelta(minutes=30 + now.minute % 15))
@@ -238,6 +238,7 @@ def test_contact_rows_on_a_phone_copy_and_call_where_configured(browser, live_se
 
 def test_contact_types_table_edits_with_undo_and_history(browser, live_server, h):
     pager = contact_type(h, 'pager')
+    pager = retype(h, pager, visibility={'mode': 'everyone', 'roles': list(s.ROLE_NAMES)})
     before = len(h.get('admin', f"/api/catalogues/contact_types/{pager['id']}/history")['versions'])
     context, page = sign_in(browser, live_server, 'admin')
     try:
@@ -257,6 +258,7 @@ def test_contact_types_table_edits_with_undo_and_history(browser, live_server, h
         pick(form, 'Roles that see it', ['Coordinator'])
         save_dialog(form, 'Save version')
         expect(line).to_contain_text('Coordinator')
+        assert contact_type(h, 'pager')['visibility'] == {'mode': 'roles', 'roles': ['coordinator']}
         page.locator('.toast').get_by_role('button', name='Undo', exact=True).click()
         expect(line).to_contain_text('Everyone')
         assert contact_type(h, 'pager')['visibility']['mode'] == 'everyone'

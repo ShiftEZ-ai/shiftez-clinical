@@ -13,7 +13,7 @@ from .generation_scope import selected_session_ids
 
 
 def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, leads=None, score_items=None, score_strengths=None, target_group=None,
-               strict_minima=None, diagnostic_domains=None):
+               strict_minima=None, diagnostic_domains=None, staffing_targets=None, staffing_demand=None):
     # Targets, rotation proration, overrides, subjects and context checks stay in
     # the reporting evaluator, including the canonical planning-population audience.
     # Empty work reveals targets without trial schedules.
@@ -27,6 +27,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
     if report is None:
         return []
     if not report['complete']:
+        if staffing_demand is not None:
+            staffing_demand.update(data.get('_generation_editable', selected_session_ids(data)))
         return [f for f in findings if f['code'] not in {'QUOTA_BELOW_MINIMUM', 'QUOTA_BELOW_TARGET'}]
     policies = {}
     for policy in applicable_policies(data):
@@ -66,6 +68,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
         terms, intervals, priority_terms, session_ids = [], [], [], set()
         context_terms = []
         context_hours = []
+        target = quota_window_amount(policy, row['amount'])
+        needs_staff = staffing_demand is not None and row['comparison'] in {'minimum', 'target'} and target > 0
         for shift, participant, _, _, x in by_person.get(pid, []):
             if data['types'][shift['assignment_type_id']]['department_id'] != data['workspace']['department_id']:
                 continue
@@ -88,8 +92,11 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                 continue
             session_ids.add(shift['id'])
             definition, metric = shift['type_snapshot']['definition'], row['metric']
+            can_add_credit = needs_staff and not isinstance(x, int) and x.domain.max() > x.domain.min()
             if metric in {'reserved_hours', 'scheduled_hours'}:
                 intervals.extend((lo, hi, x, (shift['id'], pid)) for lo, hi in contribution['intervals'])
+                if can_add_credit and contribution['intervals']:
+                    staffing_demand.add(shift['id'])
                 if shift['id'] not in editable and hasattr(x, 'domain') and x.domain.min() == x.domain.max() == 1:
                     context_hours.extend((lo, hi) for lo, hi in contribution['intervals'])
                 continue
@@ -106,6 +113,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                 weight = Fraction(presence, 3_600_000_000) * Fraction(str(definition[metric + '_per_hour']))
             if weight:
                 terms.append((weight, x))
+                if can_add_credit:
+                    staffing_demand.add(shift['id'])
                 if shift['id'] not in editable and hasattr(x, 'domain') and x.domain.min() == x.domain.max() == 1:
                     context_terms.append(weight)
                 if target_group:
@@ -124,7 +133,6 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                     context_hours.append((lo, hi))
                 if target_group:
                     priority_terms.append((weight, present, [(key, x) for x, key in covering]))
-        target = quota_window_amount(policy, row['amount'])
         scale = math.lcm(target.denominator, *(weight.denominator for weight, _ in terms))
         maximum = sum(int(weight * scale) for weight, _ in terms)
         # Explicit numerical bounds, never silently round unsupported precision.
@@ -188,7 +196,10 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                 model.add_max_equality(deviation, [0, difference])
             denominator //= divisor
             clipped = scoring.minimum([deviation, denominator], denominator)
-            score_items.append((score_weight, scoring.ratio(clipped, denominator), 1))
+            loss = scoring.ratio(clipped, denominator)
+            score_items.append((score_weight, loss, 1))
+            if staffing_targets is not None and row['comparison'] in {'minimum', 'target'}:
+                staffing_targets.append(score_weight * loss)
             if score_strengths is not None:
                 score_strengths.append(score_strength)
     for rows in targets.values():

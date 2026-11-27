@@ -31,7 +31,8 @@ from .generation_scope import pooled_anchor, selected_session_ids
 # 48: invalidate stored checks for actionable, grouped session overlap findings.
 # 49: bind finding causes and working-day quota amounts to validation results.
 # 50: bind conflict-aware supervision and its trial-cache dependencies to validation results.
-ENGINE_VERSION = "manual-core-52"
+# 53: invalidate checks made without both parent capacity chains.
+ENGINE_VERSION = "manual-core-53"
 OVER_MAXIMUM = {"MAXIMUM_PARTICIPANTS", "SCOPED_PARTICIPANT_LIMIT"}
 
 
@@ -284,6 +285,10 @@ def _supervision_scope(supervision):
     return supervision["capability_id"], frozenset(supervision["trainee_category_ids"])
 
 
+def draft_type_safety_key(shift):
+    return shift["id"], shift["assignment_type_id"], shift["type_revision"]
+
+
 def prepare_draft_type_safety(data, shifts):
     """Prepare only duties affected by catalogue safety drift, once at snapshot assembly."""
     types, zone = data["types"], data["organisation"]["timezone"]
@@ -315,13 +320,13 @@ def prepare_draft_type_safety(data, shifts):
         effective = current if operational else issued
         for source in ([issued] if operational else []) + sources:
             effective = effective_issued_definition(effective, source, draft=True)
-        prepared[shift["id"]] = (effective, len(scopes) > 1)
+        prepared[draft_type_safety_key(shift)] = (effective, len(scopes) > 1)
     return prepared
 
 
 def _prepared_draft_type(data, shift):
     if prepared := data.get("_draft_type_safety"):
-        return prepared.get(shift.get("id"))
+        return prepared.get(draft_type_safety_key(shift))
 
 
 def effective_issued_definition(issued, current, *, draft=False):
@@ -591,11 +596,39 @@ def qualified(data, person_id, shift, definition, a, b):
 
 
 def ancestor_ids(data, location_id):
-    ids, current = [], location_id
-    while current and current not in ids:
-        ids.append(current)
-        current = data["locations"].get(current, {}).get("parent_id")
+    ids, seen = [], set()
+    while location_id and location_id not in seen:
+        ids.append(location_id)
+        seen.add(location_id)
+        location_id = data["locations"].get(location_id, {}).get("parent_id")
     return ids
+
+
+def capacity_ancestor_ids(data, shift):
+    place = shift['location_id']
+    membership = (data.get('place_capacity') or {}).get('duties', {}).get(shift['id'])
+    if membership is not None and membership['location_id'] == place:
+        return membership['resources']
+    locations = data['locations']
+    return [ident for ident in ancestor_ids(data, place) if ident in locations]
+
+
+def capacity_limit(data, ident):
+    limits = (data.get('place_capacity') or {}).get('limits', {})
+    return limits[ident] if ident in limits else data['locations'][ident]['capacity']
+
+
+def place_capacity_inputs(data, shifts):
+    """Use the same capacity inputs for validation, receipts and issued evidence."""
+    duties, limits = {}, {}
+    for shift in shifts:
+        resources = capacity_ancestor_ids(data, shift)
+        if resources:
+            duties[shift['id']] = {'location_id': shift['location_id'], 'resources': resources}
+            for ident in resources:
+                if ident not in limits:
+                    limits[ident] = capacity_limit(data, ident)
+    return {'duties': duties, 'limits': limits}
 
 
 def named_people(scope):
@@ -1088,16 +1121,19 @@ def resource_sessions(data, shifts, resource_id, a, b):
     for every session, and scanning the whole rota each time made department-sized checks quadratic."""
     shifts = data.get('_resource_shifts', shifts)
     cached = data.get('_resource_sessions')
-    if cached is None or cached[0] is not shifts:
+    capacity = data.get('place_capacity')
+    if cached is None or cached[0] is not shifts or cached[1] is not capacity:
         index = defaultdict(list)
         for t in shifts:
-            for rid in ancestor_ids(data, t['location_id']):
-                index[rid].append((aware(t['start']), aware(t['end']), t))
+            start, end = aware(t['start']), aware(t['end'])
+            for rid in capacity_ancestor_ids(data, t):
+                index[rid].append((start, end, t))
         for rows in index.values():
             rows.sort(key=lambda row: row[0])
         longest = {rid: max(e - s for s, e, _ in rows) for rid, rows in index.items()}
-        cached = data['_resource_sessions'] = (shifts, index, {rid: [row[0] for row in rows] for rid, rows in index.items()}, longest)
-    _, index, starts, longest = cached
+        cached = data['_resource_sessions'] = (shifts, capacity, index,
+            {rid: [row[0] for row in rows] for rid, rows in index.items()}, longest)
+    _, _, index, starts, longest = cached
     if resource_id not in index:
         return []
     rows = index[resource_id]
@@ -1170,21 +1206,22 @@ def validate_session_setup(data, shift, shifts, definition, add):
     for code, message in location_validity_findings(data, loc["id"], start, end):
         add(code, message, sid)
     for resource_id in ancestor_ids(data, loc["id"]):
-        resource = data["locations"][resource_id]
         for closure in data["closures"]:
             if closure["location_id"] == resource_id and overlaps(start, end, aware(closure["start"]), aware(closure["end"])):
                 add("LOCATION_CLOSED", "A location or parent resource is closed", sid,
                     a=max(start, aware(closure["start"])), b=min(end, aware(closure["end"])))
+    for resource_id in capacity_ancestor_ids(data, shift):
+        limit = capacity_limit(data, resource_id)
         consuming = resource_sessions(data, shifts, resource_id, start, end)
-        if len(consuming) <= resource["capacity"]:
+        if len(consuming) <= limit:
             continue
         resource_bounds = sorted({start, end} | {max(start, aware(t["start"])) for t in consuming}
                                  | {min(end, aware(t["end"])) for t in consuming})
         for a, b in zip(resource_bounds, resource_bounds[1:]):
             count = sum(overlaps(a, b, aware(t["start"]), aware(t["end"])) for t in consuming)
-            if count > resource["capacity"]:
+            if count > limit:
                 add("RESOURCE_CAPACITY", "Concurrent sessions exceed the location or shared parent capacity", sid,
-                    a=a, b=b, extra={"scheduled_sessions": count, "capacity": resource["capacity"],
+                    a=a, b=b, extra={"scheduled_sessions": count, "capacity": limit,
                                      "resource_id": resource_id,
                                      "published_sessions": sum(t["id"] not in focus and overlaps(a, b, aware(t["start"]), aware(t["end"])) for t in consuming)})
 

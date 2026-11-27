@@ -7,7 +7,7 @@ from sqlalchemy.orm import aliased
 
 from apps.api import models as m
 from apps.api.auth import department_roles, require_permission, require_role
-from apps.api.errors import require
+from apps.api.errors import Problem, require
 from apps.api.serialization import record
 from packages.contracts import schemas as s
 from packages.domain.planning_groups import GroupResolver
@@ -433,69 +433,122 @@ def _generation_group_context(db, actor, workspace, value):
     }, default_scope
 
 
-def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False):
+class GenerationAdmissionChanged(Exception):
+    """The command writer must release its lock before refreshing scope evidence."""
+
+
+def guard_generation(db, actor, workspace, snapshot, value, *, frozen=False, require_population=False,
+                     retained_population=None):
     from packages.domain.generation_scope import has_population, population_candidates, selected_session_ids
 
     selected_group, versions, metadata, default_scope = _generation_group_context(db, actor, workspace, value)
     enqueue = snapshot is None
-    check_nonempty = enqueue and value.generation_scope is not None
-    if versions is None and not check_nonempty:
+    check_nonempty = (enqueue or require_population) and value.generation_scope is not None
+    if versions is None and value.generation_scope is None:
         return metadata
-    if enqueue:
-        from apps.api.snapshots import domain_snapshot
-        snapshot = domain_snapshot(db, workspace, include_fairness=False,
-                                   include_objectives=False, include_fairness_history=False)
     scope = (s.GenerationScope(conditions=selected_group['definition']['membership'])
              if default_scope else value.generation_scope)
-    requested = {**snapshot, 'generation_scope': scope.model_dump(mode='json') if scope else None}
-    selected = set(selected_session_ids(snapshot) if frozen else value.session_ids or snapshot['focus_ids'])
-    candidates = None
-    if enqueue and selected_group:
-        from .planning_preparation import command_compute
-        state = db.info.get('_planning_preparation') or {}
-        candidates = command_compute(db, 'generation_population', snapshot,
-            lambda: population_candidates(requested, selected), final=True, refresh_on_replay=True,
-            input_token=state.get('generation_snapshot_key'), options=(requested['generation_scope'], sorted(selected)))
-    if versions is not None:
-        population = _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope,
-                                            candidates=candidates)
-    if check_nonempty:
-        requested['generation_session_ids'] = selected
-        require(any(population.values()) if selected_group else has_population(requested), 'INVALID_SCOPE',
-                'No people match this group during the selected duties; change the population or duty selection', 422)
+    uses_roles = (scope is not None and 'roles' in scope.conditions.fields()) or any(
+        'roles' in s.Conditions.model_validate(row['definition']['membership']).fields() for row in versions or ())
+    roles = None
+    if uses_roles:
+        from apps.api.snapshots import generation_role_bindings
+        roles = generation_role_bindings(db, workspace)
+    if enqueue:
+        metadata['_generation_authority_pending'] = True
+    if uses_roles:
+        metadata['generation_role_bindings'] = roles
+    scope = scope.model_dump(mode='json') if scope else None
+
+    capture = db.info.get('_generation_admission_capture') if enqueue else None
+    replay = db.info.get('_generation_admission_replay') if enqueue else None
+    event_currency = []
+    if capture is not None or replay is not None:
+        from apps.api.snapshots import currency_match, preparation_stamp, prepared_event_currency_matches
+        key = (actor, workspace.id, value.session_ids, scope, versions, metadata, retained_population)
+        if replay is not None and replay.get('key') != key:
+            raise GenerationAdmissionChanged()
+        stamp = preparation_stamp(db, workspace)
+        if replay is not None:
+            if (not currency_match(replay['stamp'], stamp)
+                    or not prepared_event_currency_matches(db, replay['event_currency'])):
+                raise GenerationAdmissionChanged()
+            if refusal := replay.get('refusal'):
+                raise Problem(*refusal)
+            return replay['metadata']
+        capture.update(key=key, stamp=stamp, event_currency=event_currency)
+
+    try:
+        if enqueue:
+            from apps.api.snapshots import domain_snapshot
+            snapshot = domain_snapshot(db, workspace, include_fairness=False,
+                                       include_objectives=False, include_fairness_history=False, include_manifest=False,
+                                       _event_currency=event_currency if capture is not None else None)
+        if uses_roles and not enqueue and not frozen:
+            snapshot['generation_role_bindings'] = roles
+        requested = {**snapshot, 'generation_scope': scope}
+        if uses_roles:
+            requested['generation_role_bindings'] = roles
+        selected = set(selected_session_ids(snapshot) if frozen else value.session_ids or snapshot['focus_ids'])
+        if versions is not None:
+            candidates = population_candidates(requested, selected) if enqueue and selected_group else None
+            population, outside_group_count = _generation_population(
+                requested, selected, versions, actor, selected_group, default_scope, candidates=candidates)
+            if retained_population is not None:
+                require({shift_id: sorted(people) for shift_id, people in population.items()} == retained_population,
+                        'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
+        if check_nonempty:
+            requested['generation_session_ids'] = selected
+            require(any(population.values()) if selected_group else has_population(requested), 'INVALID_SCOPE',
+                    'No people match this group during the selected duties; change the population or duty selection', 422)
+    except Problem as refusal:
+        if capture is not None:
+            capture['refusal'] = (refusal.status, refusal.code, refusal.message, refusal.details)
+        raise
+
     if selected_group:
-        metadata['planning_context']['selected_session_ids'] = sorted(selected)
+        context = {**metadata['planning_context'], 'selected_session_ids': sorted(selected)}
+        if outside_group_count:
+            context['outside_group_count'] = outside_group_count
+        metadata = {**metadata, 'planning_context': context}
         if not enqueue and not frozen:
             snapshot.update({**metadata,
                 'planning_population': {sid: sorted(pids) for sid, pids in population.items()},
                 'planning_group_versions': versions})
             if default_scope:
                 snapshot['generation_scope'] = requested['generation_scope']
+    if capture is not None:
+        capture['metadata'] = metadata
     return metadata
 
 
-def _generation_population(snapshot, requested, selected, versions, actor, selected_group, default_scope, *, candidates=None):
+def _generation_population(snapshot, selected, versions, actor, selected_group, default_scope, *, candidates=None):
     from packages.domain.generation_scope import population_allows
 
     resolver = GroupResolver(snapshot, versions)
     admin = actor.permits('admin')
     population = {}
+    outside_group = set()
+    admitted = set()
     for shift in snapshot['shifts']:
         if shift['id'] not in selected or shift.get('cancelled'):
             continue
         population[shift['id']] = []
         people = (candidates[shift['id']] if candidates is not None else
-                  (pid for pid in snapshot['people'] if population_allows(requested, shift, pid)))
+                  (pid for pid in snapshot['people'] if population_allows(snapshot, shift, pid)))
         for pid in people:
             primary = resolver.primary(pid, shift)
             if selected_group is not None and (default_scope or admin) and (
                     primary is None or primary['group_id'] != selected_group['group_id']):
+                if admin:
+                    outside_group.add(pid)
                 continue
             require(primary is not None and (admin or actor.identity_id in primary['editor_identity_ids'])
                     and (selected_group is None or primary['group_id'] == selected_group['group_id']),
                     'GROUP_GENERATION_SCOPE', 'Choose only your scheduling group population', 403)
             population[shift['id']].append(pid)
-    return population
+            admitted.add(pid)
+    return population, len(outside_group - admitted)
 
 
 def guard_frozen_generation(db, actor, workspace, snapshot):

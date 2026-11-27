@@ -7,7 +7,8 @@ import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
@@ -57,7 +58,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
+import {SHOW_AFTER,READ_TIMEOUT,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -73,6 +74,7 @@ import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
 import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
+import {leaveAllowanceSettings} from './leave_balances.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
 import {mountRules,selectTicked,openRotaRules,openRotaRulesFor,unpin,pin as pinRules,highlightRule,dayTitle,ROTA_TARGETS,loadRuleMap,type Target as RuleTarget,type RuleMap,type MapRule} from './planner_rules.js';
@@ -83,7 +85,7 @@ import {issuesPage,issueKey,type IssuesHooks} from './issues.js';
 import {setIssueNav,issueList,sessionChips,dayLabels,findingIssue as findingItem,type Issue,type SessionChip} from './issue_marker.js';
 import {ASSIGN_KINDS,actionLabel,deltaWords,fixListPage,fixPanelNodes,lastFixList,applyFixDelta,fixDeltaOf,fixPills,fixGate,fixRow,fixLevel,mustWords,couldWords,reviewItemsOf,reviewedWithRota,fixSummaryOf,readFixList,heldFixList,type FixCause,type FixHooks,type FixList,type FixSummary,type FixStep} from './fix_list.js';
 import {scoreReview} from './score_review.js';
-import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt} from './autoschedule_result.js';
+import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt,outsideGroupLine} from './autoschedule_result.js';
 import {scoreCheckPage,scoreCheckTitle,type Step as ScoreStep} from './score_check.js';
 import {aiProviderPage} from './ai_provider.js';
 import {startWorker,updateWorker,installWay,install,setBadge,tabAlertsOn,signedOut,reconcile,forgetPushStatus,alertNotification} from './pwa.js';
@@ -96,19 +98,19 @@ import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
 import {conditionBuilder,conditionsText,conditionsSummary,lineMatches,treeMatches,scopeAsConditions,isTyped,typedFields,literalValues,negativeOp,forgetResolved,RULE_FIELDS} from './conditions.js';
 import {dateSetColumns,dateSetDates,entrySummary,importDateSet,copyDateSet,loadUpcoming} from './date_sets.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
-import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList} from './generated.js';
+import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
 import {personLabel,personLink,labelPart,useLabel,useNames,onPersonOpen,personName,nameText,shortCode,labelFacts,displayName,forgetNames,fullNameOf} from './person_label.js';
 import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
+import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
 import {planningOf,groupRow,type PlanningContext,type GroupState} from './groups_view.js';
 import {DRAFT_GROUPS,draftGroup,draftGlyph,draftHint,editableDraft,sandboxPill,rotaFor,newPrivateDraft,shareDraft,designateDraft,rotaCoordinators,mergePanel} from './drafts.js';
-import {lifecycleItem,archivedRotas} from './rota_lifecycle.js';
+import {lifecycleItem,lifecycleOf,archivedRotas,restoreRota} from './rota_lifecycle.js';
 import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effectOf,createLabel,addressOf,kindAt,isSettings} from './config_kinds.js';
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
@@ -124,17 +126,19 @@ import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
-import {accountLinkPage,changePasswordDialog,linkDialog,inviteDialog,sessionsPanel} from './accounts.js';
+import {accountLinkPage,changePasswordDialog,linkDialog,inviteDialog,onboardingPanel,sessionsPanel} from './accounts.js';
 import {installFeedback,openFeedback,feedbackPage,SHORTCUT as FEEDBACK_KEY} from './feedback.js';
 import {rotationBoard} from './rotation_board.js';
 import {peopleTimeline,timelineAvailable} from './person_timeline.js';
 import {menu,menuSource,opens} from './dom.js';  // the shared menu (UX › controls S2b)
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {overflowMore,type MoreNoun} from './dom.js';  // the one "+N" (DESIGN D8)
 import {SAFETY_DECIDED,UNDECIDED,baselineSourceLabel,changeLabel,refreshPlan} from './draft_baseline.js';
 import {groupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
 import {tabs as sharedTabs} from './dom.js';  // the one tab set (UX › controls S8)
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
+import {MESSAGES_KEY} from './dom.js';  // the messages' key (issue 1408)
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
 import {notYet} from './dom.js';  // a control held in place until it can be used (D59)
@@ -348,6 +352,16 @@ function patchDraft(r:Row,kind:string):boolean{
   // SW3-B-03b: a return or a reopen too (workspace.reopen); a refused decision's re-read rota as well (rota-conflict).
   const lifecycle=ROTA_DECISIONS.has(kind)&&kind!=='workspace.publish';
   if(lifecycle)forgetChanges(r?.workspace?.base_publication_id);
+  // Final swap approval can publish the rota in the same command. Hand off both publication replies before refreshing.
+  if((kind==='workspace.publish'||kind==='workspace.approve')&&r?.publication_id){
+    if(id&&workspaceId===id&&view==='schedule'&&!schedSubPage()&&location.hash===routeSeen){
+      workspaceId='';sourcePublication='';draftNone=true;
+      writeRoute();
+      document.querySelector('.planner-bar .rota-status')?.replaceWith(rotaStatusPill(r.workspace));
+      document.querySelector('.planner-bar .rota-decisions')?.replaceChildren();
+    }
+    return false;  // The published schedule and rota list both need fresh reads.
+  }
   // P0 edit latency (live capture, 7 Nov 2026): a rota past the list's first page has no row in it; its held draft is
   // patched all the same (the dates it is checked against are the draft's), not dropped and read whole after every edit.
   const was=row||held?.workspace;
@@ -424,7 +438,7 @@ let selected:Set<string>=new TickedSet(()=>selectTicked([...selected])),renderSe
 // Inbox and approvals open for every account that may open them; `phone` below is the one place that decides. Every
 // other page (planning, Configuration, Rules…) is for a desktop.
 /** Sections that need a permission beyond Configuration itself (the server refuses the rest): GitHub is the Developer's. */
-const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.github',ai_provider:'ai.providers',notifications:'notification.policy.update'};
+const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.github',ai_provider:'ai.providers',notifications:'notification.policy.update',branding:'branding.configure'};
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
@@ -455,7 +469,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   // Admins and coordinators, plus whoever holds a section's own permission (an operator's GitHub/AI provider): AO-001.
   configuration:{title:'Configuration',roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,...Object.values(SECTION_PERMISSION)],live:['catalogue','settings','people','rules','access']},
   // Review routes (deciding proposals) on a phone; People & roles and Role history stay on the desktop (PAGE_TABS `phone`).
-  access:{title:'Access & approvals',phone:parts=>tabsFor('access').some(t=>t.phone&&(!parts[0]||t.key===parts[0])),roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ACCESS_SYSTEM_ROLES],live:['access','people','rules','requests']},
+  access:{title:'Access & approvals',phone:parts=>tabsFor('access').some(t=>t.phone&&(!parts[0]||t.key===parts[0])),roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN],live:['access','people','rules','requests']},
   system:{title:'System',roles:[CAPABILITY.CATALOGUE_READ,CAPABILITY.SYSTEM_OPERATIONS,CAPABILITY.AUDIT_READ,CAPABILITY.FEEDBACK_READ_ALL],
     live:['jobs','settings','access','people','catalogue','feedback']},
   // The Inbox follows the unread count the pulse carries (onPulse) and changes named for it.
@@ -509,14 +523,15 @@ const ctx=():Context=>({get me(){return me!;},get catalogues(){return catalogues
   fill:(id,s,person)=>openFill(id,s,undefined,person)});
 /** A draft session's fill panel on the Schedule (for an issue, or with its search set to one person's name). */
 function openFill(id:string,s:Row,issue?:FillIssue,q?:string){workspaceId=id;draftNone=false;queueFill(id,String(s.id),undefined,issue,q);toCalendar(s);navigate(routeHash('schedule',[schedView,planDay],{edit:id}).slice(1));}
-const choices=(items:Row[])=>items.map(r=>({value:r.id,label:labelOf(r)}));
+// People are listed by name; other records keep the order the server gives them (ranks and leave types have their own).
+const choices=(items:Row[],people=false)=>{const list=items.map(r=>({value:r.id,label:labelOf(r)}));return people?list.sort(byLabel):list;};
 // What the bulk screens read from the app (bulk.ts): condition fields, a field's choices, record names, roles.
 // The catalogue a field picks from is its contract `ref`; a field named <thing>_id picks from <things> when it has none.
 const refOf=(key:string,ref?:string)=>ref||[key.replace(/_ids?$/,'s'),key.replace(/y_ids?$/,'ies'),key.replace(/_ids?$/,'')].find(k=>catalogues[k]);
 setBulkContext({
   conditionFields:keys=>[...ruleConditionFields(ctx()).filter(f=>keys.includes(f.key)&&!isTyped(f.key)),...typedFields(keys)],
   choices:(f,key,collection)=>{if(key==='weekdays')return weekdayOptions();if(key==='tags')return [...new Set(rows(collection).flatMap(r=>(r.tags||[]) as string[]))].sort().map(t=>({value:t,label:t}));
-    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false)):undefined;},
+    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false),kind==='people'):undefined;},
   permits:(...roles)=>permits(...roles),
   stagedCount:()=>Number((me as Row|null)?.bulk_staged_count||0),
   reviewCount:()=>Number((me as Row|null)?.bulk_review_count||0),identity:()=>me?.identity_id||'',
@@ -623,11 +638,10 @@ async function showLogin(reason='',resume=''){
   // The account last used on this device: "Continue as <name>", with its password only (or the institutional
   // sign-in), "Use another account", and a remove button for shared computers.
   const known=rememberedAccount(),continuing=known&&(passwords?!!known.username:config.institutional_login)?known:null;
-  // The brand (the app's own mark) and "Sign in": an internal tool needs no story (N-06).
-  const intro=el('p',{hidden:!continuing},continuing?'Continue where you left off.':'');
+  // The brand (the app's own mark) and "Sign in": an internal tool needs no story (N-06); the account card says who.
   // Test or production as the footer shows it: an icon in the card's corner, named in its tooltip.
   const production=config.deployment==='production';
-  const formWrap=el('div',{class:'login-form'},envBadge(production,production?'Production: real rotas and people':'Test environment: test accounts only'),brandRow(),el('h1',{},'Sign in'),intro,reason?el('div',{class:'notice warning',role:'status'},reason):null);
+  const formWrap=el('div',{class:'login-form'},envBadge(production,production?'Production: real rotas and people':'Test environment: test accounts only'),brandRow(),el('h1',{},'Sign in'),reason?el('div',{class:'notice warning',role:'status'},reason):null);
   // Institutional sign-in returns to this page, as the built-in one does; Remember me goes with it.
   const back:Record<string,string>=location.hash.length>1?{next:location.hash}:{};
   const startUrl=(remembered:boolean)=>'/auth/start?'+new URLSearchParams({...back,...(remembered?{remember_me:'true'}:{})});
@@ -639,7 +653,7 @@ async function showLogin(reason='',resume=''){
     :el('a',{class:'button primary',href:startUrl(false)},continuing?'Continue as '+continuing.name:'Continue with institutional sign-in')):null;
   institutional?.addEventListener('click',()=>{institutional.setAttribute('href',startUrl(remember.input.checked));});
   const chip=continuing?el('div',{class:'login-account'},avatar(continuing.name),
-    el('div',{class:'who'},el('strong',{class:'truncate'},continuing.name),continuing.username?el('small',{class:'truncate'},continuing.username):null),
+    el('div',{class:'who',id:'login-account-who'},el('strong',{class:'truncate'},continuing.name),continuing.username?el('small',{class:'truncate'},continuing.username):null),
     iconButton('Remove '+continuing.name+' from this device','close',()=>{forgetAccount();void showLogin(reason);})):null;
   if(chip)formWrap.append(chip);
   let password:ReturnType<typeof field>|null=null,forget:(()=>void)|null=null;
@@ -648,6 +662,7 @@ async function showLogin(reason='',resume=''){
     // provider); an unknown one behaves like any password account.
     const username=field('Username or email','text',continuing?.username||'',{required:true,autocomplete:'username',spellcheck:false,autocorrect:'off',autocapitalize:'none'});password=field('Password','password','',{id:'current-password',required:true,autocomplete:'current-password'});
     password.wrap.querySelector('label')!.htmlFor=password.input.id;
+    if(continuing)password.input.setAttribute('aria-describedby','login-account-who');  // whose password, said with the field
     // The password step keeps the username in the form, hidden (password managers read it); continuing, the account
     // chip says who, else the name typed with "Not you? Change".
     const pw=password,submit=el('button',{type:'submit',class:'button primary'},'Continue');
@@ -658,7 +673,7 @@ async function showLogin(reason='',resume=''){
     let identified=false,onChip=!!continuing;
     const showPassword=(on:boolean)=>{identified=on;pw.wrap.hidden=!on;pw.input.required=on;username.wrap.hidden=on||onChip;
       whoRow.hidden=!on||onChip;who.textContent=username.input.value.trim();submit.textContent=on?'Sign in':'Continue';};
-    const form=el('form',{}),error=el('div',{id:'login-error','aria-live':'assertive'});form.append(whoRow,username.wrap,password.wrap,remember.wrap,error,submit);
+    const form=el('form',{}),error=el('div',{id:'login-error','aria-live':'assertive'});form.append(whoRow,username.wrap,password.wrap,error,remember.wrap,submit);
     let department:Field<HTMLSelectElement>|null=null;
     const forgetDepartment=()=>{department?.wrap.remove();department=null;};
     showPassword(false);
@@ -671,11 +686,18 @@ async function showLogin(reason='',resume=''){
       submit.disabled=true;error.replaceChildren(message);
       waitTimer=window.setInterval(()=>{left--;if(!form.isConnected||left<=0){window.clearInterval(waitTimer);submit.disabled=false;error.replaceChildren();return;}count.textContent=String(left);},1000);};
     const delay=(err:unknown)=>err instanceof ApiError&&err.status===429?Number((err.details as {retry_after?:unknown}|undefined)?.retry_after)||1:0;
-    const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s)wait(s);else error.replaceChildren(note((err as Error).message,'error',err));};
-    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal says why under the
-    // password, keeps what was typed and puts focus back there; success opens the app frame at once (boot).
+    // A wrong password for the remembered account names that account, with the way to another one beside it.
+    const refused=(err:unknown)=>{if(wrongOrigin(err,formWrap))return;const s=delay(err);if(s){wait(s);return;}
+      const named=identified&&onChip&&continuing&&err instanceof ApiError&&err.code==='INVALID_LOGIN'?continuing:null;
+      const message=note(named?`Unable to sign in as ${named.name} with this password.`:(err as Error).message,'error',err);
+      if(named)message.append(' ',el('button',{type:'button',class:'link-button',onclick:useAnother},'Use another account'));
+      error.replaceChildren(message);};
+    // Only the button changes while signing in (spinner, "Signing in…", fields locked). A refusal keeps what was
+    // typed and shows its reason; success opens the app frame at once (boot).
     form.addEventListener('submit',async e=>{e.preventDefault();if(submit.getAttribute('aria-busy')||submit.disabled)return;
-      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();pw.input.removeAttribute('aria-invalid');
+      const inputs=[username.input,pw.input];inputs.forEach(i=>{i.readOnly=true;});error.replaceChildren();
+      pw.input.removeAttribute('aria-invalid');
+      if(onChip)pw.input.setAttribute('aria-describedby','login-account-who');else pw.input.removeAttribute('aria-describedby');
       const accountActions=[...formWrap.querySelectorAll<HTMLButtonElement>('.login-account button,.login-switch')];accountActions.forEach(b=>{b.disabled=true;});
       if(department)department.input.disabled=true;
       const done=busy(submit,identified?'Signing in…':'Continuing…');
@@ -694,18 +716,20 @@ async function showLogin(reason='',resume=''){
           form.insertBefore(department.wrap,remember.wrap);announce('Choose a department to continue.');department.input.focus();return;
         }
         refused(err);
-        pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby','login-error');pw.input.focus();pw.input.select();return;}
+        if(err instanceof ApiError&&err.code==='FORBIDDEN'){department?.input.focus();return;}
+        if(err instanceof ApiError&&err.code==='UNPROVISIONED_IDENTITY')return;
+        pw.input.setAttribute('aria-invalid','true');pw.input.setAttribute('aria-describedby',onChip?'login-account-who login-error':'login-error');pw.input.focus();pw.input.select();return;}
       rotatedNow();
       await boot(root.querySelector<HTMLElement>('.login-layout'));});formWrap.append(form);
     // A local countdown belongs to the name it was for: another account starts with Continue available (the server still decides).
     if(continuing)forget=()=>{stopWait();onChip=false;forgetDepartment();username.input.value='';pw.input.value='';remember.input.checked=false;
-      error.replaceChildren();pw.input.removeAttribute('aria-invalid');showPassword(false);username.input.focus();};
+      error.replaceChildren();pw.input.removeAttribute('aria-invalid');pw.input.removeAttribute('aria-describedby');showPassword(false);username.input.focus();};
   }
   // "Use another account": back to the generic sign-in (the empty form, or the plain institutional button).
-  const another=continuing?el('button',{type:'button',class:'link-button login-switch',onclick:(e:Event)=>{
-    chip?.remove();(e.currentTarget as HTMLElement).remove();intro.hidden=true;
+  function useAnother(){chip?.remove();another?.remove();
     if(institutional&&!passwords)institutional.textContent='Continue with institutional sign-in';
-    if(forget)forget();else institutional?.focus();}},'Use another account'):null;
+    if(forget)forget();else institutional?.focus();}
+  const another=continuing?el('button',{type:'button',class:'link-button login-switch',onclick:useAnother},'Use another account'):null;
   if(institutional)formWrap.append(...(passwords?[institutional]:[remember.wrap,institutional]));
   if(another)formWrap.append(another);
   if(!config.institutional_login&&!passwords)formWrap.append(note('Identity integration is not configured. Contact the institutional operator.','error'));
@@ -843,7 +867,7 @@ window.addEventListener('pageshow',e=>{if(!e.persisted)return;if(!me){location.r
 function shortcutsDialog(){
   showDialog('Keyboard shortcuts','',body=>body.append(table(['Shortcut','Action'],[
     [el('kbd',{},'Ctrl K'),'Search pages and actions'],[el('kbd',{},FEEDBACK_KEY),'Send feedback about this page'],[el('kbd',{},'?'),'Show this list'],[el('kbd',{},'Esc'),'Close a menu, panel or dialog'],
-    [el('kbd',{},'Ctrl Z'),'Undo the last change'],[el('kbd',{},'Ctrl Shift Z'),'Redo what you just undid (also Ctrl Y)'],
+    [el('kbd',{},'Ctrl Z'),'Undo the last change'],[el('kbd',{},MESSAGES_KEY),'Go to the newest message and its Undo (Esc goes back)'],[el('kbd',{},'Ctrl Shift Z'),'Redo what you just undid (also Ctrl Y)'],
     // Schedule keys, named as its views are.
     ...(allowed('schedule')?SCHED_VIEWS.map(v=>[el('kbd',{},v.letter),`Schedule: ${v.label} view`]):[]),
     ...(allowed('schedule')?[[el('kbd',{},'J'),'Fix list focus: next cause'],[el('kbd',{},'K'),'Fix list focus: previous cause']]:[])])));
@@ -1083,21 +1107,21 @@ window.addEventListener('server-health',e=>{const now=(e as CustomEvent).detail;
 let wasDown=false,probing=false,pageFailed=false;
 /** A refresh failed (a server error or offline): a page still showing data says, once, how old it is, with Retry
  *  (and, for a server error, its message and Report this problem). Shared by every page (it sits above the page's own
- *  header and toolbar, which stay); any successful read of the page clears it. A page that showed nothing says only
- *  that it didn't load. */
+ *  header and toolbar, which stay); any successful read of the page clears it. A page that showed nothing shows
+ *  readFailed() instead. */
 let stale=false,staleError:unknown=null,freshAt=Date.now(),staleBanner:{text:string;node:HTMLElement}|null=null;
 function showStale(on:boolean,error?:unknown){
   if(!on){stale=false;staleError=null;freshAt=Date.now();}else{if(!stale)staleError=null;stale=true;if(error)staleError=error;}
   const main=document.querySelector<HTMLElement>('#main');main?.querySelector(':scope>.stale-banner')?.remove();
   if(!stale||!main?.hasAttribute('data-loaded-view')||['restricted','desktop-only'].includes(main.dataset.loadedView||''))return;
-  // One line (N-11): what failed and how old the data is; a server's own message follows it as text (read on touch and
-  // by keyboard too) with Report this problem (lost connection: nothing for the team to fix, so no report, N-10).
+  // One line (N-11): what failed and how old the data is; a server's own words (errorWords) follow it as text (read on
+  // touch and by keyboard too) with Report this problem (lost connection: nothing for the team to fix, so no report, N-10).
   // Worded again when offline becomes a server error.
-  const server=staleError instanceof ApiError&&staleError.status>=500;
-  const text=`Couldn’t refresh · showing data from ${formatTime(new Date(freshAt).toISOString(),zone())}`,key=text+(server?' '+(staleError as Error).message:'');
+  const server=staleError instanceof ApiError&&staleError.status>=500,said=server?errorWords(staleError):'';
+  const text=`Couldn’t refresh · showing data from ${formatTime(new Date(freshAt).toISOString(),zone())}`,key=text+(server?' · '+said:'');
   // The same banner is put back on each redraw: its error is recorded (feedback's recent errors) once, not per draw.
   if(staleBanner?.text!==key){const banner=note(text,server?'error':'warning',server?staleError:undefined);banner.classList.add('stale-banner');banner.setAttribute('role','status');
-    if(server)banner.querySelector(':scope>span')?.append(' · '+(staleError as Error).message);
+    if(said)banner.querySelector(':scope>span')?.append(' · '+said);
     banner.prepend(icon('alert'));banner.append(button('Retry',retryRefresh,'secondary small'));staleBanner={text:key,node:banner};}
   main.prepend(staleBanner.node);
 }
@@ -1442,6 +1466,7 @@ let refreshForeground:string|null=null,refreshSkipped=false,redrawOwed=false;
 /** The next render is a wait the person started (an explicit Refresh or Retry, a save's follow-up): it may show the top
  *  bar. A navigation (a new page or address) always may; a background redraw (a live update, polling) never does. */
 let foregroundRender=false,renderedHash='';
+const rulesSource={workspace:''};
 // A live change names its scopes: the next refresh reads only what they can change. undefined: none owed; null: everything.
 let refreshScopes:Set<LiveScope>|null|undefined;
 // The changes behind refreshScopes (their ids, e.g. which rota), for kept answers per record (api.ts forgetReads).
@@ -1497,7 +1522,7 @@ async function loadLists(full=false){
     // Unread contacts fail the whole reply (never an empty directory): its versions are not kept, so the next refresh
     // reads the people and their contacts again.
     const contacts=new Map((await background<{people:Row[]}>('/api/directory')).people.map(d=>[d.id,d]));
-    reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section}:p;});
+    reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section,contacts:d.contacts}:p;});
   }
   // Replies apply in the order the reads started: one that started earlier and lands later (a refresh overtaken by a
   // sign-in or role change) is dropped, never merged over fresher lists.
@@ -1559,7 +1584,13 @@ async function rotateIfDue(){let last=0;try{last=Number(localStorage.getItem(ROT
 /** The deployment's branding, read once per page load and never waited for: sign-in and start-up draw at once with what
  *  is shown (the generated defaults until it answers; unread or unreadable, they stay). A saved change or its Undo
  *  applies its reply at once. */
-const readBranding=()=>void request<unknown>('/api/branding').then(v=>applyBranding(parseBranding(v)),()=>{});
+const readBranding=()=>{
+  // This public read still applies when boot clears the signed-out session.
+  const stop=new AbortController(),timer=setTimeout(()=>stop.abort(),READ_TIMEOUT);
+  void fetch('/api/branding',{credentials:'omit',cache:'no-store',signal:stop.signal})
+    .then(r=>r.ok?r.json():null).then(v=>{if(v)void applyBranding(parseBranding(v));},()=>{})
+    .finally(()=>clearTimeout(timer));
+};
 window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(String(d?.kind).startsWith('branding.')&&d.result?.branding)void applyBranding(parseBranding(d.result.branding));});
 async function boot(card?:HTMLElement|null){
   // Each start (Retry, a role change) supersedes the one before: it asks afresh instead of joining a read that may be
@@ -1659,6 +1690,7 @@ async function renderPage(live=false){
   const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
+  if(changedPage||view!=='rules'||routeParts.length)rulesSource.workspace='';
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
@@ -1705,7 +1737,6 @@ async function renderPage(live=false){
   // A planner redraw (view, filter, live update, save) keeps the shell and the current grid on screen until the new
   // one is ready: no "Loading…" flash, and the grid keeps its scroll position. Other pages rebuild the shell.
   const keep=view==='schedule'&&!schedSubPage()&&!changedPage&&!!document.querySelector('.topbar .planner-bar')&&!!document.querySelector('#main .planner-main');
-  const scroll=keep?plannerScroll():null;
   // Configuration: switching sections keeps the old section on screen (inert) until the new one is ready, instead of a
   // blank "Loading…". shortcut: Configuration only; pages that query their own DOM while loading would see the stale copy.
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
@@ -1755,7 +1786,8 @@ async function renderPage(live=false){
       const source=!routeParts.length&&!routeQuery.has('exception')&&ruleCatalogueOn()?find('policies',routeQuery.get('source')||''):undefined;
       const entry=source&&source.status!=='retired'?catalogueEntryOf(source.definition?.rule):undefined;
       if(entry){routeQuery.delete('source');return navigate(`rules/${encodeURIComponent(entry.id)}`);}
-      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead});else await rulesPage(t);
+      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead,
+        source:rulesSource,frame:()=>{if(t.isConnected){liftHeader(t);liftFooterStatus(t);closeOrphanPopover();}}});else await rulesPage(t);
       // Needs you › Rule exception links the record itself (home.py: ?source=<rule>&exception=<id>).
       if(routeQuery.has('exception'))exceptionsPanel(routeQuery.get('exception')!);
       else if(routeQuery.has('source'))await openRuleSource(routeQuery.get('source')!);
@@ -1763,9 +1795,9 @@ async function renderPage(live=false){
       // Needs you › Rule exceptions (the server's link_target "#rules?exceptions=1") opens what waits.
       else if(routeQuery.has('exceptions'))exceptionsPanel();},
     configuration:configurationPage,
-    // Admins and Developers: one /api/access read serves People & roles, Role history and both tab counts, for the visit
+    // One /api/access read serves People & roles, Role history and both tab counts for the visit
     // (a save, the pulse or leaving the page reads it again).
-    access:t=>{const data=permits(CAPABILITY.ADMIN)||may('access.system_roles')?accessRead||=get<Row>('/api/access').catch(e=>{accessRead=null;throw e;}):null;
+    access:t=>{const data=permits(CAPABILITY.ADMIN,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN)?accessRead||=get<Row>('/api/access').catch(e=>{accessRead=null;throw e;}):null;
       return pageTabs(t,{people:t=>accessPage(t,data!,'people'),routes:t=>routingPage(ctx(),t,{phone:phoneLite()}),history:t=>accessPage(t,data!,'history')},
         data?()=>data.then(a=>({people:a.identities.length,history:a.bindings.length})).catch(()=>({})):undefined);},
     system:t=>pageTabs(t,{imports:dataPage,bulk:async t=>bulkEditorPage(t,ctx()),operations:operationsPage,audit:auditPage,feedback:t=>feedbackPage(t,{mine:false,query:routeQuery,triage:may('feedback.triage'),github:may('feedback.export_github')})}),
@@ -1786,7 +1818,7 @@ async function renderPage(live=false){
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
-      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
+      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){const scroll=plannerScroll();keepFocus(main,()=>main.replaceChildren(body));scroll();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
       void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
       closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
@@ -2046,9 +2078,14 @@ const checkSaid=()=>checkingWords(checkJob?checkJob.status:checkSync?'running':'
 /** The job's status moved (queued → running): every check line drawn says it in place, without a redraw. */
 const sayCheck=()=>{for(const line of document.querySelectorAll<HTMLElement>('[data-check-line]')){const said=checkSaid();
   if(line.dataset.checkLine!==said){line.dataset.checkLine=said;line.childNodes[1].textContent=said+' · ';line.querySelector('button')?.setAttribute('aria-label','Cancel: '+said.toLowerCase());}}
-  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();};
+  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();
+  // Submit, Approve and Publish held for this check say what its line says (schedulePage checkHold).
+  for(const b of document.querySelectorAll<HTMLElement>('[data-check-hold]'))notYet(b,checkSaid());};
 /** Someone is mid-task (a dialog, a popover, a field, a session panel): a redraw would rebuild it under them. */
-const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]'))||!!document.activeElement?.closest('.wk-panel');
+const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]')&&!document.activeElement.matches('.wk-panel input[type=search]'))
+  // A session panel is mid-task while it saves or a reason or confirm is open; idle (after its save), the check's result
+  // draws beside it at once (its redraw keeps the panel and its focus), so the next edit never waits for it.
+  ||!!document.querySelector('.wk-panel :is(.save-mark.saving,.wk-save-slot .spinner,form,.armed)');
 /** The bound passed with the job still queued (at once when no worker answers): the page takes the check over, once; a
  *  job it may not take over again stops saying it waits (drawn once nobody is mid-task). */
 const checkDue=(id:string)=>{const job=checkJob;if(job?.id!==id||!autoChecking)return;
@@ -2067,15 +2104,19 @@ function takeOver(job:NonNullable<typeof checkJob>){checkTaken.add(job.id);check
     if(checkJob?.id===job.id)checkJob=null;checkSync=true;sayCheck();checkWake(job.id);
     sayCancel();  // the server cannot stop this one
     await command('workspace.validate',{reason:'Automatic rota check',automatic:true},job.w.id,job.w.revision);
-  })().catch(e=>{checkGone=job.id;checkUnstarted=job.key;checkWake(job.id);throw e;});
+  })().catch(e=>{checkGone=job.id;checkWake(job.id);throw e;});
   done.catch(()=>{});  // read by the job's wait (waitCheck)
   checkOwn={id:job.id,done};}
 /** The joined job's wait. Null: Cancel set it aside, or this page took it over and checked the rota itself. */
-const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
+const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=checkGone===id?null:
+    await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
   if(last&&DONE_JOB.includes(last.status))checkEndedSeen(last);
   // A status read can see this page's own take-over cancel before the cancel's reply: the take-over says what happened.
   if(checkGone!==id&&checkOwn?.id===id&&last?.status==='cancelled')await checkOwn.done.catch(()=>{});
-  if(checkGone!==id)return last;if(checkOwn?.id===id)await checkOwn.done;return null;};
+  if(checkGone!==id)return last;
+  // A whole-rota read can change the key while the same queued job still owns the failed take-over.
+  if(checkOwn?.id===id)await checkOwn.done.catch(e=>{if(autoCheckKey===key)checkUnstarted=key;throw e;});
+  return null;};
 const stopJob=(id:string)=>command('job.cancel',{reason:'Cancelled the rota check'},id).catch(e=>{if(!sessionChanged(e))reportError(e);});
 const cancelCheck=()=>{checkCancelled=autoCheckKey;autoChecking=false;if(checkJob?.key===autoCheckKey)void stopJob(checkJob.id);void redraw();};
 const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
@@ -2102,7 +2143,9 @@ const readWorkers=(id:string,w:Row,then:()=>void)=>{let read=workerReads.get(id)
     while(workerReads.size>8){const old=workerReads.keys().next().value!;workerReads.delete(old);jobWorkers.delete(old);}}
   void read.then(then,()=>{});};
 /** Each status read of the joined job: its words follow it. */
-const checkSeen=(j:Row)=>{if(checkJob?.id!==j.id||checkJob.status===j.status)return;const was=checkStalled();checkJob.status=String(j.status);
+const checkSeen=(j:Row)=>{if(checkJob?.id!==j.id||checkJob.status===j.status)return;
+  if(j.status==='failed'&&j.error_code==='STALE_INPUTS')return;  // maybe replaced by a newer edit's check: checkEnded says
+  const was=checkStalled();checkJob.status=String(j.status);
   if(was)void redraw();else sayCheck();};  // picked up after all: the pill gives way to the running check
 /** One rota check: a validation job (waited for, read each second) when workers serve jobs, else synchronous.
  *  shortcut: a worker lost after its probe leaves the job queued (Cancel still stops it). */
@@ -2127,8 +2170,11 @@ async function runCheck(w:Row,key:string,existing?:Row):Promise<Row|null>{
 /** The joined job ended. Set aside by someone else (their Cancel, or a take-over from another page on this rota): the
  *  rota's check is read first, and only one that is not current stopped (rule_check_api.ts checkEndedStopped, DL-024).
  *  A stale or failed job names why, as a refused synchronous check does (maintenance cause via its input changes). */
-async function checkEnded(last:Row,w:Row,key:string):Promise<Row>{
+async function checkEnded(last:Row,w:Row,key:string):Promise<Row|null>{
   if(checkCancelled===key)return last;  // this person's own Cancel: "Not checked" (autoCheck)
+  // Failed as stale because the rota was edited again (queue_validation): the newer edit's check counts, so this one is
+  // dropped like a check superseded before it started, never drawn as stopped, also before the newer check is on the page.
+  if(last.error_code==='STALE_INPUTS'&&await rotaMeta(String(w.id)).then(d=>d.workspace.revision>w.revision,()=>false))return null;
   const current=last.status==='cancelled'&&await rotaCheckCurrent(String(w.id));
   if(!checkEndedStopped(last.status,current))return last;
   const details=last.error_code==='STALE_INPUTS'?await get<Row>(`/api/jobs/${last.id}/input-changes?offset=0&limit=1`).then(r=>({changed_facts:r.changes}),()=>undefined):undefined;
@@ -2146,26 +2192,36 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   autoCheckKey=key;autoChecking=true;checkStarted=existing?Date.parse(existing.started_at||existing.created_at)||Date.now():Date.now();checkStop=null;checkCancelled='';checkUnstarted='';
   checkSync=!existing&&!workersKnown()&&!serverChecking(w.validation);  // runCheck's own choice, known before the footer draws
   // Show the result without disturbing someone mid-task: wait while a dialog is open or a field has focus.
-  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;// Working in a session panel counts too: a redraw would rebuild it under the person.
-    // The rota's Workload targets dock is not busy: its refresh redraws only the targets. Nor is the Fix list panel: it is
-    // drawn again in place with the checked counts, keeping the focus where it was (drawFixPanel), so the footer, the
-    // grid and the panel never wait on it (QA cycle 3 maintenance).
-    // ME-21: focus left on the Auto-schedule panel (its Apply) is not work in progress: the panel survives a redraw (its
-    // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
-    if(checkBusy()){setTimeout(()=>settle(job),1500);return;}
+  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;
+    // The result is taken in as it lands (its job is this page's own from now: onPulse skips its pulse); only the redraw
+    // waits for someone mid-task.
     // A complete-check delta replaces the held validation in place. This is the
     // same authority boundary as an edit delta; missing/stale/partial deltas
     // fall back to the authoritative workspace read.
     const patched=job&&applyCheckDelta(scheduleCache.drafts.get(w.id),job);
-    if(patched){scheduleCache.drafts.set(w.id,patched);if(job?.id)checkSettled.set(String(job.id),Date.now());void redraw();void loadNavBadges(true,['workspace.validate']);return;}
+    if(job?.id)checkSettled.set(String(job.id),Date.now());
     // The check changed only this rota's results: read the rota and its row again (a refresh after a job command would
     // redraw them from memory, leaving "Needs a check" up), never the account and lists.
-    if(job?.id)checkSettled.set(String(job.id),Date.now());
-    readAfresh();forgetSchedule();void redraw();void loadNavBadges(true,['workspace.validate']);};  // never join a read begun before the check landed
+    if(patched)scheduleCache.drafts.set(w.id,patched);else{readAfresh();forgetSchedule();}  // never join a read begun before the check landed
+    // A draw begun since it landed (the person's own view change) read the checked rota and shows it: no second one.
+    const landed=renderSerial;
+    const show=()=>{if(view!=='schedule'||workspaceId!==w.id||renderSerial!==landed&&!redrawOwed)return;
+      // Working in a session panel counts too: a redraw would rebuild it under the person.
+      // The rota's Workload targets dock is not busy: its refresh redraws only the targets. Nor is the Fix list panel: it is
+      // drawn again in place with the checked counts, keeping the focus where it was (drawFixPanel), so the footer, the
+      // grid and the panel never wait on it (QA cycle 3 maintenance).
+      // ME-21: focus left on the Auto-schedule panel (its Apply) is not work in progress: the panel survives a redraw (its
+      // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
+      if(checkBusy()){setTimeout(show,1500);return;}
+      void redraw();};
+    show();void loadNavBadges(true,['workspace.validate']);};
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
-  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key)return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key)return;autoChecking=false;
+  // Superseded by a newer edit's check on this rota (autoCheckKey moved on): this one's result is dropped, never drawn,
+  // and the checking state stays the newer check's.
+  const superseded=()=>autoCheckKey!==key&&autoCheckKey.startsWith(w.id+':');
+  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
     // The page's own take-over failed too: the check hasn't started (the footer pill says so), with why.
     if(checkUnstarted===key){if(!sessionChanged(e))reportError(e);}
     // It names what stopped it (maintenance's cause) above the grid with Check again, never a toast that goes away (B7).
@@ -2417,7 +2473,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const reading=partial(draftData),hold=<T extends HTMLElement>(n:T):T=>reading?notYet(n,WHOLE_LOADING):n;
   let wholeBusy:HTMLElement|null=null;  // the footer's busy pill while reading: gone if the whole read fails
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
-  const draft=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),fresh=!!draftData&&w!.validation_current===true;
+  const draftAccess=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id);
+  const draft=draftAccess&&!w!.archived_at,fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
   // The server says a check job exists (a provisional check): join it, so the status shown is that job's own.
   if(draft&&whole&&(!fresh||serverChecking(w!.validation)))autoCheck(whole);
@@ -2451,11 +2508,13 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The issued check as stored (team readers; staff get only whether it was valid): never a fresh check of the source.
   const issued=source?.original_validation as {coverage?:Row[];findings?:Row[]}|undefined;
   const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
-  const layer=sourceWindow||win;
+  const layer=sourceWindow||win,team=may('schedule.read_team');
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
-  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,!draftData&&publishedLive?.key===liveKey(layer)?stagedCoverage(publishedLive.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  const liveCheck=!draftData&&publishedLive?.key===liveKey(layer)?publishedLive:null;
+  const shown=layered(draftData||null,layer,layerMode,period,zoneNow,liveCheck?stagedCoverage(liveCheck.evaluation as unknown as {coverage:Row[]}) as unknown as Evaluation:null);
+  if(!draftData&&!(source?may('publications.read_team'):team))shown.participantsFiltered=true;
   // Live coverage of the published days (open places from leave recorded since): planners, and staff for their own duties.
   // SW-15: only roles the server lets read it (publications.read_team, else a staff member's own duties), never a 403.
   if(!draftData&&(permits(CAPABILITY.PUBLICATIONS_READ_TEAM)||permits(CAPABILITY.STAFF))&&layer&&!source)void loadLiveCoverage(layer);
@@ -2534,19 +2593,21 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       void run.then(()=>{if(!b.isConnected)return;const why=b.getAttribute('aria-describedby');b.replaceWith(approveButton());if(why)document.getElementById(why)?.remove();});return b;};
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
+      if(w.status==='submitted'&&!w.archived_at&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
-    if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
+    if(w.status==='submitted'&&!w.archived_at&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
       else if(data&&decidesStep(data))workflow.append(approveButton());}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
-    if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
+    if(w.status==='submitted'&&!w.archived_at&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
     // Named after the step that happens next: a draft is submitted for review; an approved rota is published.
     const step=w.status==='draft'?'Submit for review…':'Publish…',sandbox=w.purpose==='sandbox',rota=sandbox?rotaFor(w,work):null;
     // maintenance: your own draft merges into the period's rota instead of being submitted (a sandbox is never submitted).
-    if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
+    if(w.archived_at){
+      if(lifecycleOf(w)==='workspace.restore')workflow.append(button('Restore',()=>restoreRota(w,restoredRota).catch(reportError),'secondary'));
+    }else if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
       ring:ids=>{for(const n of document.querySelectorAll('.cause-ring'))n.classList.remove('cause-ring');for(const id of ids)for(const n of document.querySelectorAll(`[data-session~="${CSS.escape(id)}"]`))n.classList.add('cause-ring');},
       done:id=>chooseDraft(id),person:id=>name('people',id),before:(f=>f?{must:f.must,places_open:f.places_open}:null)(fixSummaryOf(rota.health?.summary))}),'secondary',{'aria-label':'Merge into rota…'}),'fork'));
     // SW3-A-11 (D41): no rota for the period to merge into is said where Merge is, with who can fix it (never a missing
@@ -2556,15 +2617,15 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
     // One predicate for Reopen: the note below shows exactly when the button does not.
-    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    const mayReopen=!w.archived_at&&['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
     if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
     // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
-    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
+    if(!w.archived_at&&outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
     for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
-    statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
+    statusPill=(!w.archived_at&&sandboxPill(w,me!.identity_id))||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
     // SW3-A-11: a private draft with no rota says whether Rota Coordinators exist; a list that changes redraws it.
     if(permits(CAPABILITY.COORDINATOR))void rotaCoordinators().then(ids=>{const changed=ids.join()!==rotaCoordinatorIds.join();rotaCoordinatorIds=ids;if(changed&&sandbox&&!rota)void redraw();},()=>{});
@@ -2578,13 +2639,13 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // is the footer's too; the rota list's summary only until one is held.
     const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
     const resolveNow=()=>{const first=resolveQueue(draftData!)[0];startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;if(first)toCalendar(first.shift);renderPage();};
-    // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
+    // Archived drafts can show saved runs. Only a live draft can capture a baseline or run.
     const missingBaseline=draft&&!w.baseline;
-    auto=permits(CAPABILITY.COORDINATOR)&&draft?(missingBaseline
+    auto=draftAccess?(missingBaseline
       ?hold(button('Capture baseline',()=>void captureDraftBaseline(w,refresh).catch(reportError),'secondary',{'aria-label':'Capture baseline','data-tip':'Capture this draft\'s immutable inputs before auto-schedule'}))
       :el('button',{type:'button',class:'button secondary auto-button'+(whole&&proposalShown(whole)?' has-proposal':''),
         // D59: whole-rota work waits for the whole rota: held in place, focusable, saying why (notYet).
-        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':'Auto-schedule · fill open places using your rules'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
+        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':draft?'Auto-schedule · fill open places using your rules':'Auto-schedule · view saved runs'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
     if(auto&&!whole)notYet(auto,WHOLE_LOADING);
     side.hidden=!autoOpen;
     // Help reads the views that draw sessions; Year and Month (day health) have their own key.
@@ -2598,9 +2659,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     const stalled=unstarted||autoChecking&&draft&&checkJob?.key.startsWith(w.id+':')===true&&checkStalled();
     const unfinished=unstarted?CHECK_NOT_STARTED:stalled?checkingWords(checkJob!.status,Date.now()-checkJob!.since,jobWorkers.get(checkJob!.id)):draft&&(!fresh||serverChecking(w.validation))&&checkStop?.rota===w.id?checkingWords('failed'):'';
     const refused=!stalled&&!!unfinished&&checkStop!.refused;
+    // This person cancelled the latest revision's check: nothing is queued, so it is "Not checked", never "Waiting to check".
+    const cancelled=!unfinished&&draft&&(!fresh||serverChecking(w.validation))&&!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w.id+':');
     if(unfinished){validate.lastElementChild!.textContent=refused?unfinished:unfinished+' · '+CHECK_AGAIN;validate.disabled=refused;delete validate.dataset.tip;
       if(refused)validate.setAttribute('aria-describedby',CHECK_STOPPED_WHY);}  // DL-007: a disabled control says why (the line above the grid)
-    else if(draft&&!fresh&&!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w.id+':')){validate.classList.replace('warn','neutral');validate.lastElementChild!.textContent='Not checked';}
+    else if(cancelled){validate.classList.replace('warn','neutral');validate.lastElementChild!.textContent='Not checked';}
     // A recheck keeps the last counts with a spinner (R1: counts never blank) beside its elapsed time and Cancel (B7).
     const checking=autoChecking&&draft&&(!fresh||!!checkJob||serverChecking(w.validation))&&!stalled,longCheck=checkLine;
     // maintenance: a stored check that covers only the last edit (someone's, its complete check queued with the workers) is
@@ -2615,16 +2678,22 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     if(partialCheck&&!workersKnown())void reprobeWorkers(w.id+':'+w.revision);  // the stale "no worker" answer is asked again
     // A published rota has nothing to check in place (its changes are amendments): its footer is the published layer's.
     const kind=footerCheck({stalled,checking:!!checking,provisional:!!provisional,checked:!!w.validation,counts:!!fixSum,current:fresh,
-      partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished,whole:!!data,draft});
+      partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished||cancelled,whole:!!data,draft});
     const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
-    rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
+    rotaHealth=w.archived_at||outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
       :kind==='checking'?(fixSum?(p=>(p.append(longCheck()),p))(fixHealth(w.id,{...fixSum,checking:true},data,w)):longCheck())
       :kind==='provisional'?withWords(checkingWords(provisional!.status)):kind==='waiting'?withWords(waitingWord('queued'))
       :kind==='not-checked'?el('span',{class:'health-pill neutral'},icon('clock'),TERMS.notChecked):kind==='counts'?fixHealth(w.id,fixSum!,data,w)
       :kind==='checked'?el('span',{class:'health-pill neutral'},icon('check'),TERMS.checked)
       :kind==='stale'?staleHealth(fixHealth(w.id,{...fixSum!,stale:true} as FixSummary,data,w),validate):kind==='check-now'?validate
       :el('span',{class:'health-pill warn','data-tip':'The rota or its rules changed since the last check.'},icon('clock'),TERMS.needsCheck);
+    // Submit, Approve and Publish wait while the latest revision is not checked, whatever the check's state (running,
+    // waiting, stalled, not started, cancelled, failed): held in place (D59 notYet), saying what the footer says.
+    const checkHold=reading||!draft||fresh&&!serverChecking(w.validation)?'':kind==='checking'?checkSaid():kind==='provisional'?checkingWords(provisional!.status)
+      :kind==='waiting'?waitingWord('queued'):kind==='not-checked'?TERMS.notChecked
+      :['stalled','stale','check-now'].includes(kind)?validate.lastElementChild!.textContent!.split(' · ')[0]:TERMS.needsCheck;
+    if(checkHold)for(const b of workflow.children)if(b instanceof HTMLButtonElement){notYet(b,checkHold);if(kind==='checking')b.dataset.checkHold='';}
     // Overlaps: an undecided published rota on its days, or competing drafts. Both open the same overlap panel.
     const overlap=w.overlap||named?.overlap||work.find(r=>r.id===w.id)?.overlap;
     const conflicts=overlap?.publications?.length||0,competing=overlap?.drafts?.length||0;
@@ -2648,16 +2717,19 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
           ...(absenceIds.length&&absenceIds.length<=100?[item('Prepare cover for recorded absences','people',withDraft(d=>bulkImpactDialog(ctx(),d,absenceIds,'release_unavailable',()=>{})))]:[]),
           item('Exchange two assignments','swap',withDraft(d=>swapDialog(d)))]:[]),...(permits(CAPABILITY.COORDINATOR)?[item('Change a published rota…','edit',()=>void changePublished())]:[])),
         ...section('Share',...(draft&&w.visibility==='private'?[item('Share with schedulers…','eye',()=>shareDraft(w,refresh))]:[]),
-          ...(w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
+          ...(!w.archived_at&&w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
           ...publishedTools(free,false)),
         // Archive or Delete draft comes last on its own: the rota's own read (whole or compact) names it in
         // allowed_actions, so a rota past the list's first page has it too (rota_lifecycle.ts).
-        ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
+        ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(w.archived_at?null:lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
     },{label:'Rota tools',placement:'below-end',key:'rota-tools:'+w.id}),{class:'bare','aria-haspopup':'menu'});
     // A live update or check redraws the page: an open Rota tools menu stays open on the new button.
     queueMicrotask(()=>adoptPopover('rota-tools:'+w.id,tools!));
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
-    if(draft)undoButton=hold(iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'}));
+    if(draft&&!w.archived_at){
+      const b=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
+      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Undo availability is unknown');
+    }
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).
     if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=hold(redoBarButton());
@@ -2673,11 +2745,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   }
   const planning=w?planningOf(whole):null;
   const bar=el('div',{class:'planner-bar review-bar'},planner?switcher:el('div',{class:'department-title page-title'},el('h1',{},'Schedule')),statusPill||'',driftButton||'',planning&&w?groupScopeButton(w.id,planning):'',changeChip||'',el('span',{class:'grow'}),help||'',undoButton||'',redoButton||'',tools||'',auto||'',workflow);  // the main action (workflow) last, next to the bell
-  // Phones always take the smallest step: icon + count pills and icon-only actions on one row under the title.
-  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // A load that finishes after you have moved on must not take over the new page's top bar.
   if(mySerial!==renderSerial)return;
   swapPlannerBar(bar,target);
+  // Fit after the swap so fitRow can release the outgoing toolbar's observers.
+  fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||[bar,...bar.querySelectorAll<HTMLElement>('.health-pills')].some(e=>e.scrollWidth>e.clientWidth+1));
   // The bar now names the new rota or view. A body still on screen from another rota or view goes to its skeleton at
   // once, toolbar included, so the two states never mix while this one loads (S-27); a live redraw of the same view
   // keeps what it shows.
@@ -2688,8 +2760,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // ---- Body: the view, the auto-schedule panel beside it, rules in context ----
   const bodyWrap=el('div',{class:'planner-body'+(autoChecking&&draft&&!fresh?' is-working':'')});const mainCol=el('div',{class:'planner-main'});bodyWrap.append(mainCol,side);
   let reloadScheduling:(()=>Promise<void>)|undefined;
-  if(auto&&w?.baseline&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
-  else if(auto&&w?.baseline)auto.addEventListener('click',()=>unpin(()=>{
+  if(auto?.classList.contains('auto-button')&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
+  else if(auto?.classList.contains('auto-button'))auto.addEventListener('click',()=>unpin(()=>{
     // A superseded bar hands the press to the current one; the current bar while its redraw is still being attached
     // (bar swapped in first, body after) toggles its own panel, which then attaches open or closed.
     if(!side.isConnected&&currentAuto()!==auto){currentAuto()?.click();return;}schedulingSettings.open=side.hidden;side.hidden=!schedulingSettings.open;auto!.setAttribute('aria-expanded',String(schedulingSettings.open));if(schedulingSettings.open){closeWeekPanel();side.querySelector<HTMLElement>('summary,button')?.focus({preventScroll:true});
@@ -2817,7 +2889,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const showAllSessions=()=>{schedFilters={};schedConditions=null;searchText='';schedSearch=undefined;weekView.onlyOpen=false;weekView.onlyIssues=false;void redraw();};
   // Only your own duties in view: My duties on, or a reader the server gives only their own (maintenance); Show everyone where
   // the reader may see the team's.
-  const team=may('schedule.read_team'),mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
+  const mine={mine:!!me!.person_id&&(mineOnly||!team),onShowEveryone:mineOnly&&team?()=>{mineOnly=false;void redraw();}:undefined,
     nextDuty:team?undefined:async()=>{const next=(await upcoming(ctx())).duties[0];if(!next)return null;const on=toLocal(next.start,zone()).slice(0,10);
       return {label:`Next duty: ${formatDay(on,'UTC')}`,go:()=>navigate(`schedule/week/${on}`)};}};
   const editing=draft&&!reading;
@@ -2843,6 +2915,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   let listParts:Parameters<NonNullable<WeekHooks['onTable']>>[0]={};
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
   const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
+  // The live check lands after its read, in a later redraw (loadLiveCoverage): this says which page has it drawn.
+  viewPanel.toggleAttribute('data-live-checked',!!liveCheck);
   target.append(viewPanel);
   // The window on screen until the whole rota lands (wholeRota): read-only, its writes held; then the page draws it whole.
   // The week drawn from its window stays still (no dimming, no top bar) while the whole rota is read quietly; it is read,
@@ -2875,6 +2949,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   weekView.matchPeople=schedView==='people'?[]:about.length?about:byText?rows('people').filter(p=>byText(fullNameOf(p))).map(p=>String(p.id)):[];
   // An empty view tells the filters hiding everything (Show all) from a period with nothing in it (S-01).
   weekHooks.unfiltered=unfiltered;weekHooks.rota=rota;weekHooks.checking=autoChecking&&draft&&!fresh&&!checkStalled();
+  // The check behind the latest edit has ended without a result (failed, not started, cancelled) or nobody runs it.
+  weekHooks.checkEnded=()=>checkStop?.rota===w!.id||checkUnstarted.startsWith(w!.id+':')||!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w!.id+':')||checkStalled();
+  // An edit's reply: Submit, Approve and Publish are held at once (its check is queued), before the page redraws.
+  weekHooks.edited=()=>{for(const b of workflow.children)if(b instanceof HTMLButtonElement&&b.getAttribute('aria-disabled')!=='true')notYet(b,waitingWord('queued'));};
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
@@ -3313,8 +3391,8 @@ function printSheet(){
       try{
         const data=await read(selected.id,selected.current);if(!data||!body.isConnected||pub.input.value!==selected.id)return;
         // Names and allowed filters belong to this published version, including people and clinics since renamed or retired.
-        const people=choices(Object.values(data.snapshot.people)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
-        const clinics=choices(Object.values(data.snapshot.services)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
+        const people=choices(Object.values(data.snapshot.people),true);
+        const clinics=choices(Object.values(data.snapshot.services)).sort(byLabel);
         // S-23: the label is "Clinics"; what no tick means is said once beside it, not in the label.
         if(full&&clinics.length){service=multi('Clinics',clinics);service.wrap.append(el('small',{class:'hint'},'None ticked prints every clinic.'));}
         if(full&&people.length){person=select('Print person',people,'',false,'All people');person.wrap.classList.add('span-2');}
@@ -3488,6 +3566,7 @@ function rotaReviewSummary(form:HTMLElement,data:WorkspaceData,{o,fix}:Awaited<R
 }
 async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
   let w=data.workspace;
+  if(w.archived_at)throw new Error('Restore the archived rota before submitting it for review.');
   // The dialog belongs to the page and rota it was asked from: leaving either cancels it (LIVE-01).
   // SW3-B-02: the page, not the whole address: a redraw that rewrites the week or a query parameter meanwhile is not
   // leaving, and returning then left Submit doing nothing at all.
@@ -3526,16 +3605,10 @@ async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
       const result=await command('workspace.publish',{reason:why},w.id,w.revision);
       let discarded=0;
       for(const {d,discard} of competing)if(discard?.input.checked)await command('workspace.archive',{reason:`Not used: ${w.name} was published`},d.id,(await rotaMeta(d.id)).workspace.revision).then(()=>{discarded++;},reportError);
-      // The rota just published is shown as it now is (the published layer on its days), not whichever draft is next.
-      workspaceId='';draftNone=true;
       const stale=(result.outdated_drafts||[]) as Row[];
       // The Undo here (if any) is the discards': publishing itself is not undone. The dialog closes first, so the
       // confirmation is said on the published rota, not inside a closing dialog behind "Saving…" (ME-24).
       form.closest('dialog')?.remove();
-      // SW3-A-14: the header shows it published at once, with no Publish… or Reopen to press again; the redraw that
-      // follows (minutes under load) draws the published rota.
-      document.querySelector('.planner-bar .rota-status')?.replaceWith(rotaStatusPill({...w,status:'published'}));
-      document.querySelector('.planner-bar .rota-decisions')?.replaceChildren();
       // SW3-B-07: said as soon as the server confirms, not after the reads that redraw the page (minutes under load).
       const said=refresh();
       notify('Published · staff are told.'+(discarded?` Undo restores the ${discarded===1?'discarded draft':`${discarded} discarded drafts`}.`:'')+(stale.length?` ${stale.map(x=>x.name).join(', ')} now overlap${stale.length===1?'s':''} a published rota; open ${stale.length===1?'it':'them'} to choose how ${stale.length===1?'it fits':'they fit'}.`:''));
@@ -3827,7 +3900,7 @@ function scoreCheckHooks(){
   return {step,query:routeQuery,zone:zone(),canEdit:permits(CAPABILITY.COORDINATOR),canRead:permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR),canAddMissing:may('score_check.add_missing'),
     go:(to:ScoreStep,q:Record<string,string>)=>navigate(routeHash('schedule',['benchmark',to],q).slice(1)),leave:()=>navigate('schedule'),
     setLeave:(dirty:(()=>boolean|string)|null)=>{if(mine===renderSerial)leaveCheck=dirty;},
-    choices:(kind:string)=>choices(rows(kinds[kind]||'people')),
+    choices:(kind:string)=>choices(rows(kinds[kind]||'people'),(kinds[kind]||'people')==='people'),
     openIssues,openRules:(id:string)=>openRotaPanel(id),openScoring:()=>navigate('configuration/auto_schedule'),
     submit:(id:string)=>void rotaWhole(id).then(publishDialog).catch(reportError),
     // Rota's draft of the same sessions (score_check.auto), opened with Auto-schedule ready to run (the Planner's own flow).
@@ -4080,8 +4153,9 @@ function rotaStatusPill(w:Row,outdated=false){
   const stages=['draft','submitted','approved','published'];
   // L11: one status per rota, from the one palette. A review the server holds out of date (stale_inputs) is "Needs
   // resubmitting", never also "Waiting for approval".
-  const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
+  const state=w.archived_at?'archived':outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(state==='outdated'?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
+  if(w.archived_at)return pill;
   pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
     +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
@@ -4423,22 +4497,33 @@ function myLeave():Promise<Span[]>{
   if(!leaveRead||leaveRead.who!==me!.identity_id||Date.now()-leaveRead.at>60000)leaveRead={at:Date.now(),who:me!.identity_id,rows:get<{availability:Row[]}>('/api/availability').then(r=>r.availability.filter(a=>!a.retracted).map(a=>({start:Date.parse(a.start),end:Date.parse(a.end)})))};
   return leaveRead.rows;
 }
-/** The Schedule's scroll (the planner column and the view's own scroller, the week or month grid), read before a redraw;
- *  the result puts it back when the redrawn view is the same one (rota, saved view, layout and layer: its viewKey),
- *  so another rota or view starts at the top. The list's table keeps its own (table_view). */
+/** The Schedule's scroll (the planner column and the view's own scroller, the week or month grid), read as a redraw
+ *  swaps the view in (not when it starts: a scroll made while it loads is the one kept); the result puts it back when
+ *  the redrawn view is the same one (rota, saved view, layout and layer: its viewKey), so another rota or view starts
+ *  at the top. The list's table keeps its own (table_view). */
 let stopScrollRestore=()=>{};
+// The put-back in force: where it aims, and where it last left each scroller (short of the aim until the grid has its height).
+let scrollKept:{view:string,kept:number[][],left:number[][]}|null=null;
+// Still where the put-back left it, or as near as its content now allows (a collapsed grid clamps its scroll): nothing else moved it.
+const scrollHeld=(n:HTMLElement,p:number[])=>[[n.scrollTop,p[0],n.scrollHeight-n.clientHeight],[n.scrollLeft,p[1],n.scrollWidth-n.clientWidth]]
+  .every(([now,was,max])=>Math.abs(now-was)<=1||Math.abs(now)<Math.abs(was)&&Math.abs(now)>=max-1);
 function plannerScroll(){
-  stopScrollRestore();  // the previous draw's put-back must not fight this one's reading
   const at=()=>[...document.querySelectorAll<HTMLElement>('#main .planner-main,#main .planner-main .wk-scroller')];
-  const key=()=>document.querySelector<HTMLElement>('#schedule-view')?.dataset.viewKey,view=key(),kept=at().map(n=>[n.scrollTop,n.scrollLeft]);
-  const put=()=>at().forEach((n,i)=>{if(kept[i]){n.scrollTop=kept[i][0];n.scrollLeft=kept[i][1];}});
+  const key=()=>document.querySelector<HTMLElement>('#schedule-view')?.dataset.viewKey,view=key(),was=scrollKept?.view===view?scrollKept:null;
+  // A scroller the last put-back is still bringing to its place keeps that aim (read now, it would say the clamped place).
+  const kept=at().map((n,i)=>was?.left[i]&&scrollHeld(n,was.left[i])?was.kept[i]:[n.scrollTop,n.scrollLeft]),left:number[][]=[];
+  stopScrollRestore();  // the previous draw's put-back must not fight this one
+  const put=()=>at().forEach((n,i)=>{if(kept[i]){n.scrollTop=kept[i][0];n.scrollLeft=kept[i][1];left[i]=[n.scrollTop,n.scrollLeft];}});
   // The grid's fitting (observeSize: pill names, toolbar rows) changes its height after the draw, however many frames
   // later a loaded machine takes, which clamped the scroll just put back (Month to the top): each size change of what
   // scrolls puts it back again, until the person moves it, another view is shown or the next draw reads it afresh.
   const watch=()=>{for(const n of at())for(const e of ['wheel','pointerdown','keydown','touchstart'])n.addEventListener(e,()=>stopScrollRestore(),{once:true,passive:true});};
   return ()=>{if(!view||key()!==view)return;put();watch();
-    const stops=at().flatMap(n=>[...n.children]).map(c=>observeSize(c,()=>{if(key()===view)put();else stopScrollRestore();}));
-    stopScrollRestore=()=>{stops.forEach(s=>s());stopScrollRestore=()=>{};};};
+    // Only while every scroller is where the put-back left it: a scroll made since (the page's own too, which fires none
+    // of the events above) is newer than the aim and ends it.
+    const stops=at().flatMap(n=>[...n.children]).map(c=>observeSize(c,()=>{if(key()===view&&at().every((n,i)=>!left[i]||scrollHeld(n,left[i])))put();else stopScrollRestore();}));
+    scrollKept={view,kept,left};
+    stopScrollRestore=()=>{stops.forEach(s=>s());scrollKept=null;stopScrollRestore=()=>{};};};
 }
 // A published session (the published layer) opens read-only; set by the Schedule for the sessions it draws.
 let readOnlySession:(s:Row)=>void=()=>{};
@@ -4519,8 +4604,8 @@ const ALL_CONFIG_KINDS=CONFIG_GROUPS.flatMap(([,kinds])=>kinds).filter(k=>k!=='s
 /** The admin's sections this person may open: the one list behind the section menu, its addresses and the palette. */
 const configKinds=()=>ALL_CONFIG_KINDS.filter(k=>(!SECTION_PERMISSION[k]||may(SECTION_PERMISSION[k]))&&(k!=='ai_provider'||scoreCheckOn()));
 /** The sections this person's Configuration holds: an admin's all, a coordinator's guide and tags, and any section its own
- *  permission grants (an operator reaches GitHub without any departmental configuration). */
-const configSections=()=>permits(CAPABILITY.ADMIN)?['setup',...configKinds()]:[...new Set([...(permits(CAPABILITY.COORDINATOR)?COORDINATOR_KINDS:[]),...configKinds().filter(k=>SECTION_PERMISSION[k]||catalogueSection(k))])];
+ *  permission grants. Admins reach branding from Department settings. */
+const configSections=()=>permits(CAPABILITY.ADMIN)?['setup',...configKinds().filter(k=>k!=='branding')]:[...new Set([...(permits(CAPABILITY.COORDINATOR)?COORDINATOR_KINDS:[]),...configKinds().filter(k=>SECTION_PERMISSION[k]||catalogueSection(k))])];
 /** A record section this person may edit: its Bulk edit command's roles (editRoles) admit them, so whatever Bulk lets
  *  them change has its own single edit in Configuration too (M1: Bulk-editable == single-edit). */
 const catalogueSection=(kind:string)=>!!editRoles(kind)&&catalogueEditable(kind);
@@ -4961,6 +5046,7 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   if(catalogueKind==='board'){await rotationBoard(target,{ctx:ctx(),zone:zone(),mine:false});return;}
   if(catalogueKind==='tags'){tagsPage(target,ctx(),permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR));return;}
   if(catalogueKind==='department'){await departmentSettingsPage(target);return;}
+  if(catalogueKind==='branding'){target.append(brandingPanel());return;}
   if(catalogueKind==='auto_schedule'){await autoScheduleSettingsPage(target);return;}
   if(catalogueKind==='scheduling_groups'){await schedulingGroupsPage(target,{me:me!,zone:zone(),today:toLocal(new Date().toISOString(),zone()).slice(0,10),fields:ruleConditionFields(ctx()),words:c=>conditionWords({conditions:c})});return;}
   if(catalogueKind==='ai_provider'){await aiProviderPage(target,zone());return;}
@@ -4975,8 +5061,14 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   // keep theirs above a list (P findings, their lane), never twice above an empty state.
   // No tagline under a section's name (AGENTS §2): what a kind is for is contextual help beside it; what it changes in
   // scheduling (effectOf, e.g. calendar entries never create leave) stays visible. Empty states say both.
-  const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null);
-  if(items.length&&aboutOf(catalogueKind))head.querySelector('h2')!.append(' ',helpButton('About '+kindLabel(catalogueKind),aboutOf(catalogueKind),'field-help'));
+  const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null,
+    catalogueKind==='leave_types'&&items.length&&permits(CAPABILITY.ADMIN)?button('Leave allowances',()=>leaveAllowanceSettings(ctx()),'secondary'):null);
+  const about=aboutOf(catalogueKind);
+  if(items.length&&about){
+    const heading=head.querySelector('h2')!,title=el('div',{class:'page-title'});
+    heading.replaceWith(title);
+    title.append(heading,helpButton('About '+kindLabel(catalogueKind),about,'field-help'));
+  }
   target.append(head);
   // One empty state everywhere (C-03): what is missing, why it matters, and the one action that adds it.
   // A kind that needs another first (a recurring session needs a duty type) offers that step instead of a Create that
@@ -5139,7 +5231,7 @@ function ruleStemFor(p:Row,people:Map<string,string>){
   const parts=n.replace(/\d{4}-\d{2}(-\d{2})?/g,'').split(/\s+[·\-–]\s+|^\s*[·\-–]\s*|\s*[·\-–]\s*$/).map(x=>x.trim()).filter(Boolean);
   const out=parts.join(' · ');return out?out[0].toUpperCase()+out.slice(1):String(p.name);}
 const ruleFamilyFor=(p:Row,people:Map<string,string>)=>`${p.definition.rule.kind}|${ruleStemFor(p,people).toLocaleLowerCase()}`;
-/** A hospital phone as a dial link; several office extensions stay separate links (never one long number). */
+/** A work phone as a dial link; several office extensions stay separate links (never one long number). */
 const dial=(value:unknown)=>{const v=String(value||'').trim();return v?el('a',{href:'tel:'+v.replace(/[^+\d]/g,'')},v):el('span',{class:'muted'},'—');};
 const extensions=(value:unknown)=>{const parts=String(value||'').split(/\s*[-,;/]\s*/).filter(Boolean);return parts.length?el('span',{},...parts.map((n,i)=>el('span',{},i?' / ':'',dial(n)))):dial('');};
 /** People = the department directory and, for those who manage them, ranks, eligibility and skills: one list whose
@@ -5209,13 +5301,31 @@ async function peoplePage(target:HTMLElement){
     {key:'code',label:'Short code',field:'short_code',text:p=>shortCode(p),cell:p=>el('span',{class:'mono'},p.short_code||el('span',{class:'muted'},'Automatic')),
       edit:inlineField('people','short_code',{kind:'text',maxLength:6})},
   ];
+  // Build optional columns and search terms only from contacts already disclosed to this reader.
+  const contactTypes=new Map<string,VisibleContact>();
+  const contactValues=new Map(people.map(p=>{
+    const values=new Map<string,string>();
+    for(const c of (p.contacts||[]) as VisibleContact[]){
+      if(c.legacy_field==='work_phone'||c.legacy_field==='work_extension')continue;
+      contactTypes.set(c.contact_type_id,c);
+      values.set(c.contact_type_id,c.value);
+    }
+    return [p.id,values] as const;
+  }));
+  const extraContacts:Column<Row>[]=[...contactTypes.values()]
+    .sort((a,b)=>a.sort_order-b.sort_order||a.name.localeCompare(b.name)||a.contact_type_id.localeCompare(b.contact_type_id))
+    .map(c=>{
+      const text=(p:Row)=>contactValues.get(p.id)?.get(c.contact_type_id)||'';
+      return {key:'contact_'+c.contact_type_id,label:c.name,text,cell:p=>text(p)||none()};
+    });
   const contact:Column<Row>[]=[
     // The title shown: the recorded one, else the current rank (display_title; the directory sends it as title).
     // The recorded title only: the rank is its own column (P-02).
     {key:'title',label:'Title',text:p=>String(p.title??''),facet:p=>String(p.title??''),cell:p=>p.title||none()},
     {key:'section',label:'Section',field:'directory_section',text:sectionLabel,facet:sectionLabel,cell:p=>sectionLabel(p)||none()},
-    {key:'phone',label:'Hospital phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
+    {key:'phone',label:'Work phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
     {key:'ext',label:'Extension',field:'work_extension',text:p=>String(p.work_extension||''),cell:p=>extensions(p.work_extension)},
+    ...extraContacts,
   ];
   // Columns follow the role: contacts for everyone; ranks, eligibility and skills for planners; what a credentialer authorises.
   const hidden=!full?[]:manager?['title','section','programme','code','status','review']:cred?['title','section','rank','programme','tags','code','status','review']:['title','section','skills','programme','code','status'];  // tags show: their chips open the tag read-only
@@ -5247,7 +5357,7 @@ async function peoplePage(target:HTMLElement){
       {key:'order',label:'Directory order',hidden:true,cell:()=>null,sort:p=>Number(p.directory_order??1000)},
     ],
     // Active people by default (leavers stay one filter away); the directory keeps its own order.
-    defaults:{hidden:timeline?[...hidden,'works_in_area']:hidden,...(full?{filters:{status:['Active']}}:{sort:['order','asc']})},
+    defaults:{hidden:[...hidden,...extraContacts.map(c=>c.key),...(timeline?['works_in_area']:[])],...(full?{filters:{status:['Active']}}:{sort:['order','asc']})},
     bulk:permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.CREDENTIALER)?ids=>peopleBulkActions(ids):undefined,
     // The row opens the person's side panel; one visible button per row.
     onOpen:(p,position)=>personDetails(p,position),
@@ -5327,8 +5437,7 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
     const entries=(source[kind]||[]).filter(r=>r.person_id===p.id).sort((a,b)=>order.indexOf(stateOf(a))-order.indexOf(stateOf(b))||String(b.starts_on).localeCompare(String(a.starts_on)));
     if(!entries.length&&optional&&!add)return null;
     // F14 (maintenance): which published duties a shorter clinic eligibility leaves without cover (read only, nothing saved);
-    // shared by End and Change dates. Only eligibilities have the server's preview (memberships and grants have none).
-    type Impact={count?:number;sessions?:Row[]};type Impacts={published_impact?:Impact;draft_impact?:Impact};
+    // Shared by End and Change dates. Rank end and withdrawal use the catalogue evaluator.
     // The server lists every duty left uncovered after the new dates, also ones this record never covered (after its old
     // end): only duties overlapping the days removed from THIS record count. null: unknown (no preview, or a cut list).
     const coverPreview=async(r:Row,dates:{starts_on?:string;ends_on?:string|null},why:string):Promise<Impacts|null>=>{
@@ -5348,18 +5457,6 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         if(Number(g?.count||0)>list.length)return undefined;const kept=list.filter(hit);return {count:kept.length,sessions:kept};};
       const published=only(res.published_impact),draft=only(res.draft_impact);
       return published&&draft?{published_impact:published,draft_impact:draft}:null;};
-    const coverLines=(r:Impacts)=>{
-      // SW-24: the person is named once (it is their eligibility), each line says the duty and when; the rest open in place.
-      // Published duties lose cover; duties in shared drafts and rotas in review are listed too (maintenance draft_impact).
-      const part=(g:Impact|undefined,one:string,many:string,draft=false)=>{const list=g?.sessions||[],n=Number(g?.count||list.length);if(!n)return [];
-        const who=new Set(list.map(x=>x.person).filter(Boolean)),only=who.size===1?[...who][0]:'';
-        const items=list.map((x,i)=>el('li',{hidden:i>=10},[draft?x.rota_name:'',only?'':x.person,x.type,x.start?`${formatDate(String(x.start),zone())} ${formatTime(String(x.start),zone())}`:''].filter(Boolean).join(' · ')));
-        const rest=el('li',{class:'muted'}),more=list.length>10?button(`Show ${list.length-10} more`,()=>{items.forEach(x=>{x.hidden=false;});more!.parentElement!.remove();},'link-button'):null;
-        if(more)rest.append(more);else if(n>list.length)rest.textContent=`${n-list.length} more`;
-        return [note(`${only?only+'’s ':''}${plural(n,one,many)} would need cover:`,'warning'),el('ul',{class:'impact-list'},...items,...(rest.childNodes.length?[rest]:[]))];};
-      const lines=[...part(r.published_impact,'published duty','published duties'),...part(r.draft_impact,'duty in a draft','duties in drafts',true)];
-      // SW3-D-27: nothing affected is said too (an empty preview read as not worked out).
-      return lines.length?lines:[note('No duties need cover.','info')];};
     const lostCover=(hit:number)=>hit?` ${plural(hit,'published duty','published duties')} now need${hit===1?'s':''} cover; the coordinators are told.`:'';
     const verb=kind==='grants'?'Revoke':'End',live=(r:Row)=>['Current','Upcoming'].includes(stateOf(r));
     const end=(r:Row)=>can&&kind!=='programme_memberships'&&live(r)?button(verb,()=>formDialog(`${verb} ${named(r[key])}`,'The earlier record stays in the history.',form=>{
@@ -5370,12 +5467,17 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         const preview=async()=>{const on=day.input.value;if(!on||on===asked)return;asked=on;
           const r=await coverPreview(r0,{ends_on:addDays(on,1)},reason.input.value);
           if(asked!==on||!r)return;
-          impact.replaceChildren(...coverLines(r));};
+          impact.replaceChildren(...coverLines(r,zone()));};
         const r0=r;day.input.addEventListener('change',()=>void preview());queueMicrotask(()=>void preview());}
-      return async()=>{const done=await command<{published_impact?:{count?:number}}>(kind==='memberships'?'membership.end':kind==='eligibilities'?'eligibility.end':'grant.revoke',{ends_on:addDays(day.input.value,1),reason:reason.input.value},r.id,r.revision);await refresh();
+      const payload=()=>({ends_on:day.input.value?addDays(day.input.value,1):null,reason:reason.input.value});
+      const saveRank=kind==='memberships'?configurationImpact(form,()=>({kind:'membership.end',payload:payload(),target_id:r.id,expected_revision:r.revision})):null;
+      return async()=>{let hit=0;
+        if(saveRank)await saveRank();
+        else{const done=await command<{published_impact?:{count?:number}}>(kind==='eligibilities'?'eligibility.end':'grant.revoke',payload(),r.id,r.revision);
+          hit=Number(done?.published_impact?.count||0);}
+        await refresh();
         // Said, with Undo (P-10): the server's own reverse, through the one Undo registry (api.ts). F14: the published
         // duties it leaves without cover are said too (the coordinators are told separately).
-        const hit=Number(done?.published_impact?.count||0);
         notify(`${named(r[key])} ${kind==='grants'?'revoked':'ends'} ${formatDate(day.input.value)}.${lostCover(hit)}`,hit?'warning':'success');};},verb),
       'ghost small',{'aria-label':`${verb} ${named(r[key])}`}):'';
     // DL-071: Extend is folded into Change dates (a later or empty last day), one path for a clinic's dates.
@@ -5383,8 +5485,16 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
     const withdrawn:Record<string,string>={memberships:'membership.withdraw',eligibilities:'eligibility.withdraw',programme_memberships:'programme_membership.withdraw'};
     const withdrawable=(r:Row)=>can&&kind in withdrawn&&stateOf(r)==='Upcoming'&&(kind!=='programme_memberships'||programmeMembershipWritable(r));
     // A required reason and the armed press, then Undo (the server's restore of the same record), as Archive does.
-    const withdraw=(r:Row)=>confirmAction(`Withdraw ${named(r[key])}?`,"It won't apply. Published rotas keep it.",async reason=>{
-      await command(withdrawn[kind],{reason},r.id,r.revision);await refresh();notify(`${named(r[key])} withdrawn.`,'success');},'Withdraw',undefined,false,false);  // D1: one press + Undo (no published rota changes)
+    const withdraw=(r:Row)=>{
+      const title=`Withdraw ${named(r[key])}?`,done=async()=>{await refresh();notify(`${named(r[key])} withdrawn.`,'success');};
+      if(kind==='memberships'){
+        formDialog(title,'The rank will no longer apply. Published duties stay in place.',form=>{
+          const reason=area('Reason','');reason.input.required=true;reason.input.minLength=3;reason.input.maxLength=500;form.append(reason.wrap);
+          const save=configurationImpact(form,()=>({kind:'membership.withdraw',payload:{reason:reason.input.value},target_id:r.id,expected_revision:r.revision}));
+          return async()=>{await save();await done();};},'Withdraw');
+        return;}
+      confirmAction(title,"It won't apply. Published rotas keep it.",async reason=>{
+        await command(withdrawn[kind],{reason},r.id,r.revision);await done();},'Withdraw',undefined,false,false);};
     // A skill can be limited to one clinic; the clinic is part of what it says.
     const scope=(r:Row)=>kind==='grants'?(r.service_id?labelOf(source.services?.find(s=>s.id===r.service_id)):'All clinics'):'';
     // Change dates (M1): the start and last day, by the same command and roles the Bulk editor uses (its update_dates).
@@ -5409,7 +5519,7 @@ function personDetails(person:Row,position?:PanelPosition,tab='overview'){
         if(kind!=='eligibilities'||!(removesStart()||removesEnd()))return;
         const res=await coverPreview(r,{...(first.input.value!==r.starts_on?{starts_on:first.input.value}:{}),...(e!==(r.ends_on||null)?{ends_on:e}:{})},reason.input.value);
         if(asked!==key||!res)return;
-        lost=Number(res.published_impact?.count||0);impact.replaceChildren(...coverLines(res));sync();};
+        lost=Number(res.published_impact?.count||0);impact.replaceChildren(...coverLines(res,zone()));sync();};
       for(const f of [first,last])f.input.addEventListener('change',()=>void preview());
       queueMicrotask(()=>{const s=submit();if(s)armed(s,'Confirm?',()=>(removesEnd()||removesStart())&&lost!==0);void preview();});
       return async()=>{const e=ends();
@@ -6680,7 +6790,7 @@ async function exportsPage(target:HTMLElement){
     // Not awaited: the page is shown, and every other download works, while the people load (I-13). A row from a page
     // since replaced is detached, so a late answer changes nothing; a changed session is the shell's to handle.
     if(full&&pending)void publicationCache(pub.id,pub.current).data
-      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{})).sort((a,b)=>a.label.localeCompare(b.label)))))
+      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{}),true))))
       .catch(e=>{if(!sessionChanged(e))pending.replaceWith(calendar(null,true));});
   }
   if(subscription&&full)target.append(subscription);
@@ -6838,10 +6948,12 @@ const STALE_WORDS:Record<Currency,string>={'':'',rota:'The rota changed since th
   unknown:'This older run cannot be confirmed as current, so it cannot be applied. Run auto-schedule again to get a result you can apply.',
   superseded:'A newer run replaced this one. Review the latest run.'};
 /** Apply refused because a newer run replaced this one (RUN_SUPERSEDED): said once, with the way to the latest run; the
- *  refusal itself has nothing more to report. Any other error goes on as it was. */
-function supersededRun(e:unknown,workspace:string):never{
+ *  refusal itself has nothing more to report. Any other error goes on as it was. `here` says it in the open results
+ *  dialog instead, so the press that was refused never just closes it. */
+function supersededRun(e:unknown,workspace:string,here?:()=>void):never{
   if(!(e instanceof ApiError&&e.code===RUN_SUPERSEDED))throw e;
-  closeDialogs();notify(STALE_WORDS.superseded,'warning',{label:SUPERSEDED.next,run:()=>reviewLatestRun(workspace)});void refresh();
+  if(here)here();else{closeDialogs();notify(STALE_WORDS.superseded,'warning',{label:SUPERSEDED.next,run:()=>reviewLatestRun(workspace)});}
+  void refresh();
   throw new ApiError('PAGE_LEFT','',0);
 }
 /** A stored proposal can be reviewed at any time; only a current candidate can change a draft. */
@@ -7111,9 +7223,11 @@ function proposalSummary(data:WorkspaceData|null,job:Row,o:{editable:boolean;opt
     data?stillToFix(facts,fixHooks(data.workspace.id,data),()=>{close();openIssues(data.workspace.id);},retained):'',completionLine(job),
     o.panel?changesByCause(facts,changes)||changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',basicHow);
   // #1160: a stopped run's score is unfinished (the solver receipt says so): no Score of its own beside it.
-  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[status]),breaks,clash,
+  const reviewStatus=facts.fixListMissing
+    ?outcome('warn',facts.fixListMissing,'Run auto-schedule again to get the detailed Fix list.')
+    :status;
+  return el('section',{class:'auto-review','aria-label':'Review'},drift,...(changed?.nodes||[reviewStatus]),breaks,clash,
     basicFact,resultMetrics(r.score_completed===false?{...s,score_saved:null,score:null}:s,changes,Number(r.validation?.error_count??findings.filter(f=>f.severity==='error').length),data?.workspace.validation?.score,o.strict!==false),
-    facts.fixListMissing?el('p',{class:'hint',role:'status'},facts.fixListMissing):'',
     o.panel?changesSection(changeGroups(r,(data?.workspace.validation?.findings||[]) as Row[])):'',
     needs?el('section',{class:'auto-needs'},el('h3',{},`Needs you · ${head}`),
       // Nothing proposed and both checks current: these are the draft's own problems, fixed in batches in Resolve issues.
@@ -7168,6 +7282,8 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
   // Support detail (timing, evidence, the whole rota check) is one disclosure at the end: the result comes first.
   const details=el('details',{class:'auto-run-details'},el('summary',{},'Run details'),el('p',{class:'run-metrics'},jobTiming(result)));
   const r:Row|null=result.result;
+  const outsideGroup=outsideGroupLine(result);
+  if(outsideGroup)body.append(outsideGroup);
   if(r?.phase_timings){
     const stages=generationPhaseTimings(r.phase_timings,runSeconds);
     if(r.first_solution_seconds!=null)stages.push(`first candidate after ${runSeconds(Number(r.first_solution_seconds))}`);
@@ -7236,7 +7352,9 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
     const pickAdd=new Set<string>(additions.map((_:Row,i:number)=>String(i))),pickRemove=new Set<string>(removals.map((_:Row,i:number)=>'r'+i));
     const actions=el('div',{class:'actions'});
     const applyJob=async(additionIndexes?:number[],removalIndexes?:number[])=>{
-      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined);
+      const reply=await sendGenerationApply(result,additionIndexes?{addition_indexes:additionIndexes,removal_indexes:removalIndexes||[]}:undefined,()=>{
+        selectionHint.hidden=true;proposal=null;
+        actions.replaceWith(outcome('warn',SUPERSEDED.state,STALE_WORDS.superseded,button(SUPERSEDED.next,()=>{close();reviewLatestRun(result.workspace_id);},'secondary small')));});
       // Nothing written: the dialog stays, saying so where Apply was (nothing is left to apply).
       if(nothingApplied(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('err',...NOTHING_APPLIED));proposal=null;await refresh();return;}
       if(applyNeedsReview(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('warn',...APPLY_NOT_CONFIRMED));proposal=null;await refresh();return;}
@@ -7285,9 +7403,9 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
 // Proposals the coordinator discarded in this browser session (the job itself stays in history).
 const dismissedJobs=new Set<string>();
 // The rota's revision is the one this page last read or changed (a reply carries it); it reads it only when it holds none.
-async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]}){
+async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]},here?:()=>void){
   const revision=knownRevision(job.workspace_id)??(await rotaMeta(job.workspace_id)).workspace.revision;
-  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id));
+  return command('generation.apply',{workspace_id:job.workspace_id,job_id:job.id,reason:'Applied auto-schedule suggestions',...pick},undefined,revision).catch(e=>appliedAnyway(job.id,e)).catch(e=>supersededRun(e,job.workspace_id,here));
 }
 const applyJob=async(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]})=>{
   const reply=await sendGenerationApply(job,pick);proposal=null;
@@ -7347,7 +7465,7 @@ function proposalPill(data:WorkspaceData){
   const b=el('button',{type:'button',class:'health-pill info proposal-pill','aria-label':'Auto-schedule proposal ready · review it','data-ctip':'Proposal ready · review it'},icon('sparkle'),el('span',{class:'label'},' Proposal ready'));
   footerAct(b,'proposal',()=>reviewProposal(data));return b;
 }
-const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
+const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&!data.workspace.archived_at&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
 /** After the jobs are read: the button's mark and the footer pill follow them (the bar was drawn before the read). */
 function markProposal(data:WorkspaceData){
   const waiting=proposalShown(data),b=document.querySelector<HTMLButtonElement>('.auto-button'),pills=document.querySelector('.app-footer .health-pills');
@@ -7500,7 +7618,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   }
   const from=field('From','date',st().from,{required:true,min:first,max:last}),to=field('To','date',st().to,{required:true,min:first,max:last});
   from.input.addEventListener('change',()=>{st().from=from.input.value;keptSetup(st());syncRun();});to.input.addEventListener('change',()=>{st().to=to.input.value;keptSetup(st());syncRun();});
-  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort((a,b)=>a.label.localeCompare(b.label));
+  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort(byLabel);
   const clinics=el('div',{class:'field'},el('label',{'aria-hidden':'true'},'Clinics'),multiPick('Clinics',services,st().clinics=st().clinics.filter(c=>services.some(x=>x.value===c)),v=>{st().clinics=v;keptSetup(st());syncRun();},'All clinics').wrap);
   const scope=select('Assign into',[{value:'period',label:'All sessions in these dates'},{value:'open',label:'Open sessions only'},{value:'selected',label:'Selected sessions only'}],st().scope);
   scope.input.addEventListener('change',()=>{st().scope=scope.input.value;keptSetup(st());syncRun();});
@@ -7574,14 +7692,18 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // Priorities: real run overrides; score weights and wish budgets stay with department Configuration.
   // D76 (run card): the presets are one segmented choice (the contract's presets, arrow keys as every radiogroup); the
   // chosen one's weights are the line under it.
-  const presetId='preset-label-'+w.id,weights=el('p',{class:'hint auto-weights'});
-  const presets=el('div',{class:'segmented auto-presets',role:'radiogroup','aria-labelledby':presetId},...PRESETS.map(p=>{
+  const presetId='preset-label-'+w.id,weights=el('p',{class:'hint auto-weights'}),fairnessHelpId=presetId+'-help';
+  const fairShare=RULE_CATALOGUE_V2.find(e=>e.id==='fair_share')!;
+  const fairnessHelp=el('p',{class:'hint',id:fairnessHelpId},`${SCORE_WEIGHT_LABELS.fairness} balances duties only where a `,
+    allowed('rules')&&ruleCatalogueOn()?el('a',{href:routeHash('rules',[fairShare.id]),class:'link-button'},fairShare.name):fairShare.name,
+    ' rule applies.');
+  const presets=el('div',{class:'segmented auto-presets',role:'radiogroup','aria-labelledby':presetId,'aria-describedby':fairnessHelpId},...PRESETS.map(p=>{
     const b=el('button',{type:'button',role:'radio','data-preset':p.key},p.label);
     b.addEventListener('click',()=>{st().preset=p.key;keptSetup(st());paintPresets();});return b;}));
   const paintPresets=()=>{for(const b of presets.querySelectorAll<HTMLElement>('[role=radio]')){const on=b.dataset.preset===st().preset;b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;}
     weights.textContent=weightSummary(defaults,st().preset);};
   paintPresets();
-  const priorities=cpSat?el('div',{class:'auto-run-options'},el('span',{class:'pick-label',id:presetId},'Priorities'),presets,weights,el('div',{class:'auto-numbers'},minutes.wrap,fairness.wrap),
+  const priorities=cpSat?el('div',{class:'auto-run-options'},el('span',{class:'pick-label',id:presetId},'Priorities'),presets,weights,fairnessHelp,el('div',{class:'auto-numbers'},minutes.wrap,fairness.wrap),
       permits(CAPABILITY.ADMIN)?withIcon(button('Change scoring settings',()=>navigate('configuration/auto_schedule'),'ghost small'),'settings'):''):'';
   const presetName=()=>PRESETS.find(p=>p.key===st().preset)?.label||PRESETS[0].label;
   /** A run under review is said as it was run (its job: who, what it kept, its priorities), never as the setup now:
@@ -7752,7 +7874,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     feedback.querySelector('.auto-paused')?.remove();
     // A refresh failure keeps the panel's last state, including a run still in progress; a failed START takes the
     // separate "The run didn't start" path in queue() and never reaches this note.
-    const n=note(`Couldn't refresh. Showing the last result. ${(e as Error).message}`,'warning');n.classList.add('auto-paused');
+    const said=errorWords(e),n=note(`Couldn't refresh. Showing the last result.${said?' '+said:''}`,'warning');n.classList.add('auto-paused');
     n.append(' ',button('Retry',()=>{n.remove();void load().catch(failed);},'link-button'));
     // Forget the drawn key: the next good read redraws the footer (Apply enabled) even when its jobs are unchanged.
     jobsKey='';feedback.prepend(n);for(const b of foot.querySelectorAll<HTMLButtonElement>('button.primary'))b.disabled=true;};
@@ -7930,6 +8052,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       sub.textContent=w.name||'';
       const receipt=latest.kind==='generation'&&result?solverReceipt(latest):null;
       if(receipt)feedback.append(receipt);
+      const outsideGroup=outsideGroupLine(latest);
+      if(outsideGroup)feedback.append(outsideGroup);
       // A result that still applies (not stale, discarded or applied) opens on Review; otherwise What to fill.
       if(!st().step)st().step=reviewable||(latest.status==='succeeded'&&!stale&&!discarded)?3:1;
       staleNote=stale?text:'';
@@ -8068,7 +8192,8 @@ function noteRead(n:Row){return !!(n.read_at||n.acknowledged_at);}
  *  card and offered by the Kind filter. Weekly availability is a request (kind request). */
 const NOTE_KIND:Record<string,[IconName,string,string]>={feedback:['message','teal','Feedback'],publication:['check','violet','Rota published'],review:['shield','indigo','Review'],
   bulk_review:['shield','indigo','Review'],returned:['shield','amber','Returned'],request:['leave','sky','Request'],availability:['leave','amber','Leave or absence'],swap:['swap','pink','Swap'],
-  announcement:['bell','teal','Announcement'],self_approval:['shield','slate','Self-approval'],rule:['rules','indigo','Rule']};
+  announcement:['bell','teal','Announcement'],self_approval:['shield','slate','Self-approval'],rule:['rules','indigo','Rule'],
+  generation_finished:['sparkle','teal',TERMS.autoSchedule]};
 const noteKindOf=(n:Row)=>NOTE_KIND[n.kind]||['bell','slate','Other'] as [IconName,string,string];
 const ackNote=(n:Row)=>command('notification.ack',{reason:'Explicit acknowledgement by recipient'},n.id,n.revision);
 const ackAll=()=>command('notification.ack_all',{reason:'Read'});  // one request for the whole inbox
@@ -8087,7 +8212,8 @@ async function openNote(n:Row){
 function openNoteTarget(n:Row){
   const l=n.link||{};
   if(l.staged_id){void openStaged(String(l.staged_id)).catch(e=>{if(!sessionChanged(e))notify((e as Error).message,'error',undefined,e);});void loadNavBadges(true);return;}  // a change sent for independent review
-  if(l.feedback_report_id)navigate('feedback?open='+encodeURIComponent(l.feedback_report_id));
+  if(n.kind==='generation_finished'&&l.workspace_id)void rotaMeta(l.workspace_id).then(d=>openPaletteRota(d.workspace,true)).catch(reportError);
+  else if(l.feedback_report_id)navigate('feedback?open='+encodeURIComponent(l.feedback_report_id));
   else if(l.publication_id){publicationId=l.publication_id;navigate('published');}else if(l.workspace_id){ctx().setWorkspace(l.workspace_id);navigate('schedule');}
   else if(l.swap_id||l.request_id)navigate('requests?open='+encodeURIComponent(l.swap_id||l.request_id));else if(n.kind==='availability')navigate('requests');
   else if(n.kind==='rule'&&permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))navigate(ruleNoticeOf(n).hash);else navigate('inbox');
@@ -8204,26 +8330,26 @@ async function inboxPage(target:HTMLElement){
   if(page&&inboxPath()!==readPath)void search();
 }
 
-const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),roleForCapability(CAPABILITY.OPERATOR)];
+const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),INSTALLATION_ADMIN_ROLE,roleForCapability(CAPABILITY.OPERATOR)];
 /** Access & approvals › People & roles (who signs in, their roles) or › Role history (every grant). */
 async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'history'){
   const access=await data;const identities:Row[]=access.identities;
   const accounts:Record<string,Row>=access.accounts||{};
-  const admin=permits(CAPABILITY.ADMIN);
+  const admin=permits(CAPABILITY.ADMIN),fullAccess=admin||may('access.system_roles');
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
-  target.append(sectionHead('People who can sign in','',invite,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
-  /** A hospital sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
+  const onboard=admin&&access.accounts_enabled?button('Onboard staff',()=>onboardingPanel(rows('people'),new Set(identities.map(i=>i.person_id).filter(Boolean)),refresh),'secondary'):null;
+  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add institutional sign-in',()=>void institutionalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; institutional sign-in still works.'})));
+  /** An institutional sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
    *  identity.bind checks against): shown, not typed. Without one there is nothing to bind to: the settings say how. */
-  async function hospitalSignIn(){
+  async function institutionalSignIn(){
     const cfg=await get<AuthConfigStatus>('/api/admin/auth-config').catch(e=>{reportError(e);return null;});if(!cfg)return;
-    if(!cfg.issuer){showDialog('Hospital sign-in is not set up','',(body,close)=>body.append(note('This server has no hospital sign-in provider yet, so a hospital user cannot be added.','warning'),
+    if(!cfg.issuer){showDialog('Institutional sign-in is not set up','',(body,close)=>body.append(note('This server has no institutional sign-in provider yet, so no one can be added this way.','warning'),
       el('div',{class:'actions'},button('Open sign-in settings',()=>{close();navigate('configuration/sign_in');},'primary'))));return;}
-    formDialog('Add a hospital sign-in','Type the user ID exactly as your hospital’s identity team gives it. The sign-in has no access until it is given a role.',form=>{
-    const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('Hospital user ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
-    form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Hospital sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
+    formDialog('Add an institutional sign-in','Type the user ID exactly as your organisation’s identity service gives it. The sign-in has no access until it is given a role.',form=>{
+    const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('User ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
+    form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Institutional sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
   });}
-  // Who gives or revokes a role: the server's rule from the contract (role_grants.ts). With no Developer, the system
-  // owner restores one outside the app.
+  // Who gives or revokes a role comes from the server permission contract.
   const manages=(r:string)=>!grantRefusal(r,me!.roles);
   // Every role of the contract, in this page's order; one this person may not give is shown disabled with why (maintenance).
   const roleChoices=(roles:readonly string[]):Choice[]=>[...roles].sort((a,b)=>ROLE_ORDER.indexOf(a)-ROLE_ORDER.indexOf(b))
@@ -8297,17 +8423,17 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
     if(a&&!i.disabled&&a.accepted_at)acts.push({label:'Password reset link',icon:'lock',run:link('account.reset_link','Password reset link','Password reset link')});
     if(!i.disabled&&(!a||a.accepted_at))acts.push({label:'End all sessions',icon:'logout',danger:true,armed:true,run:async()=>{const r=await command('account.end_sessions',{reason:'Ended all sessions'},i.id);notify(r.ended?`${who} was signed out everywhere (${plural(r.ended,'session')}).`:`${who} had no open sessions.`);}});
     return acts;};
-  const people=dataTable<Row>({id:'access',noun:['person','people'],rows:identities,rowId:i=>i.id,searchLabel:'Search people with access',searchPlaceholder:'Name or sign-in',
-    bulk:accessActions,
+  const people=dataTable<Row>({id:'access',noun:['person','people'],rows:identities,rowId:i=>i.id,searchLabel:'Search people with access',searchPlaceholder:fullAccess?'Name or sign-in':'Name',
+    bulk:fullAccess?accessActions:undefined,
     columns:[
       {key:'name',label:'Person',text:i=>String(i.display_name)+' '+(accounts[i.id]?.username||''),cell:i=>el('strong',{},i.display_name)},
-      {key:'issuer',label:'Signs in with',text:i=>accounts[i.id]?.username||String(i.issuer),facet:i=>accounts[i.id]?'Sign-in name':String(i.issuer),
-        cell:i=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer)},
-      {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):['No current role'],sort:i=>rolesOf(i).length,
-        cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},'No current role'))},
+      ...(fullAccess?[{key:'issuer',label:'Signs in with',text:(i:Row)=>accounts[i.id]?.username||String(i.issuer||''),facet:(i:Row)=>accounts[i.id]?'Sign-in name':String(i.issuer||''),
+        cell:(i:Row)=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer||'—')}]:[]),
+      {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):fullAccess?['No current role']:[],sort:i=>rolesOf(i).length,
+        cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},fullAccess?'No current role':'—'))},
       {key:'status',label:'Status',facet:i=>accountState(i),cell:i=>{const state=accountState(i),a=accounts[i.id];
         return el('span',{class:'status-dot '+(state==='Active'?'on':'off'),'data-tip':a&&!a.accepted_at&&a.invite_expires_at?(a.invite_open?'Link expires ':'Link expired ')+formatDate(a.invite_expires_at,zone()):''},state);}},
-      {key:'last',label:'Last sign-in',text:i=>String(i.last_sign_in_at||''),sort:i=>String(i.last_sign_in_at||''),cell:i=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},'Never')},
+      ...(fullAccess?[{key:'last',label:'Last sign-in',text:(i:Row)=>String(i.last_sign_in_at||''),sort:(i:Row)=>String(i.last_sign_in_at||''),cell:(i:Row)=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},admin||may('access.system_roles')?'Never':'—')}]:[]),
     ],
     rowActions:i=>i.id===me!.identity_id?removeRoles(i):!admin?(i.disabled?removeRoles(i):[{label:'Give a role',icon:'plus' as const,run:()=>giveRole(i)},...removeRoles(i)]):[...(!i.disabled?[{label:'Give a role',icon:'plus' as const,run:()=>giveRole(i)}]:[]),...removeRoles(i),...accountActions(i),...(!i.disabled?[{label:TERMS.disableSignIn,icon:'lock' as const,danger:true,run:()=>confirmAction(TERMS.disableSignIn,'Existing sessions lose access on their next request. You can enable sign-in again later. Cross-department sign-ins need the institutional operator.',async reason=>{await command('identity.disable',{reason},i.id,i.revision);await refresh();},TERMS.disableSignIn)}]
       :[{label:TERMS.enableSignIn,icon:'check' as const,run:()=>confirmAction(TERMS.enableSignIn,'They can sign in again with the access roles they still hold.',async reason=>{await command('identity.enable',{reason},i.id,i.revision);await refresh();},TERMS.enableSignIn)}])]});
@@ -8457,7 +8583,7 @@ function auditQuery(){
 function auditFeed(events:Row[]):DocumentFragment{
   const out=document.createDocumentFragment(),selfApproved=(e:Row)=>!!e.detail?.self_approved;
   const runs:{e:Row;n:number;last:Row}[]=[];
-  for(const e of events){const r=runs.at(-1);if(r&&r.e.action===e.action&&r.e.detail?.catalogue===e.detail?.catalogue&&(r.e.target_label||'')===(e.target_label||'')&&r.e.actor_id===e.actor_id&&r.e.reason===e.reason&&toLocal(r.e.created_at,zone()).slice(0,10)===toLocal(e.created_at,zone()).slice(0,10)){r.n++;r.last=e;}else runs.push({e,n:1,last:e});}
+  for(const e of events){const r=runs.at(-1);if(r&&r.e.action===e.action&&!e.detail?.leave_allowance_changes&&!r.e.detail?.leave_allowance_changes&&r.e.detail?.catalogue===e.detail?.catalogue&&(r.e.target_label||'')===(e.target_label||'')&&r.e.actor_id===e.actor_id&&r.e.reason===e.reason&&toLocal(r.e.created_at,zone()).slice(0,10)===toLocal(e.created_at,zone()).slice(0,10)){r.n++;r.last=e;}else runs.push({e,n:1,last:e});}
   let day='';
   for(const {e,n,last} of runs){
     const d=toLocal(e.created_at,zone()).slice(0,10);
@@ -8469,8 +8595,11 @@ function auditFeed(events:Row[]):DocumentFragment{
     const copyRef=iconButton(`Copy reference for ${time} change`,'copy',async()=>{try{await navigator.clipboard.writeText(ref);notify('Reference copied.');}catch{notify('Copying is blocked here. The reference is '+ref,'info');}},{class:'audit-ref','data-tip':ref});
     // A reason that only repeats the change ("Signed in" on a sign-in) is left out.
     const said=e.reason&&e.reason!==e.action&&!verb.startsWith(String(e.reason).toLowerCase())?e.reason:'';
+    const allowances=(e.detail?.leave_allowance_changes||[]) as {leave_type_name:string|null;effective_year_start:string|null;before_days:number|null;after_days:number|null}[];
+    const days=(value:number|null)=>value===null?'No allowance':plural(value,'calendar day');
     out.append(el('div',{class:'audit-row'},el('span',{class:'audit-time mono'},time),el('span',{class:`role-chip duty-${colour}`,title:chip},el('span',{class:'chip-text'},chip)),
-      el('div',{class:'audit-text'},el('span',{},el('strong',{},e.actor_display_name||'Account not available'),` ${verb} ${what}${verb==='submitted'?' for review':''}`,selfApproved(e)?badge('Self-approved','warn','audit-self',{tip:'Their own work, allowed by a self-approval permission'}):''),said?el('small',{title:said},'“'+said+'”'):null),copyRef));
+      el('div',{class:'audit-text'},el('span',{},el('strong',{},e.actor_display_name||'Account not available'),` ${verb} ${what}${verb==='submitted'?' for review':''}`,selfApproved(e)?badge('Self-approved','warn','audit-self',{tip:'Their own work, allowed by a self-approval permission'}):''),said?el('small',{title:said},'“'+said+'”'):null,
+        allowances.map(line=>el('span',{},`${line.leave_type_name||'Leave'}${line.effective_year_start?' from '+formatDate(line.effective_year_start):''} · ${days(line.before_days)} → ${days(line.after_days)}`))),copyRef));
   }
   return out;
 }
@@ -8481,7 +8610,7 @@ async function auditPage(target:HTMLElement){
   const read=newest((path:string)=>get(path));
   // The people list (for the Person filter) is read once per visit; reloads skip it.
   const reload=async(first=true)=>{if(first)auditOffset=0;const next=await read(`/api/audit?offset=${auditOffset}&people=false&${auditQuery()}`);if(next){data=next;draw();}};
-  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'}))];
+  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'})).sort(byLabel)];
   const exportCsv=button('Export CSV',()=>download('/api/audit.csv?'+auditQuery()),'secondary small',{'data-tip':'Download every change matching these filters'});
   // Filters go to the server, so they span all history rather than one loaded page of 100.
   const bar=collectionToolbar({label:'Audit log',
@@ -8563,6 +8692,7 @@ window.addEventListener('online',()=>{if(me)void onPulse();});
 window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
 // Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
+const NO_UNDO='Nothing left to undo';
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
 async function undoLast(){
   const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
@@ -8597,7 +8727,8 @@ window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).
   // Any other change to the rota on screen (a Redo too) takes Redo off at once.
   if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
   redoAfter={id:String(w.id),revision:Number(w.revision)};
-  const undo=plannerRota?.id===w.id?document.querySelector('.planner-bar button[aria-label="Undo last edit"]'):null;
+  const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar button[aria-label="Undo last edit"]'):null;
+  if(undo&&w.can_undo===false)notYet(undo,NO_UNDO);
   if(undo&&!undo.parentElement!.querySelector('[data-shortcut="redo"]'))undo.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
 // The page's own edit (not a run: job.* commands drop the jobs read) keeps the last jobs read current, so the redraw

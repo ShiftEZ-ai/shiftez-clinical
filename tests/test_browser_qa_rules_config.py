@@ -43,6 +43,13 @@ def test_pages_open_at_the_top_and_configuration_sections_keep_layout_and_focus(
         expect(page.locator('.config-pane .section-head h2').first).to_have_text('Locations')
         expect(nav).to_be_visible()
         assert page.evaluate("document.activeElement.closest('.config-nav') !== null && document.activeElement.textContent.startsWith('Locations')")
+        header = page.locator('.config-pane .section-head').first
+        expect(header.get_by_role('heading', name='Locations', exact=True)).to_be_visible()
+        help_button = header.get_by_role('button', name='About Locations', exact=True)
+        expect(help_button.and_(header.locator('h2 + button'))).to_be_visible()
+        header.locator('.actions button').first.focus()
+        page.keyboard.press('Shift+Tab')
+        expect(help_button).to_be_focused()
         # The redraw keeps the old section on screen instead of blanking the whole page.
         held = []
         page.route('**/api/access', lambda route: held.append(route))
@@ -120,7 +127,7 @@ def test_name_examples_come_from_the_department_and_save_sits_in_the_header(brow
         navigate(page, 'configuration')
         page.get_by_role('navigation', name='Configuration sections').get_by_role('button', name='Names & codes', exact=True).click()
         pane = page.locator('.config-pane')
-        expect(pane.get_by_role('radiogroup', name='Show names as')).to_contain_text('A. Morgan')  # Alex Morgan, from the seed
+        expect(pane.get_by_role('radiogroup', name='Show names as')).to_contain_text('S. 01(test)')  # Staff 01(test), from the seed
         expect(pane).not_to_contain_text('Felix Lewis')
         expect(pane.locator('th', has_text='Automatic')).to_have_count(0)  # the code shows once, in its input
         bar = pane.get_by_role('region', name='Unsaved changes')

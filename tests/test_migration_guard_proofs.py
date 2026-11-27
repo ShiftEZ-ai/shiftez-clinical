@@ -1,10 +1,11 @@
 """Narrow schema/index/guard proofs never trust migration names or declarations."""
 import ast
+from shutil import copyfile
 from textwrap import indent
 import pytest
 
 from migrations import safety
-from migrations.source_safety import analyze_sources
+from migrations.source_safety import analyze_sources, preflight_analyzer
 from migrations.sql_safety import analyze_sql, schema_template
 
 from .test_migration_classes import APPEND, APPEND_TABLE, migration
@@ -225,3 +226,223 @@ def test_pg_guard_body_is_independently_proved_and_cannot_smuggle_calls_or_dml()
     assert analyze_sql(sql)['class'] == 'additive'
     for replacement in ('DELETE FROM policies; RETURN NEW;', 'RETURN erase();', 'EXECUTE arbitrary; RETURN NEW;'):
         assert analyze_sql(sql.replace('RETURN NEW;', replacement))['class'] == 'destructive'
+
+
+PUBLICATION_HEAD = '0152_feasibility_results'
+ADD_NULLABLE = "op.add_column('publications', sa.Column('marker', sa.Boolean(), nullable=True))\n"
+UPDATE_REFUSAL = (
+    "CREATE TRIGGER publications_calendar_lineage_guard BEFORE UPDATE OF \"marker\" ON publications "
+    "WHEN NEW.\"marker\" IS NOT OLD.\"marker\" BEGIN SELECT RAISE(ABORT, 'immutable marker'); END"
+)
+
+
+def nullable_guard_revision(directory, revision, parent, body):
+    path = directory / f'{revision}.py'
+    path.write_text(guard_source(body) + f'\nrevision = {revision!r}\ndown_revision = {parent!r}\n'
+                    "SAFETY_CLASS = 'additive'\n", encoding='utf-8')
+    return path
+
+
+def retained_guard_revision(directory, *, sql=UPDATE_REFUSAL, add=ADD_NULLABLE, parent=PUBLICATION_HEAD, after=''):
+    return nullable_guard_revision(directory, 'nullable_guard', parent, add +
+                                   "if op.get_bind().dialect.name == 'sqlite':\n"
+                                   f"    op.execute({sql!r})\n" + after)
+
+
+@pytest.fixture(scope='module')
+def publication_history(tmp_path_factory):
+    directory = tmp_path_factory.mktemp('publication_history')
+    for version in safety.VERSIONS.glob('*.py'):
+        copyfile(version, directory / version.name)
+    return directory
+
+
+@pytest.mark.parametrize('column, sql', [
+    ('marker', UPDATE_REFUSAL),
+    ('select', UPDATE_REFUSAL.replace('"marker"', '"select"')),
+    ('calendar_lineage', UPDATE_REFUSAL.replace('"marker"', 'calendar_lineage') + ';'),
+])
+def test_retained_publication_guard_protects_new_nullable_column(publication_history, column, sql):
+    parent = nullable_guard_revision(publication_history, 'additive_parent', PUBLICATION_HEAD,
+                                     "op.add_column('other', sa.Column('label', sa.Text(), nullable=True))\n")
+    path = retained_guard_revision(publication_history, parent=safety.revision(parent), sql=sql,
+                                   add=ADD_NULLABLE.replace("'marker'", repr(column)))
+    assert safety.analyze(path)['class'] == 'additive'
+    assert safety.declaration_errors(path) == []
+    assert not safety.needs_confirmation(path)
+
+
+def test_preflight_retains_proven_calendar_lineage_guard():
+    path = safety.VERSIONS / '0153_calendar_lineage.py'
+    events = []
+
+    def record(*event):
+        events.append(event)
+
+    analyzer = preflight_analyzer(path, record_fill=record, record_duplicate_precheck=record)
+    assert analyzer.run()['class'] == 'additive'
+    assert events == []
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    ('NEW."marker"', 'NEW."label"'),
+    ('OLD."marker"', 'NEW."marker"'),
+    ('IS NOT', '<>'),
+    ('OF "marker"', 'OF "label"'),
+    ('ON publications', 'ON other.publications'),
+    ('ON publications', 'ON other'),
+    ('BEFORE UPDATE', 'AFTER UPDATE'),
+    ('RAISE(ABORT', 'RAISE(FAIL'),
+    ('immutable marker', 'immutable :marker'),
+    ('publications_calendar_lineage_guard', 'publications_update_guard'),
+    ("BEGIN SELECT", "BEGIN UPDATE publications SET marker = NULL; SELECT"),
+    ("END", "END; DELETE FROM publications"),
+    ("END", "END;;"),
+    ('WHEN', '/* outer /* nested */ marker */ WHEN'),
+    ('WHEN', '-- dialect-dependent comment\nWHEN'),
+    ('WHEN', '\u00a0WHEN'),
+])
+def test_retained_nullable_guard_requires_exact_target_comparison_and_abort(publication_history, old, new):
+    path = retained_guard_revision(publication_history, sql=UPDATE_REFUSAL.replace(old, new))
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+def test_retained_nullable_guard_requires_quoted_arbitrary_column(publication_history):
+    add = ADD_NULLABLE.replace("'marker'", "'select'")
+    sql = UPDATE_REFUSAL.replace('"marker"', 'select')
+    path = retained_guard_revision(publication_history, add=add, sql=sql)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('add', [
+    '',
+    ADD_NULLABLE.replace("'marker'", "'unrelated'"),
+    ADD_NULLABLE.replace("'publications'", "'other'"),
+    ADD_NULLABLE.replace("nullable=True", "nullable=False, server_default='false'"),
+    ADD_NULLABLE.replace("nullable=True))", "nullable=True), if_not_exists=True)"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.JSON()"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.String(36)"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.Text()"),
+    ADD_NULLABLE.replace("sa.Boolean()", "sa.Boolean(create_constraint=True)"),
+])
+def test_retained_nullable_guard_requires_a_nullable_column_added_by_this_revision(publication_history, add):
+    assert safety.analyze(retained_guard_revision(publication_history, add=add))['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('column', ['id', 'current', 'effective_until', 'prior_marker', 'PRIOR_MARKER'])
+def test_retained_nullable_guard_cannot_claim_an_existing_column_as_new(publication_history, column):
+    parent = nullable_guard_revision(publication_history, 'prior_added', PUBLICATION_HEAD,
+                                     ADD_NULLABLE.replace("'marker'", repr('PRIOR_MARKER' if column.isupper() else 'prior_marker')))
+    path = retained_guard_revision(publication_history, parent=safety.revision(parent),
+                                   add=ADD_NULLABLE.replace("'marker'", repr(column.lower())),
+                                   sql=UPDATE_REFUSAL.replace('marker', column.lower()))
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('extra', [
+    "else:\n    " + ADD_NULLABLE.replace("'marker'", "'other'"),
+    ADD_NULLABLE.replace("'marker'", "'other'"),
+    "op.create_index('ix_marker', 'publications', ['marker'], unique=True, "
+    "sqlite_where=sa.table('publications', sa.column('marker')).c.marker == True)\n",
+    "op.execute('CREATE INDEX ix_marker ON publications (marker)')\n",
+])
+def test_retained_nullable_guard_requires_equal_schema(publication_history, extra):
+    path = retained_guard_revision(publication_history, after=extra)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('extra', [
+    "\nop.execute('CREATE INDEX ix_marker ON publications (marker)')\n",
+    "\ndef downgrade():\n    op.execute('CREATE INDEX ix_marker ON publications (marker)')\n",
+])
+def test_retained_nullable_guard_refuses_ddl_outside_upgrade(publication_history, extra):
+    path = retained_guard_revision(publication_history)
+    with path.open('a', encoding='utf-8') as source:
+        source.write(extra)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('entry_point', ['upgrade', 'downgrade'])
+@pytest.mark.parametrize('binding', ['{name} = None', 'import sqlalchemy as {name}'])
+def test_retained_nullable_guard_refuses_rebound_entry_point(publication_history, entry_point, binding):
+    path = retained_guard_revision(publication_history)
+    with path.open('a', encoding='utf-8') as source:
+        source.write('\n' + binding.format(name=entry_point) + '\n')
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+def test_retained_nullable_guard_refuses_type_parameter_for_dialect(publication_history):
+    path = retained_guard_revision(publication_history)
+    source = path.read_text(encoding='utf-8')
+    source = source.replace('def upgrade():', 'def upgrade[branch_labels]():')
+    source = source.replace("== 'sqlite':", '== branch_labels:')
+    path.write_text("branch_labels = 'sqlite'\n" + source, encoding='utf-8')
+    result = safety.analyze(path)
+    assert result['class'] == 'destructive'
+    assert any(finding.endswith('unproved function definition') for finding in result['findings'])
+
+
+def test_retained_nullable_guard_name_is_consumed_by_an_earlier_guard(publication_history):
+    parent = nullable_guard_revision(
+        publication_history, 'earlier_guard', PUBLICATION_HEAD,
+        ADD_NULLABLE + "if op.get_bind().dialect.name == 'sqlite':\n"
+        f"    op.execute({UPDATE_REFUSAL!r})\n",
+    )
+    assert safety.analyze(parent)['class'] == 'additive'
+    path = retained_guard_revision(publication_history, parent=safety.revision(parent),
+                                   add=ADD_NULLABLE.replace('marker', 'later_marker'),
+                                   sql=UPDATE_REFUSAL.replace('marker', 'later_marker'))
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+def test_retained_nullable_guard_refuses_an_earlier_trigger_installation(publication_history):
+    body = GUARD_BODY.replace('else:\n', 'else:\n    op.execute(' + repr(GUARD_FUNCTION) + ')\n')
+    body = body.replace('CREATE TRIGGER guard_u ', r'CREATE TRIGGER \"PUBLICATIONS_CALENDAR_LINEAGE_GUARD\" ')
+    parent = nullable_guard_revision(publication_history, 'occupied_trigger_name', PUBLICATION_HEAD, body)
+    assert safety.analyze(parent)['class'] == 'fill_only'
+    path = retained_guard_revision(publication_history, parent=safety.revision(parent))
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+def test_retained_nullable_guard_cannot_authorize_a_fill(publication_history):
+    sql = "INSERT INTO ordinals (seq, kind, target) VALUES (1, 'audit', 'one') ON CONFLICT DO NOTHING"
+    path = retained_guard_revision(publication_history, after=APPEND_TABLE + f'op.execute({sql!r})\n')
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize(('filename', 'old', 'new'), [
+    ('0002_guards.py', 'BEFORE UPDATE OR DELETE ON publications', 'BEFORE DELETE ON publications'),
+    ('0002_guards.py', 'BEFORE UPDATE OR DELETE ON publications', 'BEFORE UPDATE OF current OR DELETE ON publications'),
+    ('0050_publication_effective_range.py', " - 'effective_until'", " - 'effective_until' - 'marker'"),
+])
+def test_retained_nullable_guard_requires_complete_reachable_pg_coverage(publication_history, filename, old, new):
+    ancestor = publication_history / filename
+    original = ancestor.read_text(encoding='utf-8')
+    assert old in original
+    try:
+        ancestor.write_text(original.replace(old, new), encoding='utf-8')
+        assert safety.analyze(retained_guard_revision(publication_history))['class'] == 'destructive'
+    finally:
+        ancestor.write_text(original, encoding='utf-8')
+
+
+@pytest.mark.parametrize('sql', [
+    'DROP TRIGGER publications_guard ON publications',
+    'ALTER TABLE publications DISABLE TRIGGER ALL',
+    'CREATE OR REPLACE FUNCTION rota_publication_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$',
+    'CREATE FUNCTION to_jsonb(publications) RETURNS jsonb LANGUAGE sql AS $$ SELECT NULL $$',
+    'CREATE TABLE other.publications (id INT)',
+])
+def test_retained_nullable_guard_refuses_superseded_pg_coverage(publication_history, sql):
+    operation = f'op.execute({sql!r})\n'
+    ancestor = nullable_guard_revision(publication_history, 'changed_guard', PUBLICATION_HEAD, operation)
+    path = retained_guard_revision(publication_history, parent=safety.revision(ancestor))
+    assert safety.analyze(path)['class'] == 'destructive'
+    path = retained_guard_revision(publication_history, after=operation)
+    assert safety.analyze(path)['class'] == 'destructive'
+
+
+def test_unreachable_retained_guard_cannot_authorize_nullable_guard(publication_history):
+    other_root = nullable_guard_revision(publication_history, 'unrelated_root', None, 'pass\n')
+    path = retained_guard_revision(publication_history, parent=safety.revision(other_root))
+    assert safety.analyze(path)['class'] == 'destructive'

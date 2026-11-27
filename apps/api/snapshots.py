@@ -159,7 +159,23 @@ def mapped_score_baseline(rows, published, details=None):
     return baseline if matched else None
 
 
-def publication_score_baseline(db, workspace, rows, own_publication=None):
+def generation_role_bindings(db, workspace):
+    """Freeze only the dated, linked role facts used by a scheduling population."""
+    binding, identity = m.RoleBinding, m.Identity
+    rows = db.execute(select(identity.person_id, binding.role, binding.starts_on, binding.ends_on).join(
+        identity, identity.id == binding.identity_id).where(
+        binding.department_id == workspace.department_id, binding.revoked.is_(False),
+        identity.disabled.is_(False), identity.person_id.is_not(None),
+        binding.starts_on <= workspace.ends_on,
+        or_(binding.ends_on.is_(None), binding.ends_on > workspace.starts_on),
+    ).order_by(identity.person_id, binding.role, binding.starts_on, binding.ends_on))
+    result = defaultdict(list)
+    for person, role, starts, ends in rows:
+        result[person].append({'role': role, 'starts_on': starts.isoformat(), 'ends_on': ends.isoformat() if ends else None})
+    return dict(result)
+
+
+def publication_score_baseline(db, workspace, rows=None, own_publication=None):
     """Freeze the named publication's assignments as scoring evidence, never as draft assignments."""
     if workspace.status in ('published', 'superseded'):
         publication = own_publication or db.scalar(select(m.Publication).where(m.Publication.workspace_id == workspace.id))
@@ -168,6 +184,8 @@ def publication_score_baseline(db, workspace, rows, own_publication=None):
     if workspace.origin not in ('import', 'auto') or not workspace.base_publication_id:
         return None
     publication = db.get(m.Publication, workspace.base_publication_id)
+    if rows is None:
+        rows = workspace_shifts(db, workspace.id)
     details = {}
     # The retained snapshot is immutable; later effective-range trimming cannot change this baseline.
     baseline = mapped_score_baseline(rows, publication.snapshot['shifts'], details)
@@ -945,7 +963,12 @@ def activation_shared_inputs(db, org):
 
 
 def prepared_snapshot_inputs(db, org):
-    """Reuse frozen preparation inputs; independently reacquire them in the final writer."""
+    """Reuse frozen preparation inputs or the fast edit writer's own input projection."""
+    memo = db.info.get('_assignment_reply_inputs')
+    if memo is not None:
+        if org.id not in memo:
+            memo[org.id] = snapshot_inputs(db, org)
+        return memo[org.id]
     state = db.info.get('_planning_preparation')
     if state is None or state['replay']:
         return snapshot_inputs(db, org)
@@ -1057,6 +1080,19 @@ def occurrences_unchanged_since(db, workspace, since, window):
             == {row.id for row in events.blocking_occurrences(db, department_ids, lo, hi)})
 
 
+def _complete_draft_location_ancestry(locations, captured, live, referenced):
+    # Complete newly booked places without promoting capacity-only rows to catalogue scope.
+    for ident in referenced - captured.keys():
+        parent = locations.get(ident, {}).get('parent_id')
+        while parent and parent not in locations and parent in live:
+            locations[parent] = live[parent]
+            parent = live[parent].get('parent_id')
+    for ident in referenced & captured.keys():
+        row = locations[ident]
+        if row.get('parent_id') and row['parent_id'] not in locations:
+            locations[ident] = {**row, 'parent_id': captured[ident].get('parent_id')}
+
+
 def _draft_catalogue_refs(db, workspace):
     own = select(m.Shift.id).where(m.Shift.workspace_id == workspace.id)
     refs = db.execute(own.with_only_columns(m.Shift.assignment_type_id, m.Shift.location_id).distinct()).all()
@@ -1068,7 +1104,7 @@ def _draft_catalogue_refs(db, workspace):
 def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_overrides,
                       current_scheduling, mandatory_rules, current_mandatory, shared_inputs,
                       scope_interval_cache, rule_map_bindings, current_goals=False, current_generation_defaults=False,
-                      draft_inputs=None, draft_refs=None, reuse_catalogue=False):
+                      draft_inputs=None, draft_refs=None, reuse_catalogue=False, live_memberships=False):
     if current_goals:
         from .workspace_baselines import workspace_generation_context
         department, org, goal_defaults = workspace_generation_context(db, workspace, current_goals=True)
@@ -1083,6 +1119,7 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                    if (mandatory_rules or current_mandatory) and not current_scheduling else {})
     current_mandatory = draft_rules.get('draft_policy_basis') == REVIEW_POLICY_BASIS
     baseline = None
+    captured_locations = {}
     if shared_inputs is None and not current_scheduling:
         shared_inputs = _fingerprint_shared_inputs(db, workspace)
     live_inputs = shared_inputs
@@ -1124,10 +1161,17 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                 shared_inputs = saved_inputs
             else:
                 shared_inputs = saved_inputs
-            from .workspace_baselines import live_safety_inputs
+            from .workspace_baselines import CAPTURED_GENERATION_STATES, _current_safety_inputs, live_safety_inputs
+            draft_capacity = workspace.status in CAPTURED_GENERATION_STATES
+            if draft_capacity:
+                live_inputs = _current_safety_inputs(db, workspace, org, live_inputs)
+                captured_locations = validity_baseline.get('locations', {})
             shared_inputs = live_safety_inputs(db, workspace, shared_inputs, current=live_inputs,
                                               include_mandatory=bool(draft_rules), current_mandatory=current_mandatory,
                                               validity_baseline=validity_baseline)
+            if draft_capacity:
+                _complete_draft_location_ancestry(shared_inputs['locations'], captured_locations,
+                                                  live_inputs['locations'], location_ids)
             if rule_map_bindings and workspace.status in {"draft", "submitted", "approved"}:
                 from packages.domain.rule_lines import seeded_policies
 
@@ -1138,6 +1182,9 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                     validity_baseline=validity_baseline)["policies"]
                 if captured != effective:
                     shared_inputs['_rule_map_policies'] = (captured, effective)
+            if live_memberships and workspace.status == 'published':
+                # Rank previews compare current cover under the issued rules.
+                shared_inputs = {**shared_inputs, 'memberships': live_inputs['memberships']}
     # Overrides, tag expansion and evaluator caches must never change the inputs of another rota.
     result = json_value(shared_inputs) if shared_inputs is not None else prepared_snapshot_inputs(db, org)
     read_quality = {}
@@ -1340,7 +1387,8 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
     result["_catalogue_v2_materialized"] = True
     # Tags a rule names read as their members today: whoever is tagged now is included.
     with_tags(result)
-    return result, department_settings, org, department_ids, own_publication, baseline, live_inputs, department
+    return (result, department_settings, org, department_ids, own_publication, baseline,
+            live_inputs, department, captured_locations)
 
 
 def _edit_snapshot_context(db, workspace, sources, options):
@@ -1351,7 +1399,8 @@ def _edit_snapshot_context(db, workspace, sources, options):
     draft = _verified_baseline(db, workspace)
     refs = _draft_catalogue_refs(db, workspace) if draft[0] is not None else None
     refs_key = tuple(tuple(ids) for ids in refs) if refs is not None else None
-    key = refs_key, options['operational'], options['mandatory_rules'], options['current_mandatory']
+    key = (refs_key, options['operational'], options['mandatory_rules'], options['current_mandatory'],
+           options['live_memberships'])
     held = sources.get('context')
     if held is not None and held[0] == key:
         result, department_settings = pickle.loads(held[1])
@@ -1385,6 +1434,105 @@ def _snapshot_window_inputs(db, department_ids, people, lo, hi, availability_lo,
     return values
 
 
+def _quota_window(lo, hi, policies, zone):
+    from packages.domain.quotas import MAX_ROWS, period_bounds
+    for policy in policies[:MAX_ROWS]:
+        try:
+            a, b = period_bounds(policy, zone)
+        except ValueError:
+            continue  # The evaluator emits the explicit ambiguous-time finding.
+        lo, hi = min(lo, a), max(hi, b)
+    return lo, hi
+
+
+def line_trial_snapshot(before, workspace, policy, zone):
+    """Share acquired duties for a plain line trial with an unchanged source window."""
+    from packages.domain.conditions import active_rules
+    from packages.domain.quotas import MAX_ROWS, MAX_SHIFTS, applicable_policies
+
+    ident, definition = policy['id'], policy['definition']
+    predecessors = (set(definition.get('merged_ids') or ()) | {definition.get('replaces_id')}) - {None, ident}
+    if (any(before.get(key) for key in ('source_bindings', 'policy_seed_lines', 'scheduling_facts'))
+            or any(line.get('source_bindings') for line in definition['rule'].get('lines', ()))
+            or definition.get('legacy_lead_conversion')
+            or definition.get('workspace_id') not in (None, workspace.id)
+            or any(p['id'] in predecessors and p['status'] == 'active' for p in before['policies'])):
+        return None
+    previous = [p for p in before['policies'] if p['id'] == ident]
+    after = DomainSnapshot(before, read_quality=dict(getattr(before, 'read_quality', {})))
+    # The override replaces its whole policy, including any local adjustment on it.
+    trial = with_tags({'tags': before.get('tags'), 'policies': [policy]})['policies'][0]
+    after['policies'] = [p for p in before['policies'] if p['id'] != ident] + [trial]
+    if any(p['definition']['rule']['kind'] == 'balance_goal'
+           for p in active_rules([*previous, trial], context=after)):
+        return None  # A changed goal can need a different history window.
+    quota = applicable_policies(after)
+    window = snapshot_window(workspace, zone)
+    lo, hi = _quota_window(*window, quota, zone)
+    old_context = before.get('quota_context')
+    if ((lo.isoformat(), hi.isoformat()) != (old_context['start'], old_context['end'])
+            if old_context else (lo, hi) != window):
+        return None
+    if quota:
+        if len(after['shifts']) > MAX_SHIFTS or (not old_context and len(after['shifts']) != len(after['focus_ids'])):
+            return None  # The normal builder limits the acquisition and records publication sources.
+        after['quota_context'] = {'start': lo.isoformat(), 'end': hi.isoformat(), 'complete': True,
+                                  'limit_exceeded': len({p['id'] for p in quota}) > after['quota_policy_limit']
+                                  or len(quota) > MAX_ROWS, 'publications': (old_context or {}).get('publications', [])}
+    else:
+        after.pop('quota_context', None)
+    after.pop('fingerprint', None)
+    after.pop('input_manifest', None)
+    return after
+
+
+def _external_place_evidence(db, publications, external):
+    owners = {shift['workspace_id'] for shift in external}
+    publication_ids = [pub.id for pub in publications if pub.workspace_id in owners]
+    P = m.Publication
+    if not publication_ids:
+        return {}
+    return {wid: {'locations': places or {}, 'place_capacity': capacity or {}}
+            for wid, places, capacity in db.execute(select(
+                P.workspace_id, P.snapshot['locations'], P.snapshot['place_capacity']
+            ).where(P.id.in_(publication_ids)))}
+
+
+def _checked_place_capacity(shifts, captured, live, issued):
+    """Resolve capacity membership per duty without changing the ordinary catalogue."""
+    from packages.domain.validation import ancestor_ids, capacity_limit
+
+    walks, duties, limits = {}, {}, {}
+
+    def resources(places, location):
+        key = (id(places), location)
+        if key not in walks:
+            walks[key] = [ident for ident in ancestor_ids({'locations': places}, location) if ident in places]
+        return walks[key]
+
+    for shift in shifts:
+        location = shift['location_id']
+        checked = issued.get(shift['workspace_id'])
+        issued_resources = ()
+        if checked:
+            membership = checked['place_capacity'].get('duties', {}).get(shift['id'])
+            if membership and membership['location_id'] == location:
+                issued_resources = membership['resources']
+            else:
+                issued_resources = resources(checked['locations'], location)
+        chain = list(dict.fromkeys([*resources(captured, location), *issued_resources, *resources(live, location)]))
+        if chain:
+            duties[shift['id']] = {'location_id': location, 'resources': chain}
+        for ident in chain:
+            known_limits = [places[ident]['capacity'] for places in (captured, live) if ident in places]
+            if not known_limits:
+                # Older issued places can survive only in the publication evidence.
+                known_limits = [capacity_limit(checked, ident)]
+            limit = min(known_limits)
+            limits[ident] = min(limits.get(ident, limit), limit)
+    return {'duties': duties, 'limits': limits}
+
+
 def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides: list[dict] | None = None, *, wish_debt_cap: float | None = None,
                     lead_balance: str | None = None, fact_overrides: list[dict] | None = None,
                     current_scheduling: bool = False, mandatory_rules: bool = True, current_mandatory: bool = False,
@@ -1394,33 +1542,31 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                     scope_interval_cache: dict | None = None, include_fairness: bool = True,
                     include_objectives: bool = True, include_fairness_history: bool = True,
                     rule_map_bindings: bool = False, include_manifest: bool = True,
+                    include_manifest_sources: bool = True,
                     fairness_goals_out: list[dict] | None = None, _event_currency=None, _edit_sources=None,
-                    _event_now=None) -> dict:
+                    _event_now=None, live_memberships: bool = False) -> dict:
     current_scheduling = current_scheduling or current_goals
     options = dict(operational=operational, policy_overrides=policy_overrides, fact_overrides=fact_overrides,
                    current_scheduling=current_scheduling, mandatory_rules=mandatory_rules,
                    current_mandatory=current_mandatory, shared_inputs=shared_inputs,
                    scope_interval_cache=scope_interval_cache, rule_map_bindings=rule_map_bindings,
-                   current_goals=current_goals, current_generation_defaults=current_generation_defaults)
+                   current_goals=current_goals, current_generation_defaults=current_generation_defaults,
+                   live_memberships=live_memberships)
     if _edit_sources is None:
         context = _snapshot_context(db, workspace, **options)
     else:
         context = _edit_snapshot_context(db, workspace, _edit_sources, options)
     # The department row stays referenced for the whole snapshot; the identity map holds it only weakly.
-    result, department_settings, org, department_ids, own_publication, baseline, live_inputs, _department = context
+    (result, department_settings, org, department_ids, own_publication, baseline,
+     live_inputs, _department, captured_locations) = context
     read_quality = result.read_quality
     lo, hi = snapshot_window(workspace, org.timezone)
-    from packages.domain.quotas import applicable_policies, period_bounds, MAX_SHIFTS, MAX_ROWS
+    from packages.domain.quotas import applicable_policies, MAX_SHIFTS, MAX_ROWS
     policy_limit = result["quota_policy_limit"]
     quota_policies = applicable_policies(result)
     if quota_policies:
         # A whole block, not just the neighbouring rest window, must be loaded.
-        for policy in quota_policies[:MAX_ROWS]:
-            try:
-                a, b = period_bounds(policy, org.timezone)
-            except ValueError:
-                continue  # The evaluator emits the explicit ambiguous-time finding.
-            lo, hi = min(lo, a), max(hi, b)
+        lo, hi = _quota_window(lo, hi, quota_policies, org.timezone)
         result["quota_context"] = {"start": lo.isoformat(), "end": hi.isoformat(),
                                    "complete": True, "limit_exceeded": len({p['id'] for p in quota_policies}) > policy_limit or len(quota_policies) > MAX_ROWS}
     if include_fairness:
@@ -1498,9 +1644,15 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
                  for row in (frozen_series_states(rows, published[workspace_id]) if workspace_id in published else rows)}
     external = [projected[row['id']] for row in external]
     result["shifts"] = own + external
+    if own_publication is not None and not current_scheduling:
+        if issued_capacity := own_publication.snapshot.get('place_capacity'):
+            result['place_capacity'] = json_value(issued_capacity)
     if baseline is not None:
         from .workspace_baselines import CAPTURED_GENERATION_STATES
         if workspace.status in CAPTURED_GENERATION_STATES:
+            issued = _external_place_evidence(db, publications, external)
+            result['place_capacity'] = _checked_place_capacity(result['shifts'], captured_locations,
+                                                               live_inputs['locations'], issued)
             if draft_safety := prepare_draft_type_safety(result, own):
                 result["_draft_type_safety"] = draft_safety
         # Use issued type facts for neighbours so later edits cannot reinterpret their duties.
@@ -1552,7 +1704,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         result["score_context"] = score_context
     if include_manifest:
         from packages.domain.input_manifest import manifest
-        result['input_manifest'] = manifest(result)
+        result['input_manifest'] = manifest(result, include_sources=include_manifest_sources)
         result['fingerprint'] = result['input_manifest']['token']
     return result
 
@@ -1589,8 +1741,12 @@ def _edit_snapshot_sources(db, state, workspace, workspace_record, stamp, option
     return held[1]
 
 
-def domain_snapshot(db, workspace, *args, **kwargs):
+def domain_snapshot(db, workspace, *args, edit_sources=None, **kwargs):
     """Reuse detached preparation inputs only after checking current relational currency."""
+    if edit_sources is not None:
+        # One stamped assignment shares inputs only within its writer transaction.
+        db.flush()
+        return _domain_snapshot(db, workspace, *args, _edit_sources=edit_sources, **kwargs)
     import pickle
     state = db.info.get('_planning_preparation')
     writer = db.connection().info.get('rota_write')
@@ -1707,8 +1863,9 @@ def publication_snapshot(db, workspace, evaluation: dict | None = None, *, own_s
     result["people"] = {pid: {"id": pid, "display_name": name} for pid, name in db.execute(
         select(m.Person.id, m.Person.display_name).where(m.Person.id.in_(person_ids)))}
     # Keep issued evidence on the checked catalogue basis and scoped to this rota.
-    from packages.domain.validation import ancestor_ids
+    from packages.domain.validation import ancestor_ids, place_capacity_inputs
     location_ids = {ident for shift in result['shifts'] for ident in ancestor_ids(data, shift['location_id'])}
+    result['place_capacity'] = place_capacity_inputs(data, result['shifts'])
     service_ids = {ident for shift in result['shifts'] for ident in shift['service_ids']}
     pool_ids = {demand['resource_pool_id'] for shift in result['shifts']
                 for demand in shift['type_snapshot']['definition'].get('resources', [])}

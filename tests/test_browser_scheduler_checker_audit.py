@@ -61,10 +61,19 @@ def test_catalogue_number_strengths_remain_readable_in_line_panel(browser, live_
             assert number.evaluate('e => e.readOnly') is not editable
             tops.append(number.evaluate('e => e.getBoundingClientRect().top'))
         # The strength reads in words beside its number; an empty number's strength waits (editable) or is absent.
-        chip = numbers.get_by_role('button', name='Maximum: mandatory', exact=True)
-        expect(chip).to_have_text('Mandatory')
+        # A reader who cannot edit gets the strength as text (a fact), never a disabled button.
+        button = numbers.get_by_role('button', name='Maximum: mandatory', exact=True)
+        chip = numbers.locator('.rc-strength:not(.is-idle)')
         expect(chip).to_have_attribute('data-level', 'mandatory')
-        expect(chip).to_be_enabled() if editable else expect(chip).to_be_disabled()
+        if editable:
+            expect(button).to_be_enabled()
+            expect(button).to_have_text('Mandatory')
+        else:
+            expect(button).to_have_count(0)
+            assert chip.evaluate('e => e.tagName') == 'SPAN'
+            expect(chip.locator('[aria-hidden=true]')).to_have_text('Mandatory')
+            expect(chip.locator('.sr-only')).to_have_text('Maximum: mandatory')
+            assert chip.evaluate('e => getComputedStyle(e).cursor') == 'default'
         expect(numbers.locator('.rc-strength.is-idle')).to_have_count(2 if editable else 0)
         expect(numbers.locator('.rc-strength:not(.is-idle)')).to_have_count(1)
         if width >= 720:
@@ -381,6 +390,8 @@ def test_historical_candidate_stays_read_only_when_its_rota_inputs_change(browse
         open_scheduling(page)
         panel = page.locator('#auto-panel')
         auto_result(panel)
+        if change == 'archive':
+            expect(panel.get_by_role('button', name='Run auto-schedule', exact=True)).to_be_disabled()
         if change == 'inputs':
             # A4/BE-1 (268b5e8ef): a proposal the rota changed under stays reviewable, and Apply checks it against the
             # current rota first; it is never applied unchecked.

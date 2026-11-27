@@ -12,6 +12,8 @@ jobs:
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
       ROTA_ALLOW_TEST_ROLES: 'yes'
       PW_TRACE_DIR: .run/traces
+      PW_SCREENSHOT_DIR: .run/failure-screenshots
+      PW_TRACE_MODE: 'off'
       PIP_DISABLE_PIP_VERSION_CHECK: '1'
       SUITE: ${{ inputs.suite }}
       CI_UNIT_WORKERS: ${{ vars.CI_UNIT_WORKERS }}
@@ -163,6 +165,12 @@ jobs:
       with:
         name: ci-web-${{ inputs.artifact_attempt }}
         path: candidate/apps/web/dist/
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      id: shard-plan
+      if: github.event_name == 'pull_request' && inputs.bootstrap != 'true' && (inputs.suite != 'unit' || inputs.shard != 1)
+      with:
+        name: ci-plan-${{ inputs.artifact_attempt }}
+        path: ${{ runner.temp }}/checks-plan
     - name: Check Postgres and retain runner/setup evidence
       env:
         PG_CONTAINER: ${{ job.services.postgres.id }}
@@ -190,6 +198,8 @@ jobs:
         echo "CI_POSTGRES_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
         python scripts/compiled_client.py
     - name: Run the exact planned shard once
+      env:
+        CI_CHECKS_PLAN: ${{ steps.shard-plan.outcome == 'success' && format('{0}/checks-plan/shard-plan.json', runner.temp) || '' }}
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
     - name: Retain first-attempt reports and failure evidence
       id: evidence
@@ -202,7 +212,9 @@ jobs:
         path: |-
           candidate/.run/reports/
           candidate/.run/traces/
+          candidate/.run/failure-screenshots/
           candidate/.run/api-logs/
+          ${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7
@@ -214,7 +226,9 @@ jobs:
         path: |-
           candidate/.run/reports/
           candidate/.run/traces/
+          candidate/.run/failure-screenshots/
           candidate/.run/api-logs/
+          ${{ inputs.suite == 'browser' && 'candidate/.run/captures/*.png' || '' }}
         include-hidden-files: true
         if-no-files-found: error
         retention-days: 7

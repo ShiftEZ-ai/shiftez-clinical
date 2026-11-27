@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from sqlalchemy.exc import IntegrityError, OperationalError
 from packages.contracts import schemas as s
 from . import models as m
-from .auth import authenticate, require_permission, require_role
+from .auth import authenticate, person_access, require_permission, require_role
 from .db import DatabaseWriteTimeout, retry_write, transaction
 from . import live
 from .schema import require_current_schema
@@ -29,6 +29,8 @@ ALL_ROLES = list(s.ROLE_NAMES)
 NON_SERIALIZED_COMMANDS = frozenset({"department_content.seen"})
 COMMAND_PERMISSIONS = {
     "department.create": "department.create",
+    "branding.update": "branding.configure",
+    "branding.undo": "branding.configure",
     **{kind: kind for kind in s.BULK_ITEM_KINDS},
     **dict.fromkeys(('workspace.archive', 'workspace.restore', 'workspace.delete_draft'), 'workspace.archive'),
     **dict.fromkeys(('score.settings', 'score.settings.rollback'), 'planning.configure'),
@@ -40,6 +42,7 @@ COMMAND_PERMISSIONS = {
     "programme_membership.withdraw": "catalogue.programmes",
     "programme_membership.restore": "catalogue.programmes",
     "rotation.restore": "rotation.remove",
+    "rotation.import_reference": "rotation.plan",
     "rotation.swap": "rotation.swap",
     "wish.override": "wish.override",
     "policy.withdraw_approval": "policy.retire",
@@ -75,7 +78,7 @@ def command_roles(command):
         return list(s.PERMISSIONS["notification.policy.update"])
     if kind in {"pwa.system.update", "pwa.provider.resume"}:
         return ["operator"]
-    if kind == "absence_report.settings":
+    if kind in {"absence_report.settings", "department.leave_balance_settings"}:
         return ["admin"]
     if kind.startswith("publication.change"):
         return ["coordinator"]
@@ -99,7 +102,7 @@ def command_roles(command):
             permission = "request.withdraw"
         roles = list(s.PERMISSIONS[permission])
         if kind.startswith("role."):
-            roles += s.PERMISSIONS["access.system_roles"]
+            roles += (*s.PERMISSIONS["access.system_roles"], *s.PERMISSIONS["access.installation_admin"])
         return list(dict.fromkeys(roles))
     for prefix, canonical in (("catalogue.", "catalogue.update"), ("eligibility.", "eligibility.create"),
                               ("grant.", "grant.create"), ("role.", "role.grant")):
@@ -124,7 +127,7 @@ def command_roles(command):
         return ['approver']
     if kind == "account.end_other_sessions":
         return ALL_ROLES
-    if kind in {'branding.update', 'branding.undo', 'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
+    if kind in {'department.settings', 'department.display', 'department.display.restore', 'department.sessions'} or kind.startswith('account.'):
         return ['admin']
     if kind.startswith("planner_view."):
         return sorted(planner_tools.PLANNER_ROLES)
@@ -156,7 +159,7 @@ def command_roles(command):
         return ["coordinator", "approver", "programme_lead"]
     if kind in {"policy.create", "policy.group", "rule.migrate_to_catalogue", "rule.acknowledge", "rule.unacknowledge"}:
         return ["admin", "coordinator"]
-    if kind == "request.create":
+    if kind in {"request.create", "request.edit", "request.undo_edit"}:
         return ["staff", "coordinator"]
     if kind in {"notification.ack", "notification.ack_all", "notification.unack", "notification.acknowledge", "session.logout", "session.revoke"} or kind.startswith("table_view.") or kind.startswith("calendar_feed."):
         return ALL_ROLES
@@ -362,7 +365,7 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         from .services import independence
         return independence.permission_command(db, actor, command)
     if kind.startswith("swap."):
-        return swaps.swap_command(db, actor, command)
+        return swaps.read_command_result(actor, swaps.swap_command(db, actor, command))
     if kind in {"wish.create", "wish.update", "wish.restore"}:
         from .services import wishes
         return wishes.save(db, actor, command)
@@ -501,13 +504,15 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         return timeline_commands.apply(db, actor, command)
     if kind.startswith(("rotation.", "trainee_note.")):
         from .services import training
-        if kind in {"rotation.plan", "rotation.copy", "rotation.undo_plan", "rotation.remove", "rotation.restore", "rotation.request_change", "rotation.swap", "trainee_note.create"}:
+        if kind in {"rotation.plan", "rotation.copy", "rotation.import_reference", "rotation.undo_plan", "rotation.remove", "rotation.restore", "rotation.request_change", "rotation.swap", "trainee_note.create"}:
             require(command.target_id is None and command.expected_revision is None, "RESIDENCY_COMMAND_TARGET",
                     "This operation uses the records in its payload, with no top-level target or revision")
         if kind == "rotation.plan":
             return training.plan(db, actor, command)
         if kind == "rotation.copy":
             return training.copy_forward(db, actor, command)
+        if kind == "rotation.import_reference":
+            return training.reference_rotation_import(db, actor, command.payload)
         if kind in {"rotation.undo_plan", "rotation.remove"}:
             return training.remove(db, actor, command, own=kind == "rotation.undo_plan")
         if kind == 'rotation.restore':
@@ -518,8 +523,13 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
             return training.request_swap(db, actor, command)
         if kind in {"trainee_note.create", "trainee_note.update", "trainee_note.delete", "trainee_note.restore"}:
             return training.note_command(db, actor, command)
+    if kind == "department.leave_balance_settings":
+        from .services import leave_balances
+        return leave_balances.update(db, actor, command)
     if kind == "request.create":
         return availability.create_request(db, actor, command)
+    if kind in {"request.edit", "request.undo_edit"}:
+        return availability.edit_request(db, actor, command)
     if kind == "request.decide":
         return availability.decide_request(db, actor, command)
     if kind == "request.decide_many":
@@ -698,7 +708,10 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
     """Single and nested receipts keep the command's current sensitive-object authority checks."""
     if kind in {'branding.update', 'branding.undo'}:
         from .services import branding
-        branding.require_editor(db, actor)
+        branding.require_editor(actor)
+    if kind in {'role.grant', 'role.restore', 'role.revoke'}:
+        from .services.access import require_role_change
+        require_role_change(db, actor, result['record']['role'], grant=kind != 'role.revoke')
     if kind == 'timeline.rotation':
         from .services import timeline_commands
         timeline_commands.authorize_result(db, actor, result)
@@ -724,6 +737,11 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
         availability.lead_protects(db, actor, item["kind"], item["person_id"], item["start"], item["end"])
     if kind in {"request.decide", "request.decide_many", "request.undo"}:
         _authorize_request_results(db, actor, [(kind, result)])
+    if kind in {"request.edit", "request.undo_edit"}:
+        row = scoped(db, m.RequestRecord, result['record']['id'], actor)
+        person_access(db, actor, row.person_id)
+        availability.require_request_person(actor, row.person_id)
+        require(row.created_by == actor.identity_id, 'FORBIDDEN', 'Only the author can read this change', 403)
     if kind.startswith("trainee_note."):
         from .services.training import note_access
         note_access(db, actor, result["record"]["person_id"])
@@ -740,7 +758,7 @@ def _authorize_result(db, actor, kind, result, *, catalogue_kind=None):
             records = result.get("created", result.get("records", []))
             from .services.training import rotation_records_access
             rotation_records_access(db, actor, records, scope=(result.get("rotation_scope") or [])
-                                    if kind in {"rotation.plan", "rotation.copy"} else None)
+                                    if kind in {"rotation.plan", "rotation.copy", "rotation.import_reference"} else None)
     if kind.startswith("swap."):
         source = result.get("undone") or result.get("swap", {})
         row = swaps.get_scoped(db, actor, source.get("id"))
@@ -767,6 +785,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if db is not None:
         from .services.leave_disclosure import overlap_labels
         result = overlap_labels(db, actor, result)
+    if db is not None and kind.startswith('swap.'):
+        result = swaps.read_command_result(actor, result)
     if db is not None and kind.startswith(('person.contact.', 'catalogue.', 'bulk.', 'staff_import.')):
         from .services.contacts import redact_reply
         result = redact_reply(db, actor, result)
@@ -778,6 +798,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if kind == "feedback.export_github" and db is not None:
         from .services import feedback
         return feedback.redact_export_result(db, actor, result, settings)
+    if kind in {'request.edit', 'request.undo_edit'}:
+        return {key: value for key, value in result.items() if key != '_request_edit_previous'}
     return {key: value for key, value in result.items() if key != 'path'} if kind == 'calendar_feed.create' else result
 
 
@@ -812,11 +834,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     class CheckInputsChanged(Exception):
         """Release the writer before resolving changed scheduling inputs."""
 
-    def check_context(db, actor, workspace, current_data, *, revisions_changed=False):
+    def check_context(db, actor, workspace, current_data):
         current = (actor.identity_id, actor.department_id, workspace.content_revision,
                    workspace.status, workspace.archived_at, current_data['fingerprint'])
-        if current != workspace_check[0] or (revisions_changed and command.kind in {
-                'workspace.submit', 'workspace.approve'}):
+        if current != workspace_check[0]:
             raise Problem(409, 'STALE_INPUTS',
                 'The rota or its scheduling inputs changed during the check; the completed check is retained here.',
                 {'current_revision': workspace.revision, 'validation': workspace_check[1],
@@ -958,21 +979,43 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 ok, expiry = github_integrations.check_repository(repo, credential_token)
                 github_check = github_integrations.RepositoryCheck(**context, ok=ok, expiry=expiry)
 
-    from .services import generation_reconciliation, planning_preparation
+    from .services import generation_reconciliation, planning_groups, planning_preparation
+    generation_queue = (command.kind == 'job.continue'
+                        or command.kind == 'job.create' and command.payload.get('kind') == 'generation')
+
+    def prepare_generation_admission():
+        evidence = {}
+        reader = (engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True)
+                  if engine.dialect.name == 'postgresql' else engine)
+        try:
+            with transaction(reader) as db:
+                if engine.dialect.name == 'sqlite':
+                    db.execute(text('BEGIN'))
+                require_current_schema(db)
+                actor = authenticate(db, token, csrf, write=True, settings=settings)
+                require_role(actor, *command_roles(command))
+                if not existing_receipt(db, actor):
+                    planner_tools.assert_precondition(db, actor, command)
+                    db.info['_generation_admission_capture'] = evidence
+                    handler = jobs.continue_generation if command.kind == 'job.continue' else jobs.create_job
+                    handler(db, actor, command, settings)
+        except Problem:
+            # The writer repeats cheap command checks and only reuses a current scope refusal.
+            pass
+        return evidence
+
+    generation_admission = (prepare_generation_admission() if generation_queue and
+        (command.payload.get('planning_group_version_id') or command.payload.get('generation_scope')) else {})
     planning_plan = None
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
     # Publication performs its fresh safety validation at the final writer boundary.
-    group_queue = (command.kind == 'job.create' and command.payload.get('kind') == 'generation'
-                   and bool(command.payload.get('planning_group_version_id')))
     staged = (not assignment_reply and not background_merge and command.kind != 'workspace.publish'
-              and (group_queue or command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
+              and (command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
               and (command.payload.get('rejected_review_item_ids') or
                    any(item.get('accept') is False for item in command.payload.get('decisions', []) if isinstance(item, dict)))))
     if staged:
         reader = engine.execution_options(isolation_level='REPEATABLE READ') if engine.dialect.name == 'postgresql' else engine
-        if group_queue and engine.dialect.name == 'postgresql':
-            reader = reader.execution_options(postgresql_readonly=True)
         planning_plan = {'seed': m.uid(), 'at': m.now(), 'checks': [], 'kind': command.kind}
         from . import db as database
         preparation_settings = reader.get_execution_options().get('rota_write_settings') or settings
@@ -980,9 +1023,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         while True:
             try:
                 with transaction(reader, deadline=preparation_deadline) as db:
-                    if engine.dialect.name == 'sqlite' and group_queue:
-                        db.execute(text('BEGIN'))
-                    elif engine.dialect.name == 'sqlite':
+                    if engine.dialect.name == 'sqlite':
                         # Preparation flushes (then rolls back) writes. A deferred SQLite read cannot upgrade while another
                         # writer holds the lock (instant "database is locked" → 503), so wait for that writer within the
                         # command budget, as PostgreSQL's REPEATABLE READ preparation does.
@@ -1016,12 +1057,6 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     break
             except planning_preparation.RollbackPreparation:
                 break
-            except Problem:
-                if not group_queue:
-                    raise
-                # Make the decision again under the writer if the preliminary read refuses.
-                planning_plan = None
-                break
             except OperationalError as error:
                 if getattr(error.orig, 'sqlstate', None) in {'40001', '40P01'}:
                     # A stored background check also updates the workspace row. Reacquire all
@@ -1047,8 +1082,13 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         db.info.pop("one_time_link", None)
         db.info["correlation_id"] = correlation_id
         db.info['_assignment_reply'] = assignment_reply
+        if assignment_reply and command.kind == 'shift.update':
+            # The edit writes draft assignments, leaving the shared catalogue inputs intact.
+            db.info['_assignment_reply_inputs'] = {}
         if planning_plan is not None:
             planning_preparation.bind(db, planning_plan, replay=True)
+        if generation_queue:
+            db.info['_generation_admission_replay'] = generation_admission
         db.info['_track_input_changes'] = True
         if generation_plan is not None:
             db.info['_generation_plan'] = generation_plan
@@ -1129,11 +1169,16 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             fresh_activation = True
         # A calendar URL is a bearer credential shown once, like invitation/reset links. Keep the committed
         # outcome for retries without storing its secret in receipt evidence or returning it on recovery.
+        outcome = receipt_result(command.kind, result)
+        if previous := db.info.pop('_request_edit_previous', None):
+            outcome = {**outcome, '_request_edit_previous': previous}
         db.add(m.CommandReceipt(id=receipt_id, department_id=actor.department_id, actor_id=actor.identity_id,
                                 command_kind=command.kind, required_roles=allowed, key=idempotency_key,
-                                payload_hash=payload_hash, result=receipt_result(command.kind, result)))
+                                payload_hash=payload_hash, result=outcome))
         override_blockers = db.info.pop('_assignment_override_blockers', [])
-        reason = str(command.payload.get("reason", command.kind))[:500]
+        reason = (swaps.optional_swap_note(command.kind, command.payload.get("reason", ""))
+                  if command.kind in swaps.OPTIONAL_NOTE_COMMANDS
+                  else str(command.payload.get("reason", command.kind))[:500])
         if command.kind == 'request.create' and command.payload.get('kind') == 'absence_report':
             reason = 'Absence reported'
         if command.kind in {'workspace.approve', 'policy.activate', 'policy.activate_many'}:
@@ -1175,7 +1220,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             made = {'id': (result.get('group') or {}).get('group_id')}
         if command.kind == 'department.create':
             made = result['department']
-        if command.kind.startswith('planning.settings'):
+        if command.kind.startswith('planning.settings') or command.kind == 'department.leave_balance_settings':
             made = {'id': actor.department_id}
         listed = command.payload.get("catalogue")
         from .services.audit_log import event_action, subject_detail
@@ -1183,7 +1228,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
         automatic_check = command.payload.get('automatic') is True and (command.kind == 'workspace.validate'
             or command.kind == 'job.create' and command.payload.get('kind') == 'validation')
         if not automatic_check and not conditional_cancel_missed:
-            if (command.kind in {'account.invite', 'rule.propose'}
+            if (command.kind in {'account.invite', 'role.grant', 'rule.propose'}
                     or command.kind == 'availability.record' and result['record'].get('self_approved')):
                 target_id = result['record']['id']
             elif command.kind == 'date_set.copy_next_year' or command.kind.startswith(('planning_group.', 'planning.settings')):
@@ -1221,6 +1266,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                                        **({"catalogue": listed} if isinstance(listed, str) else {}),
                                                        **({"source_date_set_id": command.target_id}
                                                           if command.kind == 'date_set.copy_next_year' else {}),
+                                                       **({"leave_balance_overdrawn": True} if result.get("leave_balance_overdrawn") else {}),
                                                        **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
                                                         **({"entered_on_behalf_by": sorted(enterers)}
                                                            if (enterers := db.info.pop("entered_on_behalf_by", None)) else {}),
@@ -1248,6 +1294,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                      context={"correlation_id": correlation_id, "command_kind": logged_command_kind(command.kind)},
                                      serialize=command.kind not in NON_SERIALIZED_COMMANDS)
                 break
+            except planning_groups.GenerationAdmissionChanged:
+                require(attempt < 2, 'STALE_INPUTS',
+                        'Scheduling inputs are changing; start auto-schedule again', 409, {'recoverable': True})
+                generation_admission = prepare_generation_admission()
             except generation_reconciliation.GenerationInputsChanged:
                 with transaction(reader) as db:
                     if engine.dialect.name == 'sqlite':
@@ -1271,12 +1321,16 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     since = m.now()
                     current_data = planning.domain_snapshot(db, workspace,
                                                             current_mandatory=command.kind == 'workspace.submit')
-                    check_context(db, actor, workspace, current_data, revisions_changed=True)
+                    check_context(db, actor, workspace, current_data)
                     require(attempt < 2, 'STALE_INPUTS', 'Scheduling inputs are changing; check the rota again', 409,
                             {'recoverable': True, 'validation': workspace_check[1]})
+                    checked = workspace_check[1]
                     if command.kind == 'workspace.validate':
                         command = command.model_copy(update={'expected_revision': workspace.revision})
-                    workspace_check = (*workspace_check[:2], current_data, workspace_check[3],
+                    else:
+                        checked = planning.revalidate(db, workspace, store=False, include_internal=True,
+                                                      acquired_data=current_data)
+                    workspace_check = (workspace_check[0], checked, current_data, workspace_check[3],
                                        planning.read_stamp(db, workspace, current_data, since))
     except IntegrityError:
         # Two identical requests can both pass the pre-write receipt read.  The

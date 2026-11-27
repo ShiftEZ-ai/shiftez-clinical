@@ -13,7 +13,7 @@ def test_worker_owner_migration_preserves_existing_rows(session_limits_database)
     from sqlalchemy import MetaData, inspect
     from apps.api.db import make_engine
     from scripts import manage
-    from tests.migration_support import historical_seed
+    from tests.migration_support import historical_seed, without_installation_admin_backfill
     url = session_limits_database
     config = manage.alembic_config(url)
     command.upgrade(config, '0128_workspace_read_projections')
@@ -31,7 +31,7 @@ def test_worker_owner_migration_preserves_existing_rows(session_limits_database)
 
         before = snapshot()
         command.upgrade(config, 'head')
-        assert snapshot() == before
+        assert without_installation_admin_backfill(snapshot()) == before
         assert next(c for c in inspect(engine).get_columns('jobs') if c['name'] == 'worker_id')['nullable']
         assert 'ix_jobs_worker_lease' in {index['name'] for index in inspect(engine).get_indexes('jobs')}
     finally:
@@ -70,6 +70,7 @@ def test_startup_recovers_only_owned_jobs_immediately_and_fences_previous_attemp
 
 def test_main_recovers_owned_work_once_per_successful_start(monkeypatch):
     monkeypatch.setenv('ROTA_ENV', 'test')
+    monkeypatch.setenv('ROTA_SOLVER_WORKERS', '1')
     monkeypatch.setattr('sys.argv', ['worker'])
     monkeypatch.setattr(worker, 'configure_logging', lambda: None)
     monkeypatch.setattr(worker, 'make_engine', lambda *a, **k: object())

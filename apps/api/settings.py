@@ -6,7 +6,6 @@ bounded writer wait before housekeeping; the command write budget still applies.
 """
 from dataclasses import dataclass, field
 from ipaddress import IPv4Address
-import logging
 import os
 from pathlib import Path
 import stat
@@ -163,7 +162,7 @@ class Settings:
     oidc_redirect_uri: str = ""
     oidc_allowed_hosts: str = ""
     forwarded_allow_ips: str = ""  # The API trusts only its resolved edge container's exact peer.
-    generation_engine: str = "legacy"  # Temporary adoption gate; not a user-facing engine choice.
+    generation_engine: str = "cp_sat"
     generation_resume_days: int = 7
     # Local 150-person/526-session comparison completed each phase within 54.2s; rounded up with 25% margin.
     # shortcut: synthetic timing is provisional; re-measure through the app once the Golden department exists on DEV.
@@ -249,7 +248,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            generation_engine=os.getenv("ROTA_GENERATION_ENGINE", "legacy"),
+            generation_engine=os.getenv("ROTA_GENERATION_ENGINE", cls.generation_engine),
             static_precompressed=os.getenv('ROTA_STATIC_PRECOMPRESSED', 'true') == 'true',
             environment=environment_from_env(),
             deployment=deployment_from_env(environment_from_env()),
@@ -294,14 +293,6 @@ class Settings:
                             "workspace_read_max_days", "workspace_read_page_size",
                             "catalogue_preview_max_workspaces", "catalogue_preview_max_sessions")},
         )
-
-    def warn_default_generation_engine(self) -> None:
-        if self.environment != 'test' and self.generation_engine == 'legacy' and 'ROTA_GENERATION_ENGINE' not in os.environ:
-            from packages.contracts.rule_catalogue import GREEDY_NOT_APPLIED
-            logging.getLogger('rota.settings').warning(
-                'ROTA_GENERATION_ENGINE is unset; falling back to the legacy greedy engine. %s '
-                'Set ROTA_GENERATION_ENGINE=cp_sat to apply these inputs.',
-                ' '.join(item['message'] for item in GREEDY_NOT_APPLIED))
 
     def check_sqlite_synchronous(self) -> None:
         if self.sqlite_synchronous not in {"FULL", "NORMAL", "OFF"}:

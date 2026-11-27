@@ -13,6 +13,7 @@ from apps.api.auth import authenticate
 from apps.api.db import transaction
 from apps.api.main import create_app
 from apps.api.services.jobs import create_job
+from apps.api.settings import Settings
 from apps.worker import main as worker
 from packages.contracts.rule_catalogue import GREEDY_NOT_APPLIED
 from packages.contracts.schemas import Command, GenerationNotApplied, JobResult
@@ -161,44 +162,42 @@ def test_strict_migration_proof_discloses_greedy_comparison_omissions(h):
 
 
 @pytest.mark.parametrize('entrypoint', ['api', 'worker'])
-@pytest.mark.parametrize(('environment', 'engine', 'warns'), [
-    ('development', None, True), ('test', None, False),
-    ('development', 'legacy', False), ('development', 'cp_sat', False),
+@pytest.mark.parametrize(('environment', 'engine'), [
+    ('development', None), ('test', None),
+    ('development', 'legacy'), ('development', 'cp_sat'),
 ])
-def test_startup_warns_once_only_for_implicit_greedy_outside_tests(h, monkeypatch, caplog,
-                                                                entrypoint, environment, engine, warns):
+def test_startup_uses_cp_sat_by_default_without_an_adoption_warning(h, monkeypatch, caplog,
+                                                                    entrypoint, environment, engine):
     monkeypatch.setenv('ROTA_ENV', environment)
+    monkeypatch.setenv('DATABASE_URL', h.settings.database_url)
+    monkeypatch.delenv('DATABASE_URL_FILE', raising=False)
+    monkeypatch.setenv('FMUC_DATA_KEY', '01' * 32)
+    monkeypatch.delenv('FMUC_DATA_KEY_FILE', raising=False)
     if engine is None:
         monkeypatch.delenv('ROTA_GENERATION_ENGINE', raising=False)
     else:
         monkeypatch.setenv('ROTA_GENERATION_ENGINE', engine)
-    settings = replace(h.settings, environment=environment, generation_engine=engine or 'legacy', fmuc_data_key='01' * 32)
+    assert Settings().generation_engine == 'cp_sat'
+    expected = engine or 'cp_sat'
     with caplog.at_level(logging.WARNING, logger='rota.settings'):
         if entrypoint == 'api':
             monkeypatch.setattr(live, 'attach', lambda loop: None)
             monkeypatch.setattr(live, 'listen', lambda url: None)
             monkeypatch.setattr(live, 'detach', lambda loop: None)
-            with TestClient(create_app(settings, engine=h.app.state.engine)):
-                pass
+            with TestClient(create_app(engine=h.app.state.engine)) as client:
+                assert client.app.state.settings.generation_engine == expected
         else:
-            monkeypatch.setenv('DATABASE_URL', h.settings.database_url)
-            monkeypatch.delenv('DATABASE_URL_FILE', raising=False)
             monkeypatch.setenv('ROTA_SOLVER_WORKERS', '1')
             monkeypatch.setattr(sys, 'argv', ['worker', '--once'])
             monkeypatch.setattr(worker, 'configure_logging', lambda: None)
             def worker_engine(url, *, settings):
                 assert settings.database_url == url == h.settings.database_url
                 assert settings.environment == environment
-                assert settings.generation_engine == (engine or 'legacy')
+                assert settings.generation_engine == expected
                 return h.app.state.engine
             monkeypatch.setattr(worker, 'make_engine', worker_engine)
             monkeypatch.setattr(worker, 'process_one', lambda engine, **kwargs: False)
             worker.main()
     warnings = [record for record in caplog.records if record.name == 'rota.settings'
                 and record.levelno == logging.WARNING]
-    assert len(warnings) == int(warns)
-    if warns:
-        message = warnings[0].getMessage()
-        assert 'ROTA_GENERATION_ENGINE is unset' in message and 'legacy greedy' in message
-        assert 'ROTA_GENERATION_ENGINE=cp_sat' in message
-        assert all(item['message'] in message for item in GREEDY_NOT_APPLIED)
+    assert not warnings

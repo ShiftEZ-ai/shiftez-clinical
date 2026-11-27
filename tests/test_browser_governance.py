@@ -471,8 +471,37 @@ def test_a_manually_prepared_swap_publishes_itself_when_only_publication_is_auto
         rc, approver = sign_in(browser, live_server, "approver"); contexts.append(rc)
         navigate(approver, "requests?type=swap")
         approver.get_by_role("button", name="Open rota", exact=True).click()
-        expect(approver.locator("#main")).to_have_attribute("data-loaded-view", "schedule")
-        decide(approver, "Approve changes")
+        main = approver.locator("#main")
+        expect(main).to_have_attribute("data-loaded-view", "schedule")
+        state = approver.locator(".planner-bar .rota-status")
+        expect(state).to_have_text("Amendment · Waiting for approval")
+        approver.get_by_role("button", name="Approve changes", exact=True).click()
+        dialog = approver.get_by_role("dialog", name="Approve changes", exact=True)
+        dialog.get_by_label("Note", exact=True).fill("Independent UI acceptance review")
+        held = []
+        approver.route("**/api/workspaces?*", lambda route: held.append(route))
+        try:
+            with approver.expect_request(lambda request: "/api/workspaces?" in request.url):
+                dialog.get_by_role("button", name="Approve changes", exact=True).click()
+                armed = dialog.locator("button.armed")
+                if armed.count():
+                    armed.click()
+            expect(state).to_have_text("Amendment · Published")
+            expect(approver.locator(".planner-bar .rota-decisions")).to_be_empty()
+        finally:
+            for route in held:
+                route.continue_()
+            approver.unroute("**/api/workspaces?*")
+
+        expect(dialog).to_have_count(0)
+        expect(main).to_have_attribute("data-loaded-view", "schedule")
+        expect(main.locator("#schedule-view")).to_be_visible()
+        expect(approver.locator(".planner-bar").get_by_role("heading", name="Schedule", exact=True)).to_be_visible()
+        expect(state).to_have_count(0)
+        expect(approver.get_by_role("button", name="Approve changes", exact=True)).to_have_count(0)
+        expect(main.get_by_text(re.compile(r"Couldn.t load (the schedule|the published sessions)"))).to_have_count(0)
+        expect(main.get_by_text("This rota has changed. Search again", exact=False)).to_have_count(0)
+        expect(approver).to_have_url(re.compile(r"[?&]edit=none(?:&|$)"))
         expect(approver.locator(".toast").filter(has_text="Approved · the swap is published")).to_be_visible()
         assert h.get("staff", "/api/swaps/"+swap_id)["swap"]["status"] == "published"
         assert not h.get("staff", "/api/publications/"+original)["publication"]["current"]
@@ -565,7 +594,8 @@ def test_approve_dialog_names_rule_adjustments(browser, live_server, h, scheme, 
 @pytest.mark.parametrize('scheme,viewport', [('light', {'width': 1440, 'height': 1000}),
                                            ('dark', {'width': 390, 'height': 844})])
 def test_self_approval_is_marked_in_review_strip(browser, live_server, h, scheme, viewport):
-    """LIVE-26: approving your own rota under a self-approval permission is said in the dialog and on the review step."""
+    """LIVE-26: approving your own rota under a self-approval permission is said in the dialog and on the review step,
+    which then reads Self-approved in place of "Independent approval", never both."""
     identity(h, 'solo', ['coordinator', 'approver'])
     h.command('admin', 'self_approval.grant', {'identity_id': h.seed['identities']['solo'], 'actions': ['rota.approve'],
               'starts_on': '2026-10-01', 'reason': 'Only one approver this quarter'})  # D4: in force, ends a year later
@@ -578,13 +608,17 @@ def test_self_approval_is_marked_in_review_strip(browser, live_server, h, scheme
         strip = page.locator('.review-strip')
         expect(strip).to_be_visible()
         expect(strip.get_by_text('Self-approved', exact=True)).to_have_count(0)
+        expect(strip.locator('.review-facts')).to_contain_text('Independent approval')
         page.get_by_role('button', name='Approve rota', exact=True).click()
         form = page.get_by_role('dialog', name='Approve rota', exact=True)
         expect(form.locator('.approve-summary').get_by_text('Self-approved', exact=True)).to_be_visible()
+        expect(form.get_by_label('Reason', exact=True)).to_have_count(1)  # asked once, where the decision is made
         form.get_by_label('Reason', exact=True).fill('Checked the rest gaps myself')
         save_dialog(form, 'Approve rota')
         assert h.detail(own)['workspace']['status'] == 'approved'
         expect(page.locator('.review-strip').get_by_text('Self-approved', exact=True)).to_be_visible()
+        expect(page.locator('.review-strip .review-facts')).not_to_contain_text('Independent')
+        expect(page.locator('.review-strip .review-facts')).to_contain_text('1 of 1 approvals')
     finally:
         context.close()
 

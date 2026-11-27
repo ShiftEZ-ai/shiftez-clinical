@@ -171,12 +171,12 @@ function previewStaged(collection:string,table:string,refresh:()=>void){
 }
 
 const PAGE=100;
-const SHEET_KEYS='Arrows move · Shift extends · Enter or F2 edits · Esc cancels · Ctrl C / Ctrl V copy and paste · drag the corner or Ctrl D fills down';
+const SHEET_KEYS='Arrows move · Shift extends · Enter or F2 edits · Esc cancels · Ctrl C / Ctrl V copy and paste · drag the corner, Fill down or Ctrl D fills down';
 
 /**
  * The Sheet layout (design §2.9, artboards B2/B4): a collection's rows as a grid (role=grid, one cell in the tab order,
  * arrows move, Shift extends a range, Enter/F2 edit with the field's standard input in the cell bar, Esc cancels,
- * Ctrl C/V copy and paste, Ctrl D or the corner handle fills down). Edits are staged (marked cell, struck "was" value,
+ * Ctrl C/V copy and paste, Ctrl D, Fill down or the corner handle fills down). Edits are staged (marked cell, struck "was" value,
  * "changed, not saved" for screen readers) until Preview; Discard is a same-button confirm.
  */
 export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refresh:()=>void;columns?:string[]}):HTMLElement{
@@ -195,6 +195,8 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
   const textOf=(row:SheetRow,f:SheetField|null)=>f?shownValue(f,value(row,f)):titleOf(row);
   const editable=(c:number)=>{const f=cols[c];return canEdit&&f?.editable?f:null;};
   let cells:HTMLTableCellElement[][]=[],cur={r:0,c:0},anchor={r:0,c:0},editing:((keep:boolean)=>void)|null=null;
+  /** Fill down by single clicks or taps (WCAG 2.2 SC 2.5.7): where the pattern starts and, once chosen, the pattern. */
+  let fillPick:{start:{r:number;c:number};pattern?:{r0:number;r1:number;c0:number;c1:number}}|null=null;
 
   function draw(){
     const n=Math.min(rows.length,limit()),list=rows.slice(0,n);
@@ -211,7 +213,7 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
     root.replaceChildren(cellbar,scroll,
       ...(rest>0?[el('div',{class:'dt-more-row'},button(`Show ${Math.min(rest,PAGE)} more`,()=>{shownRows.set(o.table,limit()+PAGE);const at={...cur};draw();move(at.r,at.c);},'',{class:'link-button'}),
         el('span',{class:'muted'},` · ${rest.toLocaleString('en')} more ${rest===1?'row':'rows'}`))]:[]),stageBar,footerStatus(footer));
-    cur={r:Math.min(cur.r,n-1),c:Math.min(cur.c,cols.length-1)};anchor={...cur};
+    cur={r:Math.min(cur.r,n-1),c:Math.min(cur.c,cols.length-1)};anchor={...cur};fillPick=null;
     paint(false);paintStage();
   }
   const footer=el('span',{class:'dt-count muted'});
@@ -247,9 +249,10 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
     const f=cols[cur.c],row=rows[cur.r],{r0,r1,c0,c1}=range(),n=(r1-r0+1)*(c1-c0+1);if(!row)return cellbar.replaceChildren();
     // Record · field and its value; the keys are behind one help mark, not spelled out on every cell.
     cellbar.replaceChildren(el('span',{class:'ref'},f?`${titleOf(row)} · ${f.label}`:titleOf(row)),...(f?[el('span',{class:'cellbar-value','data-tip':textOf(row,f)},textOf(row,f))]:[]),
-      ...(!canEdit?[el('span',{class:'muted'},'Read only')]:n>1?[el('span',{class:'muted'},`${n} cells selected`)]:[]),
+      ...(fillPick?[el('span',{class:'muted'},fillStep())]:!canEdit?[el('span',{class:'muted'},'Read only')]:n>1?[el('span',{class:'muted'},`${n} cells selected`)]:[]),
       ...(canEdit?[el('button',{type:'button',class:'icon-button bare','aria-label':'Sheet keys','data-help':'','data-tip':SHEET_KEYS},icon('help'))]:[]),
-      el('span',{class:'grow'}),...(canEdit&&n>1?[button(`Change ${n} cells…`,()=>changeRange(r0,r1,c0,c1),'secondary small')]:[]));
+      el('span',{class:'grow'}),...(canEdit&&cells.length>1?[button('Fill down',toggleFill,'secondary small',{'aria-pressed':String(!!fillPick)})]:[]),
+      ...(canEdit&&n>1?[button(`Change ${n} cells…`,()=>changeRange(r0,r1,c0,c1),'secondary small')]:[]));
   }
   /** "Change N cells…": the universal Change form for the range's records, its editable fields chosen (SSOT). */
   function changeRange(r0:number,r1:number,c0:number,c1:number){
@@ -267,6 +270,16 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
     for(let c=to.c0;c<=to.c1;c++){const f=editable(c);if(!f)continue;for(let r=to.r0+from;r<=to.r1;r++)out.push({row:rows[r],key:f.key,value:value(rows[to.r0+(r-to.r0)%from],f)});}
     if(!out.length)return announce('Nothing to fill: these columns are read-only.');
     stage(out);announce(`${plural(out.length,'cell')} filled down · not saved yet`);
+  }
+  /** Fill down without dragging: Fill down, then the pattern's last cell, then the last row to fill (a click, a tap or
+   *  Enter each). The pattern starts at the selection; the fill is the corner handle's own. */
+  const fillStep=()=>fillPick?.pattern?'Choose the last row to fill.':'Choose the last cell of the pattern.';
+  function toggleFill(){const {r0,c0}=range();fillPick=fillPick?null:{start:{r:r0,c:c0}};paint();announce(fillPick?fillStep():'Fill down cancelled.');}
+  function pick(p:{r:number;c:number}){
+    const from=fillPick?.pattern;if(!fillPick)return;
+    if(!from){anchor={...fillPick.start};cur=p;fillPick.pattern=range();paint();return announce(fillStep());}
+    if(p.r<=from.r1)return announce('Choose a row below the pattern.');
+    fillPick=null;anchor={r:from.r0,c:from.c0};cur={r:p.r,c:from.c1};paint();fillDown(from.r1-from.r0+1,range());
   }
   /** Ctrl V: cells from the cursor; one value pasted over a range fills the whole range. */
   function pasteText(text:string){
@@ -325,8 +338,9 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
   }
   function events(t:HTMLTableElement){
     const at=(e:Event)=>{const td=(e.target as HTMLElement).closest<HTMLTableCellElement>('td[role=gridcell]');return td?{r:+td.dataset.r!,c:+td.dataset.c!}:null;};
-    let drag:''|'range'|'fill'='',from:ReturnType<typeof range>|null=null;
+    let drag:''|'range'|'fill'='',from:ReturnType<typeof range>|null=null,picking=false;
     t.addEventListener('pointerdown',e=>{if(e.button!==0)return;
+      picking=!!fillPick;if(picking){const p=at(e);if(!p)return;editing?.(true);if(!editing)pick(p);return;}
       if((e.target as HTMLElement).classList.contains('fill-handle')){drag='fill';from=range();e.preventDefault();return;}
       const p=at(e);if(!p)return;editing?.(true);if(editing)return;move(p.r,p.c,e.shiftKey);drag='range';});
     t.addEventListener('pointerover',e=>{const p=at(e);if(!drag||!p)return;
@@ -334,7 +348,7 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
     const stop=()=>{if(drag==='fill'&&from){const to=range();if(to.r1>from.r1)fillDown(from.r1-from.r0+1,to);}drag='';from=null;};
     // Bound for one drag at a time: a redrawn grid leaves no listener behind on the window.
     t.addEventListener('pointerdown',e=>{if(e.button===0)window.addEventListener('pointerup',stop,{once:true});},{capture:true});
-    t.addEventListener('dblclick',e=>{if(at(e))edit();});
+    t.addEventListener('dblclick',e=>{if(at(e)&&!picking)edit();});
     // Focus put on a cell (Tab back into the grid, a click, a test) makes it the cursor.
     t.addEventListener('focusin',e=>{const p=at(e);if(p&&!editing&&(p.r!==cur.r||p.c!==cur.c)){cur=p;anchor={...p};paint(false);}});
     t.addEventListener('keydown',e=>{
@@ -345,7 +359,9 @@ export function sheetGrid(o:{collection:string;table:string;rows:unknown[];refre
       else if(k==='ArrowRight')go(cur.r,ctrl?end:cur.c+1);else if(k==='ArrowLeft')go(cur.r,ctrl?0:cur.c-1);
       else if(k==='Home')go(ctrl?0:cur.r,0);else if(k==='End')go(ctrl?last:cur.r,end);
       else if(k==='PageDown')go(cur.r+10,cur.c);else if(k==='PageUp')go(cur.r-10,cur.c);
+      else if(fillPick&&k==='Enter'){e.preventDefault();pick(cur);}
       else if(k==='Enter'||k==='F2'){e.preventDefault();edit();}
+      else if(k==='Escape'&&fillPick){e.preventDefault();e.stopPropagation();toggleFill();}
       else if(k==='Escape'&&(anchor.r!==cur.r||anchor.c!==cur.c)){e.preventDefault();e.stopPropagation();anchor={...cur};paint();}
       else if(ctrl&&k.toLowerCase()==='d'){e.preventDefault();const r=range();if(canEdit&&r.r1>r.r0)fillDown(1,r);}
       else if(ctrl&&k.toLowerCase()==='a'){e.preventDefault();anchor={r:0,c:0};cur={r:last,c:end};paint();}

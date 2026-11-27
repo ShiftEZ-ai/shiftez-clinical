@@ -23,11 +23,13 @@ TAG_LIMITS = {"length": 24, "per_person": 30}
 Tag = Annotated[str, Field(min_length=1, max_length=TAG_LIMITS["length"])]
 Clock = Annotated[str, StringConstraints(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$")]
 # The one list of roles: the server, the database check and the generated frontend types all read it.
-RoleName = Literal["staff", "coordinator", "approver", "credentialer", "admin", "auditor", "programme_lead", "operator"]
+RoleName = Literal["staff", "coordinator", "approver", "credentialer", "admin", "auditor", "programme_lead", "operator",
+                   "installation_admin"]
 ROLE_NAMES: tuple[str, ...] = get_args(RoleName)
 TEAM_READER_ROLES: tuple[RoleName, ...] = ("admin", "coordinator", "approver", "programme_lead", "auditor")
 SYSTEM_ROLES: tuple[RoleName, ...] = ("operator",)
-EXPLICIT_ROLES: frozenset[RoleName] = frozenset((*SYSTEM_ROLES, "auditor"))
+INSTALLATION_ADMIN_ROLE: RoleName = "installation_admin"
+EXPLICIT_ROLES: frozenset[RoleName] = frozenset((*SYSTEM_ROLES, "auditor", INSTALLATION_ADMIN_ROLE))
 ROLE_LABELS: dict[RoleName, str] = {role: role.replace("_", " ").capitalize() for role in ROLE_NAMES}
 ROLE_LABELS["operator"] = "Developer"
 # A 503 is definite only when raised before any request write can commit; otherwise the client must confirm.
@@ -113,7 +115,9 @@ PERMISSIONS: dict[str, tuple[RoleName, ...]] = {
     "publications.read_team": ("coordinator", "approver", "auditor"),
     "date_sets.read_all": ("admin", "coordinator"),
     "access.system_roles": ("operator",),
+    "access.installation_admin": (INSTALLATION_ADMIN_ROLE, *SYSTEM_ROLES),
     "department.create": SYSTEM_ROLES,
+    "branding.configure": (INSTALLATION_ADMIN_ROLE, *SYSTEM_ROLES),
     "feedback.read_all": ("operator", "auditor"),
     "feedback.triage": ("operator",),
     "feedback.export_github": ("operator",),
@@ -200,6 +204,12 @@ for _family in ('membership', 'eligibility', 'programme_membership'):
 # intentionally backed by the same map the server uses for command enforcement. Keep the command permission
 # registry unchanged: `/api/me.permissions` is an action list, while this UI map also carries role-shaped gates.
 PERMISSION_NAMES: tuple[str, ...] = tuple(PERMISSIONS)
+ROLE_GRANT_PERMISSIONS = {
+    role: ("access.installation_admin" if role == INSTALLATION_ADMIN_ROLE else
+           "access.system_roles" if role in EXPLICIT_ROLES else "role.grant")
+    for role in ROLE_NAMES
+}
+
 CAPABILITIES: dict[str, tuple[RoleName, ...]] = {
     **PERMISSIONS,
     **{f'ui.{role}': (role,) for role in ROLE_NAMES},
@@ -1633,7 +1643,7 @@ class Audience(Schema):
     (groups narrow each other; several values in one group widen it; roles and named people always count) still reads."""
     everyone: bool = False
     where: Conditions | None = None
-    roles: list[RoleName] = Field(default_factory=list, max_length=8)
+    roles: list[RoleName] = Field(default_factory=list, max_length=len(ROLE_NAMES))
     person_ids: list[ID] = Field(default_factory=list, max_length=500)
     category_ids: list[ID] = Field(default_factory=list, max_length=100)
     service_ids: list[ID] = Field(default_factory=list, max_length=64)
@@ -4283,6 +4293,10 @@ class LeaveInput(InstantInterval):
     kind: Literal['leave', 'clinic_change', 'meeting', 'administrative'] = 'leave'
 
 
+class RequestEditUndo(Schema):
+    receipt_id: ID
+
+
 class OvertimeAvailabilityInput(Schema):
     person_id: ID
     kind: Literal['overtime_availability'] = 'overtime_availability'
@@ -5234,6 +5248,10 @@ class FillOptionsInput(Schema):
     supervisor_person_id: ID | None = None
 
 
+ASSIGNMENT_STAMP_PREFIX = 'assign:'
+AssignmentStamp = Annotated[str, StringConstraints(pattern=rf'^{ASSIGNMENT_STAMP_PREFIX}[a-f0-9]{{64}}$')]
+
+
 class FillOptionsResult(Schema):
     """A checked fill-options page or the final complete candidate result."""
     provisional_page: bool
@@ -5244,6 +5262,7 @@ class FillOptionsResult(Schema):
     replace_refusal: str | None = None
     slot: dict[str, Any]
     source_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+    assignment_stamp: AssignmentStamp | None = None
     evaluated_at: datetime
     candidates: list[dict[str, Any]]
     basis: str
@@ -5476,6 +5495,10 @@ class JobCancelInput(Decision):
 
 class WorkspaceValidation(Decision):
     automatic: bool = False
+
+
+class WorkspaceUndoInput(Decision):
+    undo_of: ID | None = None
 
 
 class ApprovalNote(Schema):
@@ -6031,14 +6054,69 @@ class OptionalApprovalDecision(ApprovalNote):
         return self
 
 
+class LeaveAllowanceLine(Schema):
+    leave_type_id: ID
+    days: int = Field(ge=0, le=366, strict=True)
+    person_id: ID | None = None
+    starts_on: date | None = None
+
+    @model_validator(mode='after')
+    def dated_person_line(self):
+        if self.person_id is not None and self.starts_on is None:
+            raise ValueError('Supply a start date for an individual allowance')
+        return self
+
+
+class LeaveBalanceConfiguration(Schema):
+    year_start_month: int = Field(default=1, ge=1, le=12, strict=True)
+    year_start_day: int = Field(default=1, ge=1, le=31, strict=True)
+    carry_over_days: int = Field(default=0, ge=0, le=366, strict=True)
+    allowances: list[LeaveAllowanceLine] = Field(default_factory=list, max_length=2000)
+
+    @model_validator(mode='after')
+    def valid_calendar_and_lines(self):
+        try:
+            date(2001, self.year_start_month, self.year_start_day)
+        except ValueError:
+            raise ValueError('Choose a leave year start that occurs every year') from None
+        keys = {(line.leave_type_id, line.person_id, line.starts_on) for line in self.allowances}
+        if len(keys) != len(self.allowances):
+            raise ValueError('Use one allowance per leave type, person and start date')
+        return self
+
+
+class LeaveBalanceSettingsChange(Decision):
+    configuration: LeaveBalanceConfiguration | None
+
+
+class LeaveBalanceSettings(Schema):
+    revision: int | None = None
+    configuration: LeaveBalanceConfiguration
+    default_starts_on_min: date | None = None
+
+
+class LeaveBalance(Schema):
+    leave_type_id: ID | None
+    leave_type_name: str
+    starts_on: date
+    ends_on: date
+    allowance_days: int
+    carried_days: int
+    used_days: int
+    remaining_days: int
+    projected_days: int | None = None
+
+
 class RequestDecision(OptionalApprovalDecision):
     decision: Literal["approve", "reject", "withdraw"]
+    balance_confirmation: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 
 class RequestDecisionItem(Schema):
     id: ID
     expected_revision: int = Field(ge=1)
     source: Literal["request", "pattern"] = "request"
+    balance_confirmation: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 
 class RequestDecisionAccess(Schema):
@@ -6549,11 +6627,15 @@ class AccountInvite(Schema):
     email: Email
     username: Username
     person_id: ID | None = None
-    roles: list[RoleName] = Field(default_factory=list, max_length=8)
+    roles: list[RoleName] = Field(default_factory=list, max_length=len(ROLE_NAMES))
     reason: Reason
 
 
 AccountOnboardingFingerprint = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")]
+
+
+# rows: one request's ceiling; wave: the most people the admin screen sends in one batch.
+ACCOUNT_ONBOARDING_LIMITS = {"rows": 200, "wave": 25}
 
 
 class AccountOnboardingRow(Schema):
@@ -6563,7 +6645,7 @@ class AccountOnboardingRow(Schema):
 
 
 class AccountOnboarding(Schema):
-    rows: list[AccountOnboardingRow] = Field(min_length=1, max_length=200)
+    rows: list[AccountOnboardingRow] = Field(min_length=1, max_length=ACCOUNT_ONBOARDING_LIMITS["rows"])
     reason: Reason
 
 
@@ -7374,6 +7456,31 @@ class ImportPreview(Schema):
     csv_text: str = Field(min_length=1, max_length=1_000_000)
 
 
+class ReferenceRotationFile(Schema):
+    rotations: list[RotationInput] = Field(min_length=1, max_length=1000)
+
+
+REFERENCE_ROTATION_FILE_LIMIT = 500_000
+ROTATION_REFERENCE_FORMAT = 'rotation_reference'
+
+
+class ReferenceRotationImport(Schema):
+    file_text: str = Field(min_length=1, max_length=REFERENCE_ROTATION_FILE_LIMIT)
+    reason: Reason
+    expected_fingerprint: Sha256 | None = None
+
+
+class ReferenceRotationConflict(Schema):
+    row: int
+    messages: list[str]
+
+
+class ReferenceRotationReview(Schema):
+    count: int
+    conflicts: list[ReferenceRotationConflict]
+    expected_fingerprint: Sha256
+
+
 class ReferenceRotaPreview(Schema):
     workspace_id: ID
     reference_import_id: ID
@@ -8169,7 +8276,7 @@ class GenerationContinue(Decision):
 
 
 class Command(Schema):
-    expected_fingerprint: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
+    expected_fingerprint: Annotated[str, StringConstraints(pattern=rf'^(?:{ASSIGNMENT_STAMP_PREFIX})?[a-f0-9]{{64}}$')] | None = None
     # Async planner previews bind the eventual write to the durable preview receipt.
     preview_job_id: ID | None = None
     kind: Annotated[str, StringConstraints(min_length=3, max_length=80)]
@@ -8261,6 +8368,7 @@ PWA_NOTIFICATION_EVENTS = [
     {'id': 'announcement', 'label': 'Announcement', 'audience': audience_definition('announcement').description, 'roles': list(ROLE_NAMES), 'required': False},
     {'id': 'event', 'label': 'Calendar event', 'audience': audience_definition('event').description, 'roles': list(ROLE_NAMES), 'required': False},
     {'id': 'feedback', 'label': 'Feedback updated', 'audience': audience_definition('feedback').description, 'roles': list(ROLE_NAMES), 'required': False},
+    {'id': 'generation_finished', 'label': 'Auto-schedule finished', 'audience': audience_definition('generation_finished').description, 'roles': ['coordinator'], 'required': False, 'default_push': 'off'},
     {'id': 'credential_impact', 'label': 'Eligibility review needed', 'audience': audience_definition('credential_impact').description, 'roles': ['staff', 'coordinator', 'approver', 'credentialer'], 'required': False},
     {'id': 'bulk_review', 'label': 'Bulk review needed', 'audience': audience_definition('bulk_review').description, 'roles': list(ROLE_NAMES), 'required': False},
     {'id': 'self_approval', 'label': 'Self-approval used', 'audience': audience_definition('self_approval').description, 'roles': ['coordinator', 'approver', 'auditor'], 'required': False},
@@ -8368,7 +8476,7 @@ class PwaDeliverySettings(Schema):
 class NotificationPolicy(Schema):
     push_enabled: bool = False
     lock_screen_detail: PwaDetail = 'generic'
-    event_defaults: dict[str, PwaEventChannels] = Field(default_factory=dict, max_length=len(PWA_EVENT_IDS))
+    event_defaults: dict[str, PwaEventChannels] = Field(default_factory=dict, max_length=len(PWA_EVENT_IDS), validate_default=True)
     retry: PwaRetrySettings = Field(default_factory=PwaRetrySettings)
     delivery: PwaDeliverySettings = Field(default_factory=PwaDeliverySettings)
     generic_message: Literal['You have a rota update. Open the app to see it.'] = 'You have a rota update. Open the app to see it.'
@@ -8382,6 +8490,10 @@ class NotificationPolicy(Schema):
         for event in PWA_NOTIFICATION_EVENTS:
             if event['required'] and event['id'] in value and value[event['id']].push == 'off':
                 raise ValueError('Required alerts cannot be disabled; device consent remains necessary')
+            if 'default_push' in event:
+                channels = value.get(event['id'], PwaEventChannels())
+                if channels.push == 'inherit':
+                    value[event['id']] = channels.model_copy(update={'push': event['default_push']})
         return value
 
 
@@ -8687,6 +8799,7 @@ class RotationBoard(Schema):
     can_plan: bool
     can_note: bool
     note_person_ids: list[ID]
+    reference_leave_conflicts: list[ID] = Field(default_factory=list)
 
 
 class RotationBlock(Schema):
@@ -9079,11 +9192,11 @@ CONTACT_KIND_ACTIONS: dict[str, Literal['call', 'email'] | None] = {'phone': 'ca
 # Initial rows only; saved department configuration owns all subsequent behavior (D68).
 DEFAULT_CONTACT_TYPES = (
     {'id': 'f0136000-0000-4000-8000-000000000001', 'name': 'Mobile', 'kind': 'phone', 'legacy_field': 'work_phone', 'sort_order': 20,
-     'visibility': {'mode': 'everyone', 'roles': list(ROLE_NAMES)}, 'one_tap': True, 'action_off': False},
+     'visibility': {'mode': 'everyone', 'roles': []}, 'one_tap': True, 'action_off': False},
     {'id': 'f0136000-0000-4000-8000-000000000002', 'name': 'Extension', 'kind': 'extension', 'legacy_field': 'work_extension', 'sort_order': 30,
      'visibility': {'mode': 'roles', 'roles': ['admin', 'coordinator', 'approver']}, 'one_tap': False, 'action_off': False},
-    {'id': 'f0136000-0000-4000-8000-000000000003', 'name': 'MCD pager', 'kind': 'pager', 'legacy_field': 'pager', 'sort_order': 10,
-     'visibility': {'mode': 'everyone', 'roles': list(ROLE_NAMES)}, 'one_tap': False, 'action_off': False},
+    {'id': 'f0136000-0000-4000-8000-000000000003', 'name': 'Pager', 'kind': 'pager', 'legacy_field': 'pager', 'sort_order': 10,
+     'visibility': {'mode': 'everyone', 'roles': []}, 'one_tap': False, 'action_off': False},
     {'id': 'f0136000-0000-4000-8000-000000000004', 'name': 'Work email', 'kind': 'email', 'legacy_field': 'work_email', 'sort_order': 40,
      'visibility': {'mode': 'roles', 'roles': ['admin', 'coordinator', 'approver']}, 'one_tap': True, 'action_off': False},
 )
@@ -9217,13 +9330,18 @@ class SwapEligibility(Schema):
     findings: list[SwapBlockingFinding] = Field(default_factory=list)
 
 
+class SwapNote(Schema):
+    # A step both people agree to needs no typed reason: the message is optional and stored empty when left out.
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ''
+
+
 class SwapOfferInput(Schema):
     kind: SwapKind = "exchange"
     publication_id: ID
     assignment_id: ID
     recipient_person_id: ID | None = None
     expires_at: datetime
-    reason: Reason
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ''
 
     @field_validator("expires_at")
     @classmethod
@@ -9233,7 +9351,7 @@ class SwapOfferInput(Schema):
         return _utc_instant(value)
 
 
-class SwapCounterofferInput(Decision):
+class SwapCounterofferInput(SwapNote):
     assignment_id: ID
 
 
@@ -10223,6 +10341,8 @@ def _bulk_action_fields(key, name, action):
         exclude.update({'workspace_id', 'shift_id', 'shift_ids', 'keys'})
     if kind == 'availability.record':
         exclude.add('leave_type')  # legacy free text; new forms choose the existing leave-type reference
+    if kind == 'request.decide':
+        exclude.add('balance_confirmation')
     return _bulk_fields(cls, inputs=True, exclude=exclude)
 
 

@@ -36,13 +36,13 @@ def test_fairness_measure_and_group_changes_reload_only_what_depends_on_them(bro
         assert len(asked) == 1 and 'group_by=category_ids' in asked[0], asked  # trends per person reuse the ungrouped answer
         asked.clear()
         page.get_by_label('Measure', exact=True).select_option('hours')
-        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Alex Morgan: 12 h'))).to_be_visible()
+        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Staff 01\\(test\\): 12 h'))).to_be_visible()
         expect(page.locator('.fx-page[data-ready=true]')).to_have_count(1)
         # Only the distribution depends on the measure (one read serves the people's rows too); goals, trends and exposure don't.
         assert len(asked) == 1 and '/distribution?' in asked[0] and 'metric=hours' in asked[0] and 'group_by=category_ids' in asked[0], asked
         asked.clear()
         page.get_by_label('Measure', exact=True).select_option('duties')  # back: every answer is still held
-        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Alex Morgan: 3 duties'))).to_be_visible()
+        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Staff 01\\(test\\): 3 duties'))).to_be_visible()
         assert asked == [], asked
     finally:
         context.close()

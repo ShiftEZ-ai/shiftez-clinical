@@ -18,6 +18,7 @@ import {openPicker} from './picker.js';
 import {timelineSettings,timelineWindow,plusMonths,type Layer,type Zoom} from './timeline.js';
 import type {TimelineViewSettings} from './generated.js';
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
+import {collator} from './dom.js';  // the one collator for every list's sort and value order
 import {groupToggle as sharedGroupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
 import {segmented} from './dom.js';  // the one segmented choice (UX › controls S6)
 import {panelSearch} from './dom.js';  // the one search box: Esc clears first (UX › controls S9)
@@ -265,8 +266,6 @@ function serverTree<T>(n:Node,columns:Column<T>[]):Node|null{
 }
 const leafCount=(n:Node|null|undefined):number=>!n?0:isGroup(n)?n.conditions.reduce((a,x)=>a+leafCount(x),0):1;
 const sameValues=(a:string[]=[],b:string[]=[])=>a.length===b.length&&[...a].sort().join('\n')===[...b].sort().join('\n');
-/** One collator for every list's sort and value order (numbers in text compare as numbers: "Room 2" before "Room 10"). */
-const collator=new Intl.Collator(undefined,{numeric:true});
 /** Rows above which a list searched in the browser waits for a pause in typing before it draws. */
 const LONG_SEARCH=200;
 const SEARCH_KINDS=new Set<string>(Object.values(TABLE_CONDITION_DEFINITIONS).flatMap(t=>Object.values(t).map(c=>(c as {kind:string}).kind)).filter(k=>ownKind(k).length));
@@ -1029,7 +1028,8 @@ export function dataTable<T>(spec:TableSpec<T>){
     group:(ids:string[],label:string)=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':`Select all ${label}`}) as HTMLInputElement;
       setTriState(b,triStateOf(ids.filter(id=>ext.set.has(id)).length,ids.length));b.addEventListener('click',e=>e.stopPropagation());
       b.addEventListener('change',()=>{for(const id of ids)b.checked?ext.set.add(id):ext.set.delete(id);extBoxes.forEach((x,id)=>x.checked=ext.set.has(id));extSync();ext.changed();});return b;}}:null;
-  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?bulk.box(spec.rowId(r),label(r)):null;
+  const selectionTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
+  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?selectionTarget(bulk.box(spec.rowId(r),label(r))):null;
   const root=el('div',{class:'dt','data-table':spec.id});
   // "Show changed · N" is on: only the rows the last bulk change changed (read by matches(), so declared first).
   let onlyChanged=false;
@@ -1296,7 +1296,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     body.querySelector<HTMLElement>(`thead th[data-col="${CSS.escape(c.key)}"] .dt-sort`)?.focus({preventScroll:true});});}
   function tableOf(items:T[],groupKey:string){
     const cols=colsOf(items,groupKey);
-    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||bulk.all)]:[]),...cols.map((c,i)=>{
+    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||selectionTarget(bulk.all))]:[]),...cols.map((c,i)=>{
       const cls=[c.num?'num':'',c.class||'',v.wrap.includes(c.key)?'dt-wrap':''].join(' ').trim();
       const on=v.sort?.[0]===c.key,dir=on?v.sort![1]:null;
       // One menu per column header (table_menu.ts): sort, filter, group, wrap, hide, move; saved with the view.

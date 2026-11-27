@@ -17,6 +17,7 @@ from packages.domain.rota_summary import rota_summary
 from packages.domain.rule_map import rule_number
 from packages.domain.score import COMPONENTS
 from packages.domain.time import aware
+from packages.domain.validation import place_capacity_inputs
 from . import jobs, planning
 from .common import expected, scoped
 
@@ -160,8 +161,17 @@ def _common_inputs(data):
     focus = set(data['focus_ids'])
     context = {key: value for key, value in data.items()
                if not key.startswith('_') and key not in ('workspace', 'baseline', 'fingerprint', 'input_manifest',
-                                                           'focus_ids', 'shifts', 'score_baseline')}
+                                                           'focus_ids', 'shifts', 'score_baseline', 'place_capacity')}
     context['external_shifts'] = [row for row in data['shifts'] if row['id'] not in focus]
+    capacity = place_capacity_inputs(data, data['shifts'])
+    duties = capacity['duties']
+    # A cloned duty has the same demand and capacity membership under a different ID.
+    context['place_capacity'] = {
+        'limits': capacity['limits'],
+        'external': {ident: sorted(row['resources']) for ident, row in duties.items() if ident not in focus},
+        'own': sorted((session_key(row), sorted(duties.get(row['id'], {}).get('resources', ())))
+                      for row in data['shifts'] if row['id'] in focus),
+    }
     context['workspace'] = {key: data['workspace'].get(key) for key in (
         'starts_on', 'ends_on', 'base_publication_id', 'replaces_publication_id', 'target_overrides', 'rule_adjustments')}
     return snapshots.snapshot_hash(json_value(context))

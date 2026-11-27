@@ -6,7 +6,8 @@ import time
 import pytest
 
 from packages.domain.overlap import evaluate_overlaps, overlap_envelope, per_session_overlaps
-from packages.contracts.schemas import MAX_DUTY_DURATION_MINUTES
+from packages.contracts.schemas import FINDING_MESSAGES, MAX_DUTY_DURATION_MINUTES
+from packages.domain.rota_summary import rota_summary
 from packages.domain.time import aware, local_midnight
 from packages.domain.validation import evaluate, finding_observations
 
@@ -112,6 +113,12 @@ def test_rota_check_keeps_overlap_protected_and_names_both_sessions(h):
     assert conflicts and not result['valid']
     assert all(row['severity'] == 'error' and 'Pediatrics' in row['message'] and 'Autism' in row['message']
                and row['detail']['overlap']['other_shift_id'] == second['id'] for row in conflicts)
+    causes = [cause for cause in rota_summary(result)['fix_list']['causes']
+              if any(row['code'] == 'TIME_OVERLAP' for row in cause['evidence'])]
+    assert causes and all(cause['safety'] and cause['level'] == 'must' for cause in causes)
+    # The fix list uses the finding contract's wording for an overlap.
+    assert all(cause['sentence'] == FINDING_MESSAGES['TIME_OVERLAP'] for cause in causes)
+    assert all('mix of duties' not in cause['sentence'] for cause in causes)
 
 
 @pytest.mark.parametrize('different_ends', [False, True])

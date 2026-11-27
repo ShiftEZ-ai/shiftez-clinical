@@ -25,7 +25,7 @@ def permit(h, person, service, starts_on='2026-10-01', ends_on='2026-11-01'):
 
 
 def staff_numbers(h):
-    """Staff numbers for the three demo people (Alex Morgan 10423, Jordan Lee 10431, Taylor Noor 10977)."""
+    """Staff numbers for the three demo people (Staff 01(test) 10423, Staff 02(test) 10431, Staff 03(test) 10977)."""
     people = {p['id']: p for p in h.get('admin', '/api/catalogues')['people']}
     for pid, number in zip(h.seed['people'], ('10423', '10431', '10977')):
         p = people[pid]
@@ -89,14 +89,14 @@ def test_sheet_date_filters_use_relative_last_days_and_empty_ends(browser, live_
         expect(row.locator('.cond-value-name')).to_have_text('This month')
         expect(row.locator('.cond-value-dates')).not_to_be_empty()
         expect(grid.locator('tbody tr')).to_have_count(1)
-        expect(grid.locator('tbody tr')).to_contain_text('Alex Morgan')
+        expect(grid.locator('tbody tr')).to_contain_text('Staff 01(test)')
         row.get_by_label('Operator', exact=True).select_option('empty')
         expect(row.locator('.cond-value')).to_have_count(0)
         expect(grid.locator('tbody tr')).to_have_count(1)
-        expect(grid.locator('tbody tr')).to_contain_text('Jordan Lee')
+        expect(grid.locator('tbody tr')).to_contain_text('Staff 02(test)')
         row.get_by_label('Operator', exact=True).select_option('not_empty')
         expect(grid.locator('tbody tr')).to_have_count(1)
-        expect(grid.locator('tbody tr')).to_contain_text('Alex Morgan')
+        expect(grid.locator('tbody tr')).to_contain_text('Staff 01(test)')
     finally:
         context.close()
 
@@ -109,12 +109,12 @@ def test_edit_fill_down_preview_apply_and_undo(browser, live_server, h):
         # The shared toolbar narrows the Sheet: only the Walk-in North permissions, one under another.
         main.get_by_role('searchbox', name='Search rows').fill('Walk-in')
         expect(grid.locator('tbody tr')).to_have_count(3)
-        until = cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')
+        until = cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')
         # One cell is in the tab order; Enter edits with the shared date field in the cell bar.
         until.click()
         expect(until).to_have_attribute('tabindex', '0')
         page.keyboard.press('Enter')
-        box = main.get_by_label('Until (included) for Alex Morgan')
+        box = main.get_by_label('Until (included) for Staff 01(test)')
         expect(box).to_be_focused()
         box.fill('31/12/2026')
         box.press('Enter')
@@ -145,7 +145,7 @@ def test_edit_fill_down_preview_apply_and_undo(browser, live_server, h):
         assert {e['ends_on'] for e in h.get(CRED, '/api/catalogues')['eligibilities'] if e['service_id'] == service['id']} == {'2026-11-01'}
         # F13 A-29: the values are back, so no cell still says it was changed.
         grid = main.get_by_role('grid', name='Clinic permissions sheet')
-        expect(cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')).to_contain_text('31 Oct 2026')
+        expect(cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')).to_contain_text('31 Oct 2026')
         expect(grid.locator('td.is-changed')).to_have_count(0)
         expect(grid.locator('.sr-only', has_text=', changed')).to_have_count(0)
     finally:
@@ -159,8 +159,8 @@ def test_the_cell_bar_names_the_cell_and_keeps_its_keys_behind_help(browser, liv
     try:
         main, grid = open_sheet(page)
         bar = main.locator('.cellbar')
-        cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North').click()
-        expect(bar.locator('.ref')).to_have_text(re.compile(r'^Alex Morgan.* · Until \(included\)$'))
+        cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North').click()
+        expect(bar.locator('.ref')).to_have_text(re.compile(r'^Staff 01\(test\).* · Until \(included\)$'))
         expect(bar).not_to_contain_text('Arrows move')
         expect(bar.get_by_role('button', name='Sheet keys', exact=True)).to_have_attribute('data-tip', re.compile('Enter or F2 edits'))
         grid.get_by_role('gridcell').first.click()
@@ -200,16 +200,16 @@ def test_discard_is_a_same_button_confirm(browser, live_server, h):
     context, page = sign_in(browser, live_server, CRED)
     try:
         main, grid = open_sheet(page)
-        target = cell(grid, 'Until (included)', 'Jordan Lee', 'Walk-in North')
+        target = cell(grid, 'Until (included)', 'Staff 02(test)', 'Walk-in North')
         target.click()
         page.keyboard.press('F2')
-        box = main.get_by_label('Until (included) for Jordan Lee')
+        box = main.get_by_label('Until (included) for Staff 02(test)')
         box.fill('15 Nov 2026')
         box.press('Escape')  # Esc cancels: nothing staged
         expect(stage_bar(main)).to_be_hidden()
         expect(target).to_be_focused()
         page.keyboard.press('Enter')
-        main.get_by_label('Until (included) for Jordan Lee').fill('15 Nov 2026')
+        main.get_by_label('Until (included) for Staff 02(test)').fill('15 Nov 2026')
         page.keyboard.press('Tab')  # Tab keeps and moves right
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
         discard = stage_bar(main).get_by_role('button', name=re.compile('Discard'))
@@ -225,7 +225,7 @@ def test_discard_is_a_same_button_confirm(browser, live_server, h):
 def test_paste_from_excel_matches_reports_and_stages(browser, live_server, h):
     staff_numbers(h)
     service, _ = walk_in(h)
-    # Taylor has a second Walk-in North permission (later), so "10977 · Walk-in North" matches two records.
+    # Staff 03 has a second Walk-in North permission (later), so "10977 · Walk-in North" matches two records.
     permit(h, h.seed['people'][2], service, '2026-12-01', '2027-03-01')
     context, page = sign_in(browser, live_server, CRED)
     try:
@@ -259,7 +259,7 @@ def test_paste_from_excel_matches_reports_and_stages(browser, live_server, h):
 
 
 def resolution_label(h, clinic_name, ends_on, resolution_id):
-    """The words the server's dry run gives a fix (by its id), for Alex's open-ended permission at a clinic."""
+    """The words the server's dry run gives a fix (by its id), for Staff 01's open-ended permission at a clinic."""
     services = {x['id']: x['name'] for x in h.get(CRED, '/api/catalogues')['services']}
     rows = h.client(CRED).post('/api/bulk/rows', json={'selection': {'collection': 'eligibilities'}, 'limit': 100}).json()['rows']
     x = next(r for r in rows if r['person_id'] == h.seed['people'][0] and services.get(r['service_id']) == clinic_name)
@@ -274,10 +274,10 @@ def test_conflict_is_resolved_in_preview_then_applied(browser, live_server, h):
     context, page = sign_in(browser, live_server, CRED)
     try:
         main, grid = open_sheet(page)
-        target = cell(grid, 'Until (included)', 'Alex Morgan', 'Continuity clinic')
+        target = cell(grid, 'Until (included)', 'Staff 01(test)', 'Continuity clinic')
         target.click()
         page.keyboard.press('Enter')
-        main.get_by_label('Until (included) for Alex Morgan').fill('31 Dec 2026')
+        main.get_by_label('Until (included) for Staff 01(test)').fill('31 Dec 2026')
         page.keyboard.press('Enter')
         stage_bar(main).get_by_role('button', name='Save 1 change').click()
         panel = page.locator('.dock-panel.bulk-panel')
@@ -343,13 +343,14 @@ def test_a_role_that_may_not_change_a_type_reads_it_only(browser, live_server, h
         main, grid = open_sheet(page)
         expect(grid).to_have_attribute('aria-readonly', 'true')
         expect(main.get_by_role('button', name='Paste from Excel')).to_have_count(0)
-        target = cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')
+        target = cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')
         target.click()
         page.keyboard.press('Enter')
-        expect(main.get_by_label('Until (included) for Alex Morgan')).to_have_count(0)
+        expect(main.get_by_label('Until (included) for Staff 01(test)')).to_have_count(0)
         expect(main.locator('.cellbar')).to_contain_text('Read only')
         page.keyboard.press('Control+d')
         expect(stage_bar(main)).to_be_hidden()
+        expect(main.get_by_role('button', name='Fill down')).to_have_count(0)
         if dark:
             bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
             assert bg not in ('rgb(255, 255, 255)', 'rgb(248, 250, 252)'), bg
@@ -379,19 +380,117 @@ def test_record_types_from_the_registry_and_the_fill_handle(browser, live_server
         main, grid = open_sheet(page)
         main.get_by_role('searchbox', name='Search rows').fill('Walk-in')
         expect(grid.locator('tbody tr')).to_have_count(3)
-        first = cell(grid, 'Until (included)', 'Alex Morgan')
+        first = cell(grid, 'Until (included)', 'Staff 01(test)')
         first.click()
         page.keyboard.press('Enter')
-        main.get_by_label('Until (included) for Alex Morgan').fill('15 Dec 2026')
+        main.get_by_label('Until (included) for Staff 01(test)').fill('15 Dec 2026')
         page.keyboard.press('Enter')
         first.click()
         handle = first.locator('.fill-handle')
         expect(handle).to_have_count(1)
         handle.dispatch_event('pointerdown', {'button': 0, 'bubbles': True})
-        cell(grid, 'Until (included)', 'Taylor Noor').dispatch_event('pointerover', {'bubbles': True})
+        cell(grid, 'Until (included)', 'Staff 03(test)').dispatch_event('pointerover', {'bubbles': True})
         page.evaluate("window.dispatchEvent(new PointerEvent('pointerup'))")
         expect(grid.locator('td.is-staged')).to_have_count(3)
         expect(stage_bar(main)).to_contain_text('3 changes in 3 rows')
+    finally:
+        context.close()
+
+
+def test_fill_down_by_single_clicks_stages_what_the_fill_handle_does(browser, live_server, h):
+    """WCAG 2.2 SC 2.5.7 (issue 1727): Fill down, a click on the pattern's last cell and one on the last row fill a
+    two-row pattern down with no pointer held down: the same staged cells as dragging the corner, read-only columns
+    left as they were, each step announced, and the save undone by its one Undo."""
+    service, _ = walk_in(h)
+    # Two of them also at a second clinic: five rows, and no filled date makes one record overlap another.
+    south = clinic(h, 'Walk-in South')
+    for pid in h.seed['people'][:2]:
+        permit(h, pid, south)
+    context, page = sign_in(browser, live_server, CRED)
+    try:
+        main, grid = open_sheet(page)
+        main.get_by_role('searchbox', name='Search rows').fill('Walk-in')
+        rows = grid.locator('tbody tr')
+        expect(rows).to_have_count(5)
+        headers = [t.strip() for t in grid.locator('thead th').all_inner_texts()]
+        until, clinic_col = headers.index('Until (included)'), headers.index('Clinic')
+        live = page.locator('#sr-live')
+        fill = main.locator('.cellbar').get_by_role('button', name='Fill down', exact=True)
+
+        def at(r, c):
+            return rows.nth(r).get_by_role('gridcell').nth(c)
+
+        def pattern():
+            for r, day in ((0, '15/12/2026'), (1, '20/12/2026')):
+                at(r, until).click()
+                page.keyboard.press('Enter')
+                box = main.get_by_label(re.compile(r'^Until \(included\) for '))
+                box.fill(day)
+                box.press('Enter')
+            expect(grid.locator('td.is-staged')).to_have_count(2)
+
+        def until_texts():
+            return [at(r, until).inner_text() for r in range(5)]
+
+        # The corner handle, dragged from the two-row pattern to the last row.
+        pattern()
+        at(0, until).click()
+        at(1, until).click(modifiers=['Shift'])
+        at(1, until).locator('.fill-handle').dispatch_event('pointerdown', {'button': 0, 'bubbles': True})
+        at(4, until).dispatch_event('pointerover', {'bubbles': True})
+        page.evaluate("window.dispatchEvent(new PointerEvent('pointerup'))")
+        expect(grid.locator('td.is-staged')).to_have_count(5)
+        dragged = until_texts()
+        assert [t.count('15 Dec 2026') + t.count('20 Dec 2026') for t in dragged] == [1] * 5
+        stage_bar(main).get_by_role('button', name=re.compile('Discard')).click()
+        stage_bar(main).get_by_role('button', name=re.compile('Discard all')).click()
+        expect(stage_bar(main)).to_be_hidden()
+
+        # The same fill with single clicks: Fill down, the pattern's last cell, the last row.
+        pattern()
+        at(0, until).click()
+        expect(fill).to_have_attribute('aria-pressed', 'false')
+        fill.click()
+        expect(fill).to_have_attribute('aria-pressed', 'true')
+        expect(main.locator('.cellbar')).to_contain_text('Choose the last cell of the pattern.')
+        expect(live).to_have_text('Choose the last cell of the pattern.')
+        at(1, until).click()
+        expect(live).to_have_text('Choose the last row to fill.')
+        at(1, until).click()
+        expect(live).to_have_text('Choose a row below the pattern.')
+        expect(grid.locator('td.is-staged')).to_have_count(2)
+        at(4, until).click()
+        expect(live).to_have_text('3 cells filled down · not saved yet')
+        expect(fill).to_have_attribute('aria-pressed', 'false')
+        expect(grid.locator('td.is-staged')).to_have_count(5)
+        assert until_texts() == dragged
+
+        # A pattern over a read-only column: only the editable column fills, and the count says so.
+        at(0, until).click()
+        fill.click()
+        at(0, clinic_col).click()
+        at(4, clinic_col).click()
+        expect(live).to_have_text('4 cells filled down · not saved yet')
+        for r in range(5):
+            expect(at(r, until)).to_contain_text('15 Dec 2026')
+            expect(at(r, clinic_col)).not_to_have_class(re.compile(r'\bis-staged\b'))
+        # Esc leaves Fill down without changing anything.
+        fill.click()
+        page.keyboard.press('Escape')
+        expect(live).to_have_text('Fill down cancelled.')
+        expect(fill).to_have_attribute('aria-pressed', 'false')
+
+        def ends():
+            return sorted(e['ends_on'] for e in h.get(CRED, '/api/catalogues')['eligibilities'] if e['service_id'] in (service['id'], south['id']))
+
+        assert ends() == ['2026-11-01'] * 5
+        stage_bar(main).get_by_role('button', name='Save 5 changes').click()
+        toast = page.locator('#toast-tray .toast').filter(has_text='changed')
+        expect(toast).to_contain_text('5 clinic permissions changed')
+        assert ends() == ['2026-12-16'] * 5
+        toast.get_by_role('button', name='Undo').click()
+        expect(page.locator('#toast-tray')).to_contain_text(re.compile('Undone|undone'))
+        assert ends() == ['2026-11-01'] * 5
     finally:
         context.close()
 
@@ -439,7 +538,7 @@ def test_an_ordinary_list_sheet_reads_its_rows_again_after_apply(browser, live_s
     context, page = sign_in(browser, live_server, CRED)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         page.get_by_role('toolbar', name='Bulk actions').get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Clinic permissions')).click()
         main = page.locator('#main')
@@ -450,7 +549,7 @@ def test_an_ordinary_list_sheet_reads_its_rows_again_after_apply(browser, live_s
             target = cell(grid, 'Until (included)', 'Walk-in North')
             target.click()
             page.keyboard.press('Enter')
-            main.get_by_label('Until (included) for Alex Morgan').fill(typed)
+            main.get_by_label('Until (included) for Staff 01(test)').fill(typed)
             page.keyboard.press('Enter')
             stage_bar(main).get_by_role('button', name='Save 1 change').click()
             expect(page.locator('#toast-tray .toast').filter(has_text='1 clinic permission changed').last).to_be_visible()
@@ -492,7 +591,7 @@ def test_stage_waits_while_pasted_names_are_being_matched(browser, live_server, 
         expect(submit).to_be_enabled()
         submit.click()
         expect(dialog).to_be_hidden()
-        expect(cell(grid, 'Until (included)', 'Jordan Lee', 'Walk-in North')).to_have_class(re.compile(r'\bis-staged\b'))
+        expect(cell(grid, 'Until (included)', 'Staff 02(test)', 'Walk-in North')).to_have_class(re.compile(r'\bis-staged\b'))
     finally:
         context.close()
 
@@ -500,7 +599,7 @@ def test_stage_waits_while_pasted_names_are_being_matched(browser, live_server, 
 def contact_labels():
     """Every name a contact column could carry: the contact types, their old record-field labels and the People list's."""
     from packages.contracts.schemas import DEFAULT_CONTACT_TYPES
-    return {t['name'] for t in DEFAULT_CONTACT_TYPES} | {'Work phone', 'Extension', 'Pager', 'Work email', 'Hospital phone'}
+    return {t['name'] for t in DEFAULT_CONTACT_TYPES} | {'Work phone', 'Extension', 'Pager', 'Work email'}
 
 
 def people_view(page, layout):
@@ -513,7 +612,7 @@ def people_view(page, layout):
 def test_a_list_shown_as_sheet_keeps_its_grouping_and_shown_columns(browser, live_server, h):
     """Review #12: People › Group by Status, Title and Short code shown → Sheet keeps the grouping (rows in their
     groups, the grouped column shown) and edits the shown columns as their record fields; back to Table keeps the view
-    settings. Contacts are never bulk fields (G3-32e): a shown Hospital phone stays out of the Sheet."""
+    settings. Contacts are never bulk fields (G3-32e): a shown Work phone stays out of the Sheet."""
     p = next(x for x in h.get('admin', '/api/catalogues')['people'] if x['id'] == h.seed['people'][1])
     h.command('admin', 'catalogue.update', {'catalogue': 'people', 'value': {**{k: p[k] for k in ('display_name',)}, 'active': False},
               'reason': 'Test setup'}, p['id'], p['revision'])
@@ -526,7 +625,7 @@ def test_a_list_shown_as_sheet_keeps_its_grouping_and_shown_columns(browser, liv
             pop.get_by_role('button', name='Clear all filters', exact=True).click()
         page.keyboard.press('Escape')
         settings = toolbar(main, 'View settings')
-        for name in ('Title', 'Short code', 'Hospital phone'):
+        for name in ('Title', 'Short code', 'Work phone'):
             box = settings.get_by_role('checkbox', name=name, exact=True)
             if not box.is_checked():
                 box.check()
@@ -541,17 +640,17 @@ def test_a_list_shown_as_sheet_keeps_its_grouping_and_shown_columns(browser, liv
         # Grouped by In use: the active people first, the one not in use last.
         names = grid.locator('tbody tr td:first-child').all_inner_texts()
         assert names[-1].strip() == p['display_name'], names
-        target = cell(grid, 'Title', 'Alex Morgan')
+        target = cell(grid, 'Title', 'Staff 01(test)')
         target.click()
         page.keyboard.press('Enter')
-        main.get_by_label('Title for Alex Morgan').fill('Sheet title')
+        main.get_by_label('Title for Staff 01(test)').fill('Sheet title')
         page.keyboard.press('Enter')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
         stage_bar(main).get_by_role('button', name=re.compile('Discard')).click()
         stage_bar(main).get_by_role('button', name=re.compile('Discard all')).click()
         people_view(page, 'Table')
         expect(main.get_by_role('button', name=re.compile('^Group'))).to_contain_text('Status')
-        for name in ('Title', 'Short code', 'Hospital phone'):
+        for name in ('Title', 'Short code', 'Work phone'):
             expect(main.locator('th', has_text=name)).to_have_count(1)
     finally:
         context.close()
@@ -586,10 +685,10 @@ def test_staged_cells_end_with_the_session_that_staged_them(browser, live_server
     context, page = sign_in(browser, live_server, CRED)
     try:
         main, grid = open_sheet(page)
-        target = cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')
+        target = cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')
         target.click()
         page.keyboard.press('Enter')
-        main.get_by_label('Until (included) for Alex Morgan').fill('31/12/2026')
+        main.get_by_label('Until (included) for Staff 01(test)').fill('31/12/2026')
         page.keyboard.press('Enter')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
         page.get_by_role('button', name=re.compile(r'^Account menu, ')).click()
@@ -674,19 +773,19 @@ def test_a_value_staged_after_preview_survives_the_apply_of_the_earlier_one(brow
     context, page = sign_in(browser, live_server, CRED)
     try:
         main, grid = open_sheet(page)
-        edit_until(page, main, grid, 'Alex Morgan', '31/12/2026')
+        edit_until(page, main, grid, 'Staff 01(test)', '31/12/2026')
         stage_bar(main).get_by_role('button', name='Save 1 change').click()
         dock = page.locator('.dock-panel.bulk-panel')
         apply = dock.get_by_role('button', name=re.compile(r'^Apply ready rows \(1\)'))
         expect(apply).to_be_visible()
-        edit_until(page, main, main.get_by_role('grid', name='Clinic permissions sheet'), 'Alex Morgan', '15/01/2027')
+        edit_until(page, main, main.get_by_role('grid', name='Clinic permissions sheet'), 'Staff 01(test)', '15/01/2027')
         apply.click()
         expect(page.locator('#toast-tray')).to_contain_text('1 clinic permission changed')
         alex = lambda: [e for e in h.get(CRED, '/api/catalogues')['eligibilities'] if e['service_id'] == service['id'] and e['person_id'] == h.seed['people'][0]]
         assert [e['ends_on'] for e in alex()] == ['2027-01-01']
         grid = main.get_by_role('grid', name='Clinic permissions sheet')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
-        expect(cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')).to_contain_text('15 Jan 2027')
+        expect(cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')).to_contain_text('15 Jan 2027')
         page.locator('.dock-panel.bulk-panel').get_by_role('button', name='Close', exact=True).click() if page.locator('.dock-panel.bulk-panel').get_by_role('button', name='Close', exact=True).count() else None
         stage_bar(main).get_by_role('button', name='Save 1 change').click()
         page.locator('.dock-panel.bulk-panel').get_by_role('button', name=re.compile(r'^Apply ready rows \(1\)')).click()
@@ -733,19 +832,19 @@ def test_staged_cells_ask_before_a_reload_loses_them(browser, live_server, h):
         page.reload()
         assert asked == [], asked  # nothing staged: no question
         main, grid = open_sheet(page)
-        edit_until(page, main, grid, 'Alex Morgan', '31/12/2026')
+        edit_until(page, main, grid, 'Staff 01(test)', '31/12/2026')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
         page.reload()
         assert asked == ['beforeunload'], asked
         # A list's Sheet: People › Show their… › Clinic permissions › Sheet.
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Jordan Lee').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 02(test)').locator('.bulk-check').check()
         page.get_by_role('toolbar', name='Bulk actions').get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Clinic permissions')).click()
         main = page.locator('#main')
         toolbar(main, 'View settings').get_by_role('radio', name='Sheet', exact=True).click()
         page.keyboard.press('Escape')
-        edit_until(page, main, main.get_by_role('grid', name='Clinic permissions sheet'), 'Jordan Lee', '31/12/2026')
+        edit_until(page, main, main.get_by_role('grid', name='Clinic permissions sheet'), 'Staff 02(test)', '31/12/2026')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
         page.reload()
         assert asked == ['beforeunload', 'beforeunload'], asked
@@ -764,10 +863,10 @@ def test_a_staged_switch_off_previews_with_the_armed_confirm(browser, live_serve
     context, page = sign_in(browser, live_server, 'admin')
     try:
         main, grid = open_sheet(page, 'People')
-        target = cell(grid, 'In use', 'Taylor Noor')
+        target = cell(grid, 'In use', 'Staff 03(test)')
         target.click()
         page.keyboard.press('Enter')
-        box = main.get_by_label('In use for Taylor Noor')
+        box = main.get_by_label('In use for Staff 03(test)')
         expect(box).to_be_focused()
         page.keyboard.press('Space')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
@@ -849,14 +948,14 @@ def test_the_bulk_editor_reads_its_kept_as_of_day_after_navigating_away_and_back
 
 
 def test_pasting_the_saved_value_over_a_staged_clear_unstages_it(browser, live_server, h):
-    """Review (5fd5) #7: Alex's last day (31 Oct 2026) cleared in the Sheet, then Paste from Excel gives 31/10/2026 back:
+    """Review (5fd5) #7: Staff 01's last day (31 Oct 2026) cleared in the Sheet, then Paste from Excel gives 31/10/2026 back:
     the paste is a change (from the staged clear) and, being the saved value, leaves nothing staged."""
     staff_numbers(h)
     walk_in(h)
     context, page = sign_in(browser, live_server, CRED)
     try:
         main, grid = open_sheet(page)
-        until = cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')
+        until = cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')
         until.click()
         page.keyboard.press('Delete')
         expect(until).to_have_class(re.compile(r'\bis-staged\b'))
@@ -870,7 +969,7 @@ def test_pasting_the_saved_value_over_a_staged_clear_unstages_it(browser, live_s
         grid = main.get_by_role('grid', name='Clinic permissions sheet')
         expect(grid.locator('td.is-staged')).to_have_count(0)
         expect(stage_bar(main)).to_be_hidden()
-        expect(cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North')).to_have_text('31 Oct 2026')
+        expect(cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North')).to_have_text('31 Oct 2026')
     finally:
         context.close()
 
@@ -884,9 +983,9 @@ def test_change_cells_waits_for_the_staged_changes_of_its_rows(browser, live_ser
         main, grid = open_sheet(page)
         main.get_by_role('searchbox', name='Search rows').fill('Walk-in')
         expect(grid.locator('tbody tr')).to_have_count(3)
-        edit_until(page, main, grid, 'Alex Morgan', '31/12/2026')
+        edit_until(page, main, grid, 'Staff 01(test)', '31/12/2026')
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
-        cell(grid, 'Until (included)', 'Alex Morgan', 'Walk-in North').focus()
+        cell(grid, 'Until (included)', 'Staff 01(test)', 'Walk-in North').focus()
         page.keyboard.press('Shift+ArrowDown')
         main.get_by_role('button', name=re.compile(r'^Change 2 cells')).click()
         expect(page.locator('#toast-tray')).to_contain_text('preview or discard them first')
@@ -974,10 +1073,10 @@ def test_a_positional_paste_keeps_blank_rows_and_commas_in_their_cells(browser, 
         expect(grid.locator('thead th').first).to_be_visible()
         headers = [t.strip() for t in grid.locator('thead th').all_inner_texts()]
         assert not set(headers) & contact_labels(), headers
-        paste_into(page, cell(grid, 'Title', 'Alex Morgan'), '111\n\n333\n')
-        expect(cell(grid, 'Title', 'Alex Morgan')).to_contain_text('111')
-        expect(cell(grid, 'Title', 'Jordan Lee')).not_to_contain_text('333')
-        expect(cell(grid, 'Title', 'Taylor Noor')).to_contain_text('333')
+        paste_into(page, cell(grid, 'Title', 'Staff 01(test)'), '111\n\n333\n')
+        expect(cell(grid, 'Title', 'Staff 01(test)')).to_contain_text('111')
+        expect(cell(grid, 'Title', 'Staff 02(test)')).not_to_contain_text('333')
+        expect(cell(grid, 'Title', 'Staff 03(test)')).to_contain_text('333')
     finally:
         context.close()
 
@@ -990,10 +1089,10 @@ def test_a_comma_pasted_into_one_cell_stays_in_that_cell(browser, live_server, h
         main, grid = open_sheet(page, 'People')
         headers = [t.strip() for t in grid.locator('thead th').all_inner_texts()]
         after = headers[headers.index('Directory section') + 1]
-        before = cell(grid, after, 'Alex Morgan').inner_text()
-        paste_into(page, cell(grid, 'Directory section', 'Alex Morgan'), 'Main, Floor 2')
-        expect(cell(grid, 'Directory section', 'Alex Morgan')).to_contain_text('Main, Floor 2')
-        expect(cell(grid, after, 'Alex Morgan')).to_have_text(before)
+        before = cell(grid, after, 'Staff 01(test)').inner_text()
+        paste_into(page, cell(grid, 'Directory section', 'Staff 01(test)'), 'Main, Floor 2')
+        expect(cell(grid, 'Directory section', 'Staff 01(test)')).to_contain_text('Main, Floor 2')
+        expect(cell(grid, after, 'Staff 01(test)')).to_have_text(before)
     finally:
         context.close()
 
@@ -1099,8 +1198,8 @@ def test_change_cells_in_the_rules_sheet_sends_the_rules_as_rules(browser, live_
 
 
 def test_tags_copied_and_pasted_in_the_sheet_keep_their_names_and_memberships(browser, live_server, h):
-    """Review (67a5) #1: Alex's tags #student and "North, East", copied from the People sheet and pasted onto Jordan,
-    become exactly those two tags (one of them holding a comma); "#student, brandnew" pasted onto Taylor keeps student
+    """Review (67a5) #1: Staff 01's tags #student and "North, East", copied from the People sheet and pasted onto Staff 02,
+    become exactly those two tags (one of them holding a comma); "#student, brandnew" pasted onto Staff 03 keeps student
     (not a new tag "#student") and adds brandnew."""
     for name in ('student', 'North, East'):
         h.configure('tags', {'name': name, 'labels': ['people']})
@@ -1113,12 +1212,12 @@ def test_tags_copied_and_pasted_in_the_sheet_keep_their_names_and_memberships(br
     context, page = sign_in(browser, live_server, 'admin')
     try:
         main, grid = open_sheet(page, 'People')
-        source = cell(grid, 'Tags', 'Alex Morgan')
+        source = cell(grid, 'Tags', 'Staff 01(test)')
         source.click()
         copied = page.evaluate("""() => { const cell = document.querySelector('[role=grid] td[tabindex="0"]'), data = new DataTransfer();
             cell.dispatchEvent(new ClipboardEvent('copy', {clipboardData: data, bubbles: true, cancelable: true})); return data.getData('text/plain'); }""")
-        paste_into(page, cell(grid, 'Tags', 'Jordan Lee'), copied)
-        paste_into(page, cell(grid, 'Tags', 'Taylor Noor'), '#student, brandnew')
+        paste_into(page, cell(grid, 'Tags', 'Staff 02(test)'), copied)
+        paste_into(page, cell(grid, 'Tags', 'Staff 03(test)'), '#student, brandnew')
         expect(stage_bar(main)).to_contain_text('2 changes in 2 rows')
         stage_bar(main).get_by_role('button', name='Save 2 changes').click()
         page.locator('.dock-panel.bulk-panel').get_by_role('button', name=re.compile(r'^Apply ready rows \(2\)')).click()
@@ -1184,8 +1283,8 @@ def test_multiline_text_is_kept_exactly_through_edit_escape_and_accept(browser, 
 
 @pytest.mark.parametrize('first', ['#student', 'student'])
 def test_a_tag_and_a_tag_named_with_a_hash_stay_apart_through_copy_and_paste(browser, live_server, h, first):
-    """Review (4d5b) #1: tags "#student" and "student" both exist (either created first); Alex's one tag, copied from the
-    People sheet and pasted onto Jordan, is that same tag on Jordan (its label #name is matched first)."""
+    """Review (4d5b) #1: tags "#student" and "student" both exist (either created first); Staff 01's one tag, copied from the
+    People sheet and pasted onto Staff 02, is that same tag on Staff 02 (its label #name is matched first)."""
     names = [first, 'student' if first == '#student' else '#student']
     for name in names:
         h.configure('tags', {'name': name, 'labels': ['people']})
@@ -1200,10 +1299,10 @@ def test_a_tag_and_a_tag_named_with_a_hash_stay_apart_through_copy_and_paste(bro
         context, page = sign_in(browser, live_server, 'admin')
         try:
             main, grid = open_sheet(page, 'People')
-            cell(grid, 'Tags', 'Alex Morgan').click()
+            cell(grid, 'Tags', 'Staff 01(test)').click()
             copied = page.evaluate("""() => { const cell = document.querySelector('[role=grid] td[tabindex="0"]'), data = new DataTransfer();
                 cell.dispatchEvent(new ClipboardEvent('copy', {clipboardData: data, bubbles: true, cancelable: true})); return data.getData('text/plain'); }""")
-            paste_into(page, cell(grid, 'Tags', 'Jordan Lee'), copied)
+            paste_into(page, cell(grid, 'Tags', 'Staff 02(test)'), copied)
             stage_bar(main).get_by_role('button', name='Save 1 change').click()
             page.locator('.dock-panel.bulk-panel').get_by_role('button', name=re.compile(r'^Apply ready rows \(1\)')).click()
             expect(page.locator('#toast-tray')).to_contain_text('1 person changed')
@@ -1277,7 +1376,7 @@ def test_a_pasted_name_two_records_share_picks_neither(browser, live_server, h, 
     else:
         for code in ('ST1', 'ST2'):
             h.configure('people', {'display_name': 'Sam Twin', 'short_code': code})
-        shared, single = 'Sam Twin', 'Jordan Lee'
+        shared, single = 'Sam Twin', 'Staff 02(test)'
     h.configure('rotations', rotation_value(h), role='coordinator')
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
@@ -1342,7 +1441,7 @@ def test_every_cell_reads_as_words_never_json_or_ids(browser, live_server, h):
                 expect(grid.locator('tbody td').filter(has_text=re.compile('^Everyone$')).first).to_be_visible()
             if record_type == 'Planner sessions':
                 titles = grid.locator('tbody td:first-child').all_inner_texts()
-                assert 'Unstaffed' in titles and {'Alex Morgan, Jordan Lee', 'Jordan Lee, Alex Morgan'} & set(titles), titles
+                assert 'Unstaffed' in titles and {'Staff 01(test), Staff 02(test)', 'Staff 02(test), Staff 01(test)'} & set(titles), titles
     finally:
         context.close()
 

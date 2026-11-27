@@ -38,6 +38,24 @@ def rota_tools(page):
     return page.get_by_role('menu', name='Rota tools')
 
 
+def test_direct_link_to_discarded_draft_offers_restore_instead_of_submit(browser, live_server, h):
+    w = h.workspace('Discarded draft')
+    h.command('coordinator', 'workspace.delete_draft', {'reason': 'Unused draft'}, w['id'], w['revision'])
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        open_rota(page, w['id'])
+        bar = page.locator('.planner-bar')
+        expect(bar.locator('.rota-status')).to_have_text('Archived')
+        submit = bar.get_by_role('button', name='Submit for review…', exact=True)
+        expect(submit).to_have_count(0)
+        bar.get_by_role('button', name='Restore', exact=True).click()
+        expect(bar.locator('.rota-status')).to_have_text('Draft')
+        expect(submit).to_be_visible()
+        assert h.detail(w)['workspace']['archived_at'] is None
+    finally:
+        context.close()
+
+
 def test_archive_a_published_rota_hides_it_from_staff_until_restored(browser, live_server, h):
     pid, _ = october(h)
     assert pid in staff_sources(h)

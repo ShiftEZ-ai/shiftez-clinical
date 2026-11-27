@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE
+from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE, validation_issues
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -60,7 +60,7 @@ from .snapshots import (domain_snapshot,
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
-from .services.planning import health, redo_available, allowed_actions
+from .services.planning import health, edit_availability, allowed_actions
 from .services import schedule
 from .services.policies import policy_impact, check_policy, duplicate_groups, policy_reach, rules_for_person
 from packages.domain.solver_rules import capability_catalogue, generation_manifest
@@ -154,10 +154,6 @@ class BodyLimitMiddleware:
         return await self.app(scope, replay, send)
 
 
-# Pydantic errors whose message can carry the submitted value (or a library error about it) rather than only the schema.
-INPUT_ECHOING = {"value_error", "assertion_error", "union_tag_invalid", "no_such_attribute"}
-
-
 def _chain_shutdown_signal(sig, frame, previous, loop):
     try:
         loop.call_soon_threadsafe(live_updates.begin_draining)
@@ -202,7 +198,6 @@ def create_app(settings: Settings | None = None, engine=None):
         import asyncio
         import threading
         from . import live
-        settings.warn_default_generation_engine()
         live.configure(settings)
         live.attach(asyncio.get_running_loop())
         live.listen(settings.database_url)
@@ -373,9 +368,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                  'correlation_id': request.state.correlation_id}, status_code=400)
         request.state.error_code = "SCHEMA_INVALID"
         # Field path, message and type only; never the input value or context (they can carry private or secret text).
-        errors = [{"field": ".".join(str(x) for x in e["loc"])[:200], "code": e["type"],
-                   "message": safe_message(e["msg"]) if e["type"] in INPUT_ECHOING or "error" in (e.get("ctx") or {}) else e["msg"][:300]}
-                  for e in exc.errors()[:50]]
+        errors = validation_issues(exc.errors())
         return JSONResponse({"error": {"code": "SCHEMA_INVALID", "message": "Review the highlighted fields", "details": errors}, "correlation_id": request.state.correlation_id}, status_code=422)
 
     @app.exception_handler(ValueError)
@@ -576,7 +569,7 @@ def create_app(settings: Settings | None = None, engine=None):
             enforce(engine, 'commands', [session_identity(engine, request.cookies.get(cookie_name))],
                     settings.rate_commands_per_minute, 60, 'Too many changes; wait a minute and try again')
             with transaction(engine) as db:
-                branding.require_editor(db, actor_for(request, db, write=True))
+                branding.require_editor(actor_for(request, db, write=True))
 
         await run_in_threadpool(authorize)
         content = await request.body()
@@ -703,14 +696,20 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post("/api/account/password")
     def change_password(data: s.PasswordChange, request: Request):
-        enforce(engine, "password-change", [session_identity(engine, request.cookies.get(cookie_name)) or peer_key(request)], 5, 900,
+        identity_id = session_identity(engine, request.cookies.get(cookie_name))
+        enforce(engine, "password-change", [identity_id or peer_key(request)], 5, 900,
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
+        outcome = {}
         def operation(db):
+            # A concurrent disable or reset can make this session unusable while the account lock is contended.
+            account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id)
-        return liveness_write(engine, operation, context={"route": "auth.password_change"})
+            # The scanner treats this response as a password and follows the shared return value to worker logs (issue 1642).
+            outcome.update(accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account))
+        liveness_write(engine, operation, context={"route": "auth.password_change"})
+        return outcome
 
     @app.get("/auth/start")
     def oidc_start(request: Request, next: str = "", identifier: str = Query(default="", max_length=255), remember_me: bool = False):
@@ -1387,8 +1386,8 @@ def create_app(settings: Settings | None = None, engine=None):
         if kind == "people":
             from .services.people import current_people, imported_aliases
             from packages.domain.people import person_aliases
-            current = current_people(db, actor, today)['people']
-            aliases = imported_aliases(db, actor)
+            current = current_people(db, actor, today, people={row['id']: row for row in out})['people']
+            aliases = imported_aliases(db, actor, current)
             employee_number_redacted = not actor.permits('admin', 'coordinator')
             for person in out:
                 person['aliases'] = person_aliases(person, aliases.get(person['id'], ()))
@@ -1645,7 +1644,8 @@ def create_app(settings: Settings | None = None, engine=None):
                 m.Person.organisation_id == actor.organisation_id, active_people_on(day)).order_by(
                 m.Person.directory_order, m.Person.display_name, m.Person.id).limit(2001)))
             require(len(rows) <= 2000, "CATALOGUE_LIMIT", "This directory exceeds the current bounded UI; pagination upgrade required", 409)
-            current = current_people(db, actor, day, person_ids={r.id for r in rows})['people']
+            current = current_people(db, actor, day,
+                people={r.id: {'active': True, 'title': r.title} for r in rows})['people']
             people = visible_people(db, actor, [{**dict(zip(("id", *DIRECTORY_FIELDS), r)),
                               'title': current.get(r.id, {}).get('display_title', r.title)} for r in rows], directory=True)
             allowed = DIRECTORY_PUBLIC_FIELDS | {row['legacy_field'] for row in s.DEFAULT_CONTACT_TYPES if row['legacy_field']} | {'contacts'}
@@ -1702,12 +1702,11 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get('/api/people/summary', response_model=s.PeopleCounts)
     def people_summary(request: Request):
-        from .services.people import current_people
+        from .services.people import current_people_counts
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_role(actor, 'admin', 'coordinator', 'approver', 'credentialer', 'auditor', 'programme_lead')
-            result = current_people(db, actor)
-            return {key: result[key] for key in ('active_people', 'people_without_current_rank')}
+            return current_people_counts(db, actor)
 
     @app.get('/api/catalogues/categories/duplicate-codes')
     def rank_duplicate_codes(request: Request):
@@ -1901,7 +1900,7 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             row = swaps.get_scoped(db, actor, swap_id)
             return {"swap": swaps.projection(db, row, actor=actor),
-                    "events": [record(event) for event in swaps.events_for(db, actor, row)]}
+                    "events": swaps.events_for(db, actor, row)}
 
     @app.get("/api/planner/views")
     def planner_views(request: Request):
@@ -1945,7 +1944,13 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post("/api/planner/why", response_model=s.WhyResult, response_model_exclude_unset=True)
     def planner_why(value: s.WhyInput, request: Request):
         from .services.staffing import prepare_why, why
-        with transaction(engine) as db:
+        postgres = engine.dialect.name == 'postgresql'
+        reader = engine.execution_options(isolation_level='REPEATABLE READ', postgresql_readonly=True) if postgres else engine
+        with transaction(reader) as db:
+            if not postgres:
+                db.execute(text('BEGIN'))
+            # Authentication and input capture can share the department row from this read view.
+            db.info['_request_parents'] = {}
             actor = actor_for(request, db)
             source, options = prepare_why(db, actor, value)
         result = why(source, options, value)
@@ -2510,14 +2515,17 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules-explained", response_model=s.DepartmentRulesExplainedResponse)
     def department_rules_explained(request: Request, group_by: Literal['question'] = 'question',
-                                   at: s.date | None = Query(None)):
+                                   at: s.date | None = Query(None), workspace_id: s.ID | None = Query(None),
+                                   baseline_id: s.ID | None = Query(None)):
         """Explain department rules for a date without inventing a rota status."""
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_permission(actor, 'rules.read')
+            require(baseline_id is None or workspace_id is not None, 'TARGET_REQUIRED', 'Choose a draft', 422)
             from .services import rule_catalogue
             day = at or rule_catalogue.independence.today(db, actor.department_id)
-            return rule_catalogue.department_rules_explained(db, actor, day)
+            return rule_catalogue.department_rules_explained(db, actor, day, workspace_id=workspace_id,
+                                                           baseline_id=baseline_id)
 
     @app.get('/api/workspaces/{workspace_id}/parts', response_model=s.WorkspacePartPage)
     def get_workspace_part(workspace_id: str, request: Request, response: Response,
@@ -2602,7 +2610,9 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.workspace_access import access_record
             from .services.rota_summary import workspace_validation, current_check
             from .workspace_baselines import attach as attach_baseline
+            can_undo, can_redo = edit_availability(db, actor, workspace) if actor.permits("coordinator") else (False, False)
             data = {"workspace": {**attach_baseline(db, workspace, record(workspace)),
+                                  "can_undo": can_undo,
                                   "name": visible_rota_name(db, actor, workspace.id, workspace.name),
                                   "publication_id": publication_id,
                                   "allowed_actions": allowed_actions(db, actor, workspace, historical=historical,
@@ -2615,7 +2625,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     # SW3-A-10: on the period's integrated rota only its Rota Coordinator adds or removes a fixed assignment.
                     "can_change_fixed": actor.permits("coordinator") and unrestricted(db, actor, access_record(db, workspace)),
                     # SW3-A-06: the viewer's own Undo can be redone (the planner then offers Redo beside Undo).
-                    "can_redo": actor.permits("coordinator") and redo_available(db, actor, workspace),
+                    "can_redo": can_redo,
                     "swap_id": db.scalar(select(m.SwapRequest.id).where(m.SwapRequest.workspace_id == workspace.id)),
                     "approvals": [record(a) for a in db.scalars(select(m.Approval).where(m.Approval.workspace_id == workspace.id))]}
             from .services.people import with_adjustment_names
@@ -2989,6 +2999,11 @@ def create_app(settings: Settings | None = None, engine=None):
             representation = [type or "", status or "", person_id, id, limit, offset, q, sorted(people),
                               sort_by, sort_direction, decided, for_me,
                               collection_filter.model_dump(mode="json") if collection_filter else None]
+            if id:
+                # History permissions changed, and dated programme authority can expire without a write.
+                representation.append("request-history-v2")
+                if actor.permits("programme_lead"):
+                    representation.append(independence.today(db, actor.department_id).isoformat())
             tag = availability.requests_etag(db, actor, representation)
             cached = conditional_response(request, tag)
             if isinstance(cached, Response):
@@ -3110,7 +3125,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get("/api/rules/catalogue")
     def rule_catalogue_page(request: Request, response: Response, version: int = Query(1, ge=1, le=2), include_hidden: bool = False,
-                            day: s.date | None = None):
+                            day: s.date | None = None, workspace_id: s.ID | None = Query(None)):
         """The rule catalogue: every entry, its rule in force, the version waiting for approval (with its line diff),
         each line's reach today and its overlaps."""
         from .services import rule_catalogue
@@ -3119,6 +3134,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
             actual_day = day or rule_catalogue.independence.today(db, actor.department_id)
+            if workspace_id is not None:
+                return rule_catalogue.catalogue(db, actor, version, include_hidden, actual_day, workspace_id=workspace_id)
             stamp = rule_catalogue.catalogue_stamp(db, actor)
             tag = rule_catalogue.catalogue_etag(actor, version, include_hidden, actual_day, stamp)
             cached = conditional_response(request, tag)
@@ -3179,6 +3196,35 @@ def create_app(settings: Settings | None = None, engine=None):
     def timeline_preview(value: s.TimelineRotationInput, request: Request):
         from .services.timeline_commands import preview
         return retry_write(engine, lambda db: preview(db, actor_for(request, db, write=True), value))
+
+    @app.get('/api/leave-balance-settings', response_model=s.LeaveBalanceSettings)
+    def leave_balance_settings(request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            return leave_balances.settings(db, actor_for(request, db))
+
+    @app.get('/api/my-leave-balances', response_model=list[s.LeaveBalance])
+    def my_leave_balances(request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            actor = actor_for(request, db)
+            return leave_balances.balances(db, actor, actor.person_id) if actor.person_id else []
+
+    @app.get('/api/requests/{request_id}/leave-balances', response_model=list[s.LeaveBalance])
+    def request_leave_balances(request_id: s.ID, request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            actor = actor_for(request, db)
+            row = scoped(db, m.RequestRecord, request_id, actor)
+            require(row.id in availability.readable_request_balance_ids(db, actor, [row.id]),
+                    'FORBIDDEN', 'Only the person and permitted decision makers can read this balance', 403)
+            return leave_balances.balances(db, actor, row.person_id, request=row) if row.kind == 'leave' else []
+
+    @app.post("/api/rotation-board/reference-preview", response_model=s.ReferenceRotationReview)
+    def reference_rotation_preview(value: s.ReferenceRotationImport, request: Request):
+        from .services.training import reference_rotation_import
+        with transaction(engine) as db:
+            return reference_rotation_import(db, actor_for(request, db, write=True), value, preview=True)
 
     @app.get("/api/rotation-board", response_model=s.RotationBoard)
     def rotation_board(request: Request, start: s.date, end: s.date, programme_id: s.ID | None = None):
@@ -3288,13 +3334,20 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             return adjustment_effect(db, actor_for(request, db, write=True), workspace_id, value)
 
-    @app.get('/api/policies/{policy_id}/review')
-    def policy_review(policy_id: s.ID, request: Request):
+    def _policy_review(policy_id, request, *, decision=None):
         from .services.rule_effects import review
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_catalogue_read(actor, 'policies')
-            return review(db, actor, policy_id)
+            return review(db, actor, policy_id, decision=decision)
+
+    @app.get('/api/policies/{policy_id}/review')
+    def policy_review(policy_id: s.ID, request: Request):
+        return _policy_review(policy_id, request)
+
+    @app.post('/api/policies/{policy_id}/review')
+    def policy_replacement_review(policy_id: s.ID, value: s.PolicyActivationDecision, request: Request):
+        return _policy_review(policy_id, request, decision=value)
 
     @app.post('/api/policies/{policy_id}/relax')
     def policy_relax(policy_id: s.ID, value: s.RuleRelaxInput, request: Request):
@@ -3865,7 +3918,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_role(actor, "coordinator")
             return {"imports": [reference_receipt(db, source) for source in db.scalars(
-                select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id)
+                select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id,
+                    func.coalesce(m.ReferenceImport.manifest['format'].as_string(), '') != s.ROTATION_REFERENCE_FORMAT)
                 .order_by(m.ReferenceImport.created_at.desc(), m.ReferenceImport.seq.desc()).limit(10))]}
 
     @app.get("/api/staff-imports")
@@ -3905,12 +3959,19 @@ def create_app(settings: Settings | None = None, engine=None):
     def access_list(request: Request):
         with transaction(engine) as db:
             actor = actor_for(request, db)
-            require_role(actor, "admin", *s.PERMISSIONS["access.system_roles"])
-            bindings = list(db.scalars(select(m.RoleBinding).join(m.Identity).where(
-                m.RoleBinding.department_id == actor.department_id, m.Identity.issuer != SWAP_AUTOMATION_ISSUER)))
+            require_role(actor, "admin", *s.PERMISSIONS["access.system_roles"], *s.PERMISSIONS["access.installation_admin"])
+            full_access = actor.permits("admin", *s.PERMISSIONS["access.system_roles"])
+            query = select(m.RoleBinding).join(m.Identity).where(
+                m.RoleBinding.department_id == actor.department_id, m.Identity.issuer != SWAP_AUTOMATION_ISSUER)
+            if not full_access:
+                query = query.where(m.RoleBinding.role == s.INSTALLATION_ADMIN_ROLE)
+            bindings = list(db.scalars(query))
             # Include sign-ins without bindings so authorized role managers can select them.
             from .services.access import sign_in_identities
             identities = list(db.scalars(select(m.Identity).where(sign_in_identities(actor, settings))))
+            if not full_access:
+                return {"bindings": [record(r) for r in bindings], "identities": [
+                    {"id": i.id, "display_name": i.display_name, "disabled": i.disabled} for i in identities]}
             from .services import accounts
             from .identity_store import store_for
             return {"bindings": [record(r) for r in bindings], "identities": [record(i, exclude=("password_hash",)) for i in identities],
@@ -4072,6 +4133,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     m.AuditEvent.department_id == actor.department_id,
                     m.AuditEvent.actor_id == m.Identity.id).exists())
                 .order_by(m.Identity.display_name, m.Identity.id).limit(2001))) if people else []
+            audit_log.mask_balance_details(db, actor, page['events'])
             return {**page, "events": audit_log.subjects(db, actor.department_id, page['events']),
                     "offset": offset, "limit": limit,
                     "people": [{"id": i, "display_name": n} for i, n in actors[:2000]],

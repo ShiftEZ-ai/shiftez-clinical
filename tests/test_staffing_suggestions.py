@@ -35,7 +35,7 @@ def test_addition_options_use_same_validator_and_do_not_persist(h):
     result=ask(h,w,sh)
     assert state(h)==before and h.detail(w)==detail
     assert result['total']==3 and result['evaluated_count']==3 and not result['has_more']
-    assert [row['display_name'] for row in result['candidates']]==['Alex Morgan','Jordan Lee','Taylor Noor']
+    assert [row['display_name'] for row in result['candidates']]==['Staff 01(test)','Staff 02(test)','Staff 03(test)']
     assert all(row['whole_candidate_valid'] and row['mandatory_findings_remaining']==0 for row in result['candidates'])
     assert result['baseline_mandatory_findings']>0
     assert result['source_fingerprint']==h.snapshot(w)['fingerprint']
@@ -93,6 +93,7 @@ def test_fill_options_department_scale_stays_within_three_seconds(monkeypatch):
     actor = SimpleNamespace(department_id=workspace.department_id, permits=lambda *roles: True)
     monkeypatch.setattr(staffing, 'scoped', lambda *args: workspace)
     monkeypatch.setattr(staffing, 'domain_snapshot', lambda *args: data)
+    monkeypatch.setattr(staffing, 'assignment_stamp', lambda *args: s.ASSIGNMENT_STAMP_PREFIX + 'a' * 64)
     from apps.api.services import published_changes
     monkeypatch.setattr(published_changes, 'validation_scope', lambda *args, **kwargs: None)
     started = time.perf_counter()
@@ -131,6 +132,7 @@ def test_fill_options_reports_first_page_and_stops_before_remaining_candidates(m
     actor = SimpleNamespace(department_id=workspace.department_id, permits=lambda *roles: True)
     monkeypatch.setattr(staffing, 'scoped', lambda *args: workspace)
     monkeypatch.setattr(staffing, 'domain_snapshot', lambda *args: data)
+    monkeypatch.setattr(staffing, 'assignment_stamp', lambda *args: s.ASSIGNMENT_STAMP_PREFIX + 'a' * 64)
     from apps.api.services import published_changes
     monkeypatch.setattr(published_changes, 'validation_scope', lambda *args, **kwargs: None)
     participant = data['shifts'][0]['participants'][0] if replace else None
@@ -234,7 +236,7 @@ def test_search_pagination_and_empty_result_are_explicit(h):
     one=ask(h,w,sh,limit=1);two=ask(h,w,sh,limit=1,offset=1)
     assert one['has_more'] and two['has_more'] and one['candidates'][0]['person_id']!=two['candidates'][0]['person_id']
     last=ask(h,w,sh,limit=1,offset=2);assert not last['has_more']
-    found=ask(h,w,sh,search='MORGAN');assert found['total']==1
+    found=ask(h,w,sh,search='STAFF 01');assert found['total']==1
     missing=ask(h,w,sh,search="'; DROP TABLE people; --")
     assert missing['total']==0 and missing['candidates']==[] and not missing['has_more']
     assert one['request_fingerprint']!=two['request_fingerprint']
@@ -268,7 +270,7 @@ def test_scope_limits_fail_instead_of_certifying_truncated_candidates(h,monkeypa
     monkeypatch.setattr(staffing,'MAX_SCOPE_SHIFTS',1000)
     monkeypatch.setattr(staffing,'MAX_DIRECTORY_MATCHES',2)
     assert ask(h,w,sh,status=409)['error']['code']=='STAFFING_DIRECTORY_LIMIT'
-    assert ask(h,w,sh,search='Alex')['total']==1
+    assert ask(h,w,sh,search='Staff 01')['total']==1
 
 
 def test_selected_person_still_needs_exact_preview_and_ordinary_publication(h):

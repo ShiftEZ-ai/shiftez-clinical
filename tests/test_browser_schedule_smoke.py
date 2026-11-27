@@ -14,7 +14,7 @@ DESKTOP, PHONE = {'width': 1440, 'height': 900}, {'width': 390, 'height': 844}
 LAYOUTS = ('week', 'month', 'day', 'timeline', 'people', 'coverage', 'list')
 # Views mark each drawn duty with data-person (planner_week highlightFocus); the Day bars name their people instead.
 PERSON = ('#schedule-view :is(.pchip,.pg-chip,.ag-item,.cov-cell,tr)[data-person~="{id}"],'
-          '#schedule-view .sd-bar[aria-label*="Morgan"]')
+          '#schedule-view .sd-bar[aria-label*="Staff 01"]')
 FAILED = 'Couldn’t load the schedule.'
 
 

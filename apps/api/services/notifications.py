@@ -13,11 +13,14 @@ from .common import expected
 def _scope(db, actor):
     from .notification_audience import source_visibility
     content_id = m.Outbox.payload["content_id"].as_string()
+    roles = getattr(actor, 'roles', None)
+    generation = (m.Outbox.kind != 'generation_finished',) if roles is not None and 'coordinator' not in roles else ()
     # Legacy announcement envelopes without a source ID must still fail closed.
     return (m.Notification.identity_id == actor.identity_id, m.Outbox.department_id == actor.department_id,
         ((m.Outbox.kind != "announcement") & content_id.is_(None))
             | source_visibility(db, actor, m.DepartmentContent, content_id),
-        (m.Outbox.kind != "event") | source_visibility(db, actor, m.Event, m.Outbox.payload["event_id"].as_string()))
+        (m.Outbox.kind != "event") | source_visibility(db, actor, m.Event, m.Outbox.payload["event_id"].as_string()),
+        *generation)
 
 
 def _kind():
@@ -39,7 +42,10 @@ def _rows(db, actor, *filters, limit=100, offset=0):
             & (m.AnnouncementReceipt.identity_id == N.identity_id))
         .where(*_scope(db, actor), *filters).order_by(N.created_at.desc(), N.seq.desc()).limit(limit).offset(offset))
     links = ("workspace_id", "publication_id", "request_id", "swap_id", "feedback_report_id", "event_id", "staged_id")
+    from .swaps import stored_audience_reason
     result = [{**record(row), "kind": kind,
+        **({"message": stored_audience_reason(row.message)}
+           if kind == "swap" and payload.get("notice") == "no_recipients" else {}),
         "acknowledged_at": json_value(acknowledged_at if row.source_kind in {"department_content", "event"}
                                       else row.acknowledged_at),
         "acknowledgement_required": importance == "must_acknowledge" or bool(

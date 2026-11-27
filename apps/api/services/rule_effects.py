@@ -11,7 +11,7 @@ from apps.api import models as m
 from apps.api.auth import require_role, person_access
 from apps.api.errors import require
 from apps.api.serialization import json_value, record
-from apps.api.snapshots import domain_snapshot, input_current
+from apps.api.snapshots import domain_snapshot, input_current, line_trial_snapshot, snapshot_inputs
 from packages.contracts import schemas as s
 from packages.domain.rule_lines import named_people, unconditional_people, when
 from packages.domain.solver_rules import COMPILER_VERSION
@@ -146,10 +146,13 @@ def adjustment_effect(db, actor, workspace_id, value):
 
 
 def draft_line_effect(db, actor, catalogue_id, value):
-    """Replace one unsaved line in memory, using saved-rule admission and the shared effect projection."""
+    """Compare an admitted, unsaved line with the draft's current saved assignments."""
+    from packages.domain.rule_effects import observed_effect
+    from packages.domain.rule_map import line_check_scope
     from .rule_catalogue import catalogue_version, check
     from .common import expected
     from .independence import today
+    from .planning import complete_check
     require_role(actor, 'coordinator', 'approver')
     current = catalogue_version(db, actor, catalogue_id, 'active')
     require((current.id if current else None) == value.expected_policy_id,
@@ -179,14 +182,28 @@ def draft_line_effect(db, actor, catalogue_id, value):
             'rule': {'kind': 'catalogue', 'id': catalogue_id, 'catalogue_version': value.catalogue_version,
                 'on': original.get('on', True), 'settings': original.get('settings') or {}, 'lines': checked['lines']}})
     effects = []
-    for workspace in affected_workspaces(db, actor, [candidate]):
-        before = domain_snapshot(db, workspace, mandatory_rules=False)
-        after = domain_snapshot(db, workspace, policy_overrides=[record(candidate)], mandatory_rules=False)
-        effects.append({'workspace_id': workspace.id, 'name': workspace.name, 'revision': workspace.revision,
-            'starts_on': str(workspace.starts_on), 'ends_on': str(workspace.ends_on),
-            **effect_projection(before, evaluate(before), after, evaluate(after))})
-    return {'line_id': line['id'], 'preview': True, 'committed': False,
-            'effects': {line['id']: effects}, 'relations': checked.get('relations', {})}
+    proposed_policy = record(candidate)
+    workspaces = affected_workspaces(db, actor, [candidate])
+    if not workspaces:
+        return {'effects': {line['id']: effects}}
+    department = db.get(m.Department, actor.department_id)
+    organisation = db.get(m.Organisation, department.organisation_id)
+    shared = snapshot_inputs(db, organisation)
+    for workspace in workspaces:
+        before = domain_snapshot(db, workspace, mandatory_rules=False, shared_inputs=shared)
+        previous = workspace.validation
+        if not complete_check(previous, before, before['department'].get('generation_defaults')):
+            previous = evaluate(before, session_parts=True)
+        after = line_trial_snapshot(before, workspace, proposed_policy, organisation.timezone)
+        if after is None:
+            after = domain_snapshot(db, workspace, policy_overrides=[proposed_policy], mandatory_rules=False,
+                                    include_manifest=False, shared_inputs=shared)
+        elif scope := line_check_scope(before, after, previous, candidate.id):
+            after['_partial'] = scope
+        effect = observed_effect(previous, evaluate(after))
+        effects.append({'workspace_id': workspace.id, 'name': workspace.name,
+                        'effect': {key: effect[key] for key in ('status', 'clears', 'adds', 'effect')}})
+    return {'effects': {line['id']: effects}}
 
 
 # SW3-B-19: a check job's frozen input (~20 MB) and full result (~90 MB at department scale, mostly candidate
@@ -228,13 +245,15 @@ def no_new_problems(result):
             and result.get('new_or_worse_findings') == [])
 
 
-def predecessor_rows(db, actor, policies):
-    ids = {ident for p in policies for ident in [*(p.definition.get('merged_ids') or []), p.definition.get('replaces_id')] if ident}
+def predecessor_rows(db, actor, policies, *, replaces_ids=()):
+    ids = set(replaces_ids) | {ident for p in policies
+        for ident in [*(p.definition.get('merged_ids') or []), p.definition.get('replaces_id')] if ident}
     return list(db.scalars(select(m.Policy).where(m.Policy.department_id == actor.department_id, m.Policy.id.in_(ids)))) if ids else []
 
 
-def changed_periods(db, actor, policies, *, skipped_people=None):
-    predecessors = predecessor_rows(db, actor, policies)
+def changed_periods(db, actor, policies, *, skipped_people=None, predecessors=None):
+    if predecessors is None:
+        predecessors = predecessor_rows(db, actor, policies)
     by_id = {p.id: p for p in predecessors}
     periods = []
     person_spans = []
@@ -370,12 +389,23 @@ def reachable_workspaces(db, actor, policies, workspaces):
         session_matches(context, scope, shift) for scope in scopes for shift in shifts[w.id].values())]
 
 
-def review(db, actor, policy_id):
+def review(db, actor, policy_id, *, decision=None):
     require_role(actor, 'coordinator', 'approver')
     policy = scoped(db, m.Policy, policy_id, actor)
     require(policy.status in {'active', 'proposed'}, 'WORKFLOW_STATE', 'Review an active or proposed rule', 409)
+    if decision is not None:
+        require(policy.status == 'proposed', 'WORKFLOW_STATE', 'Only a proposed policy can be activated', 409)
+    from .policies import activation_weakens_safety
+    replaces_ids = decision.replaces_ids if decision is not None else ()
+    predecessors = predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
+    weakens = policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, replaces_ids, predecessors=predecessors)
+    protection = {'policy_id': policy.id}
+    if decision is not None:
+        return {**protection, 'weakens_safety': weakens}
+    if weakens:
+        protection['weakens_safety'] = True
     skipped_people = {}
-    periods = changed_periods(db, actor, [policy], skipped_people=skipped_people)
+    periods = changed_periods(db, actor, [policy], skipped_people=skipped_people, predecessors=predecessors)
     workspaces = affected_workspaces(db, actor, [policy], periods=periods)
     from apps.api.snapshots import cheap_fingerprints, currency_hint, currency_match, snapshot_hash
     source_hash, checked_hash = snapshot_hash(record(policy)), snapshot_hash({**record(policy), 'status': 'active'})
@@ -474,8 +504,8 @@ def review(db, actor, policy_id):
         else:
             reason = f'No check needed: {len(skipped_people)} people left before these lines start and have no later placements.'
         summary.setdefault('summary', reason)
-    return {'policy_id': policy.id, 'relations': relations, **summary,
-            'effect': effects, 'ready': all(e['status'] == 'ready' and not e['activation_blocker'] for e in effects),
+    return {**protection, 'relations': relations, **summary, 'effect': effects,
+            'ready': all(e['status'] == 'ready' and not e['activation_blocker'] for e in effects),
             'can_decide': all(e['status'] not in {'queued', 'running'} and not e['activation_blocker'] for e in effects),
             'requires_acknowledgement': any(e['requires_acknowledgement'] for e in effects)}
 

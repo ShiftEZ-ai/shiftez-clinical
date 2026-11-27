@@ -32,6 +32,7 @@ from packages.domain.time import aware, local_midnight
 from apps.api.snapshots import DomainSnapshot, scheduling_inputs, tag_data
 from .common import scoped
 from .date_sets import data as date_set_data
+from .people import period_records
 from apps.api.services.common import neutral_rota_name
 
 ALL_ROLES = ("coordinator", "approver", "admin")
@@ -655,14 +656,6 @@ def _legacy_history(db, data, policies):
 
 # ---- dashboard reads -----------------------------------------------------------------------------------------
 
-def period_records(db, department_id, first, last):
-    return {name: [record(r) for r in db.scalars(select(cls).where(cls.department_id == department_id,
-                cls.starts_on < last, cls.ends_on.is_(None) | (cls.ends_on > first)))]
-            for name, cls in {'memberships': m.Membership, 'eligibilities': m.Eligibility,
-                              'grants': m.CapabilityGrant, 'rotations': m.Rotation,
-                              'programme_memberships': m.ProgrammeMembership}.items()}
-
-
 def department_data(db, actor, first, last, *, include_offers=False, workspace_id=None, include_period_facts=True):
     """The records the condition evaluator needs, for conditions over [first, last) without a rota."""
     department = db.get(m.Department, actor.department_id)
@@ -735,32 +728,10 @@ def personal_goals(reports, person_id):
             for report in reports]
 
 
-def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None):
-    """Each Balance goal on a rota (a draft, or the latest publication): score, per-person values against the
-    expected band, and the score at each publication in the period (trend)."""
+def _goals_uncached(db, actor, workspace, who, first, last):
+    """Each Balance goal on the selected rota: score, per-person values and period trend."""
     from apps.api.snapshots import domain_snapshot
-    viewer(actor)
-    first, last = period(starts_on, ends_on)
-    if workspace_id:
-        require(sees_everyone(actor), 'FORBIDDEN', 'Drafts are visible to planners only', 403)
-        workspace = scoped(db, m.Workspace, workspace_id, actor)
-    else:
-        department = db.get(m.Department, actor.department_id)
-        organisation = db.get(m.Organisation, department.organisation_id)
-        today = clock_now().astimezone(ZoneInfo(organisation.timezone)).date()
-        P = m.Publication
-        end = func.coalesce(P.effective_until, P.ends_on)
-        current = (P.starts_on <= today) & (end > today)
-        upcoming = P.starts_on > today
-        latest = db.scalar(select(P).where(P.department_id == actor.department_id, P.current.is_(True))
-            .where(P.starts_on >= first, P.starts_on < last)
-            .options(defer(P.snapshot), defer(P.validation))
-            .order_by(case((current, 0), (upcoming, 1), else_=2),
-                      case((current, P.starts_on)).desc(), case((upcoming, P.starts_on)).asc(),
-                      end.desc(), P.sequence.desc()).limit(1))
-        if latest is None:
-            return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
-        workspace = db.get(m.Workspace, latest.workspace_id)
+
     # Today's active goals use the rota's captured settings until publication.
     goals = []
     data = domain_snapshot(db, workspace, current_goals=True, fairness_goals_out=goals)
@@ -797,7 +768,7 @@ def _goals_uncached(db, actor, workspace_id=None, who=None, starts_on=None, ends
             'score_trend': score_trend(db, actor.department_id, first, last) if planner else []}
 
 
-def _published_goal_workspace(db, actor):
+def _published_goal_workspace(db, actor, first, last):
     """Resolve the published workspace anchoring the goals projection."""
     department = db.get(m.Department, actor.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
@@ -806,7 +777,8 @@ def _published_goal_workspace(db, actor):
     end = func.coalesce(P.effective_until, P.ends_on)
     current = (P.starts_on <= today) & (end > today)
     upcoming = P.starts_on > today
-    latest = db.scalar(select(P.workspace_id).where(P.department_id == actor.department_id, P.current.is_(True))
+    latest = db.scalar(select(P.workspace_id).where(P.department_id == actor.department_id, P.current.is_(True),
+                                                    P.starts_on >= first, P.starts_on < last)
         .order_by(case((current, 0), (upcoming, 1), else_=2),
                   case((current, P.starts_on)).desc(), case((upcoming, P.starts_on)).asc(),
                   end.desc(), P.sequence.desc()).limit(1))
@@ -816,20 +788,20 @@ def _published_goal_workspace(db, actor):
 def goals(db, actor, workspace_id=None, who=None, starts_on=None, ends_on=None, *, validator=None):
     """Read goals through the durable scoped projection; a miss uses the canonical full calculation once."""
     viewer(actor)
+    first, last = period(starts_on, ends_on)
     if workspace_id:
         require(sees_everyone(actor), 'FORBIDDEN', 'Drafts are visible to planners only', 403)
-        inputs, workspace = _dashboard_inputs(db, actor, workspace_id)
-    else:
-        workspace = _published_goal_workspace(db, actor)
-        if workspace is None:
-            return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
-        inputs, _ = _dashboard_inputs(db, actor, None)
+    inputs, workspace = _dashboard_inputs(db, actor, workspace_id)
+    if not workspace_id:
+        workspace = _published_goal_workspace(db, actor, first, last)
+    if workspace is None:
+        return {'workspace': None, 'goals': [], 'schedule': None, 'score_trend': []}
     from .read_projections import cached
     # A concurrent commit can change the projection inputs after the HTTP check.
     stamp = validator[0] if validator is not None and validator[1] == inputs else _goals_tag(
         actor, workspace_id, who, starts_on, ends_on, inputs)
     return cached(db, [workspace.id], 'fairness_goals', {workspace.id: stamp},
-                  lambda _: _goals_uncached(db, actor, workspace_id, who, starts_on, ends_on))[workspace.id]
+                  lambda _: _goals_uncached(db, actor, workspace, who, first, last))[workspace.id]
 
 
 def schedule(db, workspace):

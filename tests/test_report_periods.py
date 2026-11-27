@@ -103,7 +103,7 @@ def test_print_layouts_are_escaped_filtered_and_personal(h):
         atomic = '<span class="print-time">04 Oct 08:00–04 Oct 12:00</span>'
         assert team.text.count(atomic) == 3  # whole duty and both people's assigned times
         own = h.client('staff').get(url + '&layout=' + layout)
-        assert own.status_code == 200 and 'Example' not in own.text and 'Alex Morgan' in own.text
+        assert own.status_code == 200 and 'Example' not in own.text and 'Staff 01(test)' in own.text
         assert own.text.count(atomic) == 2  # only the authorised person's assigned time
     assert h.client('staff').get(url + '&person_id=' + person['id']).status_code == 403
     assert h.client('coordinator').get(url + '&layout=year').status_code == 422

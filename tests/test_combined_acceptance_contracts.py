@@ -2,6 +2,7 @@
 import pytest
 
 from packages.contracts import schemas as s
+from .conftest import grant_branding_editor
 from . import test_branding_configuration as branding
 from . import test_generation_population as population
 from . import test_shared_search as shared
@@ -13,15 +14,22 @@ def both(request):
     return request.getfixturevalue(request.param)
 
 
-@pytest.mark.parametrize('case', [
+BRANDING_CASES = (
     branding.test_public_default_and_saved_projection_are_minimal_and_independent_of_departments,
     branding.test_branding_is_revision_guarded_audited_and_undoable_without_rewriting_history,
-    shared.test_search_and_layer_options_persist_through_versioned_saved_view_paths,
     presentation.test_saved_short_name_survives_omitted_input_and_undo,
+)
+
+
+@pytest.mark.parametrize('case', [
+    *BRANDING_CASES,
+    shared.test_search_and_layer_options_persist_through_versioned_saved_view_paths,
     population.test_contract_scope_references_empty_selection_and_legacy_omission,
     population.test_matching_worker_source_is_required_before_scheduler_execution,
 ], ids=lambda case: case.__name__)
 def test_existing_small_paths_on_both_databases(both, case):
+    if case in BRANDING_CASES:
+        grant_branding_editor(both)
     case(both)
 
 
@@ -62,7 +70,7 @@ def test_search_options_filter_real_bulk_rows_before_count_and_page(both):
 def test_session_reference_source_access_for_affected_roles(both, role):
     # The Schedule offers these references to planners; read-only staff never get a directory offer.
     response = both.client(role).get('/api/search/references', params={
-        'collection': 'sessions', 'kind': 'people', 'q': 'Alex', 'limit': 1})
+        'collection': 'sessions', 'kind': 'people', 'q': 'Staff 01', 'limit': 1})
     assert response.status_code == (403 if role == 'staff' else 200), response.text
     if response.status_code == 200:
         assert len(response.json()['items']) <= 1
@@ -71,4 +79,5 @@ def test_session_reference_source_access_for_affected_roles(both, role):
 
 @pytest.mark.parametrize('fmt,media_type', [('PNG', 'image/png'), ('JPEG', 'image/jpeg'), ('WEBP', 'image/webp')])
 def test_raster_history_on_both_databases(both, fmt, media_type):
+    grant_branding_editor(both)
     branding.test_raster_uploads_strip_metadata_keep_local_refs_and_preserve_history_assets(both, fmt, media_type)

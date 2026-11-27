@@ -12,7 +12,7 @@ NOT_PANELS = {'sidebar', 'setup-aside', 'rb-palette'}
 KINDS = {
     # docked item and task panels (dockPanel)
     'person', 'request', 'tag', 'rule', 'rule-line', 'session-details', 'session-edit', 'rota-targets', 'fairness-drill',
-    'staffing', 'staff-import', 'other-department-rules', 'pending-rules', 'rule-exceptions',
+    'staffing', 'staff-import', 'staff-onboarding', 'other-department-rules', 'pending-rules', 'rule-exceptions',
     'calendar-protection', 'simplify-rules', 'feedback', 'rotation', 'trainee', 'date-set-dates', 'bulk-change',
     'timeline-item', 'report-duties', 'fix-list',
     # lists and drill-downs moved out of modal dialogs (C26)
@@ -68,7 +68,7 @@ DIALOGS = {
     ('app.ts', "(result.kind==='vali"),
     ('app.ts', "'Edit the draft now?"),
     ('app.ts', "'Refresh draft basel"),  # nothing to apply: one line, no form (D-068)
-    ('app.ts', "'Hospital sign-in is"),
+    ('app.ts', "'Institutional sign-"),
     ('bulk.ts', "'Paste names or code"),
     ('candidate_review.ts', "'Candidates consider"),  # a list opened from the Auto-schedule results modal: moves when that does (C26)
     ('dom.ts', "'Leave this page?', "),

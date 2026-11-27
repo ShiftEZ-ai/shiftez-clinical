@@ -5,7 +5,7 @@
 - Board (private): https://github.com/orgs/ShiftEZ-ai/projects/2 · Project brief: the board's README
 - Release plan: https://github.com/ShiftEZ-ai/shiftez-clinical/milestones (the milestones are the plan; never copy
   them here)
-- Leads (thread titles): "ShiftEZ Master", "ShiftEZ Delivery", "ShiftEZ Design"
+- Leads (thread titles): "ShiftEZ Master", "ShiftEZ Delivery", "ShiftEZ QA", "ShiftEZ Design"
 - UI project: yes · environments: ci, dev, staging, production (each described in DELIVERY.md § Environments)
 - Other repos: none
 - Links: DELIVERY.md (how code ships) · DESIGN.md (look and feel) · the portfolio engineering standard and the
@@ -57,7 +57,9 @@ reused everywhere:
 
 ## Must-follow coding rules
 Definition of done:
-- Every finding is an issue first, one per root cause. Every PR names its issue on a line of its own: "Closes #n",
+- Every finding is an issue first, one per root cause. A review's non-blocking findings share one follow-up issue,
+  one checklist line each; a finding gets its own issue when it is High or Blocker or another lead owns it.
+  Every PR names its issue on a line of its own: "Closes #n",
   or "Refs #n" for a partial fix. "Part of #n" and "Fixes #n" are refused.
 - Tests at every layer the change touches, by DELIVERY.md § Test policy; no skipped or retried tests.
 - A fixed bug in rule resolution, rule checking or auto-scheduling that a small rota reproduces adds or extends a
@@ -132,7 +134,7 @@ Only a critical change gets a review, meaning a change whose failure would be ir
 - Merge gates: `.github/`, `ci/`, `tests/quarantine.json`, test-runner and build configuration, the scripts in `package.json`, and deleting, skipping or weakening a test.
 - Production: `infra/`, `apps/api/settings.py`, production deploys.
 
-A critical change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict that names the head. A re-cut that only merges `main` keeps the earlier verdict only when the Delivery Lead confirms a clean merge. No review for a same-tree re-cut, a rebase, or a test-only change that keeps every assertion.
+A critical change gets one independent review of the full PR diff (merge base to exact head), recorded as a verdict that names the head. A re-cut that only merges `main` keeps the earlier verdict when the publisher confirms a clean merge (same tree replay, same patch). No review for a same-tree re-cut, a rebase, or a test-only change that keeps every assertion.
 
 ## Data safety
 - Migrations only add; never edit, rename or delete a landed migration (`migrations/safety.py`,

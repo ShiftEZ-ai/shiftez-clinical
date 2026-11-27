@@ -684,5 +684,25 @@
     "class": "additive",
     "sha256": "5fb845220111eee7d31d8f261c5d9f661284731ebb023ed18b70bd9e25b6a591",
     "review": "Adds a per-attempt feasibility result table keyed to jobs and preserves all existing rows."
+  },
+  "0153_calendar_lineage": {
+    "class": "additive",
+    "sha256": "d285cbfda762b6ab54d37adaf47bee3462ac632c73ddc50dd131d956bffe6cd2",
+    "review": "Adds a nullable calendar lineage marker to publications without rewriting existing rows. The SQLite trigger and existing PostgreSQL row guard keep the marker immutable."
+  },
+  "0154_request_undo_note": {
+    "class": "additive",
+    "sha256": "f36f96e0d6fb9960113470a338877afd9317f62428acaf0613aa52865876ff98",
+    "review": "Adds a nullable request Undo note without changing existing records. The note can be erased with the request's private details."
+  },
+  "0155_installation_admin": {
+    "class": "destructive",
+    "sha256": "de177afa5a7c37ff51290d0d73e72f5a62422b0a511812d7410cc405fc0836a1",
+    "review": "Widens the role binding check and adds one installation administrator grant and its audit event. Requires confirmation of this revision after a verified backup. Existing rows are retained."
+  },
+  "0157_leave_balance_policy": {
+    "class": "additive",
+    "sha256": "3f6c63ed813062ae6b45644706e2941f6d6106d7f7cb77c1d333424bc3a94126",
+    "review": "Adds department-owned leave policy storage and its lookup index without updating any existing records."
   }
 }

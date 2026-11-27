@@ -14,7 +14,7 @@ export type Reasoning=AiProviderProfileRecord['reasoning'];
 /** The destination host (with any non-default port): a full URL is parsed; a host-only value (the coordinator's provider
  *  choices send just host[:port]) is shown as given, so ports and IPv6 brackets are kept. */
 const hostOf=(url:string)=>{if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(url))return url;try{return new URL(url).host;}catch{return url;}};
-/** A provider on the hospital's own network (Rota sends it no data outside the site). */
+/** A provider on the organisation's own network (Rota sends it no data outside the site). */
 export function isPrivate(url:string):boolean{
   // The whole host, never a prefix: 10.example.net and localhost.example.com are public names.
   let host=hostOf(url).toLowerCase();

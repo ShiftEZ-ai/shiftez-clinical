@@ -1810,21 +1810,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_browser_uiux_polling.py::test_idle_inbox_preserves_ui_and_receives_changed_payload_with_same_unread_count",
-    "reason": "unstable: Browser startup synchronization failed in runs 45073711886, 45069177859, 45056480905 and 45045088917. Three recovered on the second observation.",
-    "owner": "maintainers",
-    "added": "2026-11-22",
-    "expires": "2026-12-06",
-    "issue": 1237,
-    "milestone": "v0.2.0",
-    "blocker": false,
-    "recovered_runs": [
-      "45073711886",
-      "45069177859",
-      "45045088917"
-    ]
-  },
-  {
     "nodeid": "tests/test_browser_ux_review_blockers.py::test_a_failed_page_read_keeps_the_banner_and_its_time_through_a_healthy_pulse",
     "reason": "unstable: Different measured outcomes between replicas in run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -2441,16 +2426,6 @@
     "added": "2026-11-19",
     "expires": "2026-12-16",
     "issue": 703,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_generation_department.py::test_repeat_supervisor_limit_blocks_manual_and_guides_allocation",
-    "reason": "unstable: Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 11,
     "milestone": "v0.1.0",
     "blocker": false
   },
@@ -3942,16 +3917,6 @@
     "expires": "2026-12-04",
     "issue": 991,
     "milestone": "v0.2.0",
-    "blocker": false
-  },
-  {
-    "nodeid": "tests/test_source_parity_fairness.py::test_each_engine_avoids_repeated_named_supervision[case-fdoddeedjpapllakpnoaldffabhbccmgmkjemaefmdigdoeojkoiacckoihklmfc]",
-    "reason": "unstable: Different measured outcomes between replicas in run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 11,
-    "milestone": "v0.1.0",
     "blocker": false
   },
   {

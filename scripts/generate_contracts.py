@@ -11,9 +11,10 @@ from packages.contracts import schemas as s
 ROOT = Path(__file__).resolve().parents[1]
 CLASSES = [s.DisplaySettingsRestore, s.PersonPropertiesInput, s.ContactTypeInput, s.PersonContactInput, s.PersonCard, s.PlanningGroupInput, s.PlanningSettingsInput, s.PlanningRollback, s.ScoreSettingsInput, s.ScoreSettingsRollback, s.ScoreReview, s.LegacyLeadCheckInput, s.JobRecovery, s.LeadContextInput, s.LeadContext, s.Me, s.RuleCheckComparison, s.PolicyActivationDecision, s.JobInput, s.JobCancelInput, s.GenerationExtension, s.JobTimeInput, s.GenerationContinue, s.JobResult, s.GenerationApply, s.ImportPreview, s.ImportApply, s.ImportRefresh, s.StaffImportPreview, s.StaffImportReview, s.StaffAccessBulkInput, s.CreatedUndo, s.ReferenceRotaPreview, s.DepartmentSettingsInput, s.StaffingSuggestionsInput, s.FillOptionsInput, s.FillOptionsResult, s.WhyInput, s.IssueBatch, s.IssuePreviewInput, s.ExceptionBatch, s.CategoryInput, s.DisplaySettingsInput, s.SeriesReconcile, s.SeriesExpand, s.OperatingCalendarInput, s.ResourcePoolInput, s.ResourceRequirement, s.PlannerViewInput, s.PlannerViewDefinition, s.PlannerViewSettings, s.FairnessViewSettings, s.RulesViewSettings, s.AssignmentTypeInput, s.PolicyInput, s.SeriesInput, s.ShiftInput, s.Command,
            s.LivePulse, s.ScheduleSession, s.WorkspaceCompactDetail, s.WorkspacePartQuery, s.WorkspacePartPage,
-           s.DraftEditDelta,
+           s.DraftEditDelta, s.WorkspaceUndoInput,
            s.MembershipInput, s.ProgrammeMembershipInput, s.ProgrammeCalendarInput, s.MentorshipInput, s.RotationInput, s.EligibilityInput, s.GrantInput, s.AvailabilityInput,
-           s.RotationBoard, s.RotationBlock, s.RotationTemplateInput, s.RotationPlanInput, s.RotationCopyInput, s.RotationRemoveInput,
+           s.RotationBoard, s.ReferenceRotationFile, s.ReferenceRotationImport, s.ReferenceRotationConflict, s.ReferenceRotationReview,
+           s.RotationBlock, s.RotationTemplateInput, s.RotationPlanInput, s.RotationCopyInput, s.RotationRemoveInput,
            s.RotationChangeInput, s.RotationSwapInput, s.TraineeNoteInput, s.TraineeNoteEdit,
            s.WorkspaceInput, s.RotaSummary, s.RotaCauseSummary, s.PublishedScheduleSummary, s.LocationInput, s.RoleInput, s.CustomField, s.LeaveTypeInput, s.ParticipantRecord,
            s.ReviewRouteInput, s.ReviewDelegationInput, s.ReviewDecisionInput, s.AuthorityRestoreInput,
@@ -22,7 +23,8 @@ CLASSES = [s.DisplaySettingsRestore, s.PersonPropertiesInput, s.ContactTypeInput
            s.RulesExplainedResponse, s.DepartmentRulesExplainedResponse, s.ExplainedRule, s.RuleExplainedSentence,
             s.SchedulingFactInput, s.FactDecisionInput, s.SchedulingFactApproval, s.CatalogueConversionDecision, s.CatalogueProofPreview, s.CatalogueUpdating, s.JobErrorDetail,
            s.PersonFairness, s.PersonScore, s.PersonWorkload, s.PersonRotations, s.PersonAvailability, s.PersonAccounts, s.PersonSessions, s.PersonAuthActivity,
-           s.PublishedWishOutcome, s.RequestDecisionAccess, s.RequestManyDecision, s.RequestUndo, s.OvertimeAvailabilityInput, s.NotificationRead, s.WishEffect, s.DraftWishOutcome, s.FeedbackCreate, s.FeedbackCreated, s.FeedbackRow,
+           s.PublishedWishOutcome, s.RequestDecisionAccess, s.RequestManyDecision, s.RequestUndo, s.RequestEditUndo, s.LeaveAllowanceLine, s.LeaveBalanceConfiguration,
+           s.LeaveBalanceSettingsChange, s.LeaveBalanceSettings, s.LeaveBalance, s.OvertimeAvailabilityInput, s.NotificationRead, s.WishEffect, s.DraftWishOutcome, s.FeedbackCreate, s.FeedbackCreated, s.FeedbackRow,
            s.FeedbackList, s.FeedbackUpdate, s.FeedbackUndo, s.FeedbackExport, s.FeedbackExportResult, s.WhyResult,
            s.DateSetInput, s.DateSetRecord, s.DateSetMarker, s.ResolvedDateSetEntry, s.DateSetDeleteInput, s.DateSetEntryWriteInput,
            s.DateSetEntryDeleteInput, s.DateSetAdjustmentInput, s.DateSetImportInput, s.DateSetCopyInput,
@@ -43,6 +45,7 @@ CLASSES += [s.ConditionResolution, s.ConditionDateMatch, s.ConditionDateParseRes
 CLASSES += [s.ConditionResolveBatchInput, s.ConditionResolveBatchResult, s.TimeResolveBatchInput, s.TimeResolveBatchResult]
 CLASSES += [s.FairnessExposure]
 CLASSES += [s.FixListDelta]
+CLASSES += [s.AccountOnboardingRow, s.AccountOnboarding, s.AccountOnboardingApply]
 CLASSES += [s.ObservedRuleEffect, s.CatalogueWorkspaceImpact]
 CLASSES += [s.NotificationList, s.NotificationReadResult, s.NotificationUnack, s.AuditPage]
 CLASSES += [s.PublishedOperationalSummary, s.PublishedOperationalAttention, s.FairnessMetricTotal]
@@ -218,6 +221,8 @@ def render():
     content += "export const WISH_RANGE_MAX_DAYS = " + str(s.WISH_RANGE_MAX_DAYS) + ";\n"
     content += "export const SYSTEM_ROLES = " + json.dumps(s.SYSTEM_ROLES) + " as const;\n"
     content += "export const EXPLICIT_ROLES = " + json.dumps(sorted(s.EXPLICIT_ROLES)) + " as const;\n"
+    content += "export const INSTALLATION_ADMIN_ROLE = " + json.dumps(s.INSTALLATION_ADMIN_ROLE) + " as const;\n"
+    content += "export const ROLE_GRANT_PERMISSIONS = " + json.dumps(s.ROLE_GRANT_PERMISSIONS) + " as const;\n"
     content += "export const ROLE_LABELS = " + json.dumps(s.ROLE_LABELS) + " as const;\n"
     content += "export const PERMISSIONS = " + json.dumps(s.PERMISSIONS) + " as const;\n"
     content += "export const CAPABILITIES = " + json.dumps(s.CAPABILITIES) + " as const;\n"
@@ -226,6 +231,7 @@ def render():
     content += "export const FEEDBACK_STATUSES = " + json.dumps(list(s.FEEDBACK_STATUSES)) + " as const;\n"
     content += "export const FEEDBACK_LIMITS = " + json.dumps(s.FEEDBACK_LIMITS) + " as const;\n"
     content += "export const SWAP_LIMITS = " + json.dumps(s.SWAP_LIMITS) + " as const;\n"
+    content += "export const ACCOUNT_ONBOARDING_LIMITS = " + json.dumps(s.ACCOUNT_ONBOARDING_LIMITS) + " as const;\n"
     content += "export const MONITOR_LIMITS = " + json.dumps(s.MONITOR_LIMITS) + " as const;\n"
     content += "export const MAX_COUNT_BUCKETS = " + str(s.MAX_COUNT_BUCKETS) + ";\n"
     content += "export const CONTENT_PAGE_SIZE = " + str(s.CONTENT_PAGE_SIZE) + ";\n"
@@ -288,7 +294,7 @@ def render():
                  'PLANNER_PEOPLE_SORT_LABELS', 'PLANNER_COLOUR_LABELS', 'PLANNER_PERSON_DISPLAYS',
                  'PLANNER_PERSON_DISPLAY_DEFAULT', 'PLANNER_TEAM_ROWS_DEFAULT', 'PLANNER_TEAM_ROWS_LIMIT', 'PLANNER_WIDTH_KEYS', 'VIEW_PROPERTY_DEFINITIONS', 'VIEW_ITEM_SHOWN_BY_DEFAULT', 'TABLE_GROUP_FIELDS',
                  'LABEL_PART_DEFINITIONS', 'LABEL_SEPARATORS', 'LABEL_HONORIFIC_MODES', 'HONORIFIC_DEFAULTS',
-                 'NAME_PARTICLE_DEFAULTS', 'NAME_LABEL_DEFAULTS', 'PERSON_PROPERTY_DEFINITIONS',
+                 'NAME_PARTICLE_DEFAULTS', 'NAME_LABEL_DEFAULTS', 'PERSON_PROPERTY_DEFINITIONS', 'REFERENCE_ROTATION_FILE_LIMIT',
                  'PERSON_PROPERTY_ALIASES', 'FAIRNESS_METRIC_LABELS',
                  'PLANNER_COLOUR_TAG_LIMIT', 'PRINT_IMAGE_DPI', 'PRINT_IMAGE_DPI_DEFAULT', 'PRINT_WRAP_DEFAULT',
                  'WHEREABOUTS_DEFAULTS', 'WHEREABOUTS_LIMITS'):

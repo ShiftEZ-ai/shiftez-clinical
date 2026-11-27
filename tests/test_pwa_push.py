@@ -321,6 +321,7 @@ def test_required_events_are_recipient_specific():
     assert pwa.classify_event(published, person) == 'duty_changed'
 
 
+@pytest.mark.usefixtures('branding_editor')
 def test_manifest_generated_from_public_config_etag_and_transparent_source(h):
     response = h.client('staff').get('/api/pwa/manifest.webmanifest')
     assert response.status_code == 200
@@ -361,6 +362,48 @@ def test_explicit_email_choice_queues_through_existing_transport_without_push(re
         message = email_delivery._notification_message(db, child, db.get(m.Identity, emails[0].identity_id),
             s.EmailSettings.model_validate(db.get(m.Department, h.seed['department_id']).email_settings), h.settings)
         assert '/n/' in message.get_body(preferencelist=('plain',)).get_content() and not db.scalar(select(m.PushDelivery))
+
+
+def test_auto_schedule_outcomes_reach_only_the_requester_and_push_is_opt_in(ready):
+    from .test_autoschedule_budget_worker import generation_job
+
+    h = ready
+    subscribe(h, role='coordinator')
+    pref = h.get('coordinator', '/api/me/notification-preferences')
+    event_id = 'generation_finished'
+    assert next(e for e in pref['events'] if e['id'] == event_id)['channels']['push'] == 'off'
+    assert all(e['id'] != event_id for e in h.get('staff', '/api/me/notification-preferences')['events'])
+    engine = h.app.state.engine
+
+    outcomes = [
+        ('candidate_feasible', None, 'Auto-schedule result ready'),
+        ('needs_more_time', None, 'Auto-schedule needs more time'),
+        ('requirements_conflict', None, 'Auto-schedule found conflicting requirements'),
+        (None, 'TEST_FAILURE', 'Auto-schedule could not finish'),
+    ]
+    for status, error, title in outcomes:
+        job_id = generation_job(h)
+        claim = retry_write(engine, worker.claim_job)
+        assert claim['id'] == job_id
+        result = {'status': status, 'input_fingerprint': claim['input']['fingerprint'],
+                  'additions': [], 'removals': []} if status else None
+        assert retry_write(engine, lambda db: worker.finish_job(db, claim, result, error))
+        assert not retry_write(engine, lambda db: worker.finish_job(db, claim, result, error))
+        retry_write(engine, worker.dispatch_batch)
+        job = h.get('coordinator', '/api/jobs/' + job_id)['job']
+        notes = h.get('coordinator', '/api/notifications')['notifications']
+        note, = [n for n in notes if n['title'] == title and n['link']['workspace_id'] == job['workspace_id']]
+        destination = h.get('coordinator', '/api/notifications/' + note['id'] + '/destination')
+        assert destination['notification']['link']['workspace_id'] == job['workspace_id']
+        for role in ('admin', 'staff'):
+            assert not any(n['id'] == note['id'] for n in h.get(role, '/api/notifications')['notifications'])
+            h.get(role, '/api/notifications/' + note['id'] + '/destination', status=404)
+        with transaction(engine) as db:
+            assert bool(db.scalar(select(m.PushDelivery.id).where(m.PushDelivery.notification_id == note['id']))) == bool(error)
+        if status == 'requirements_conflict':
+            h.command('coordinator', 'notification.preferences.update', {'department_id': h.seed['department_id'],
+                'event_overrides': {event_id: {'push': 'on'}}, 'reason': 'Enable auto-schedule alerts'},
+                revision=pref['revision'])
 
 
 def test_no_auth_csrf_cross_origin_and_installation_races(ready):
