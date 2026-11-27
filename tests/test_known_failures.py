@@ -137,17 +137,17 @@ def test_empty_quarantine_verdict_matches_pre_quarantine_dev(monkeypatch, tmp_pa
     current = ratchet.decode_list(Path(ratchet.KNOWN).read_text(encoding="utf-8"))
     runs = [{row["node"]: "error" if row["class"] == "baseline-error" else "failed"
              for row in current["fails"] + current["unstable"]}]
-    runs[0][RED] = "passed"  # Verified recovery is already normalized in the collector.
+    runs[0][RED] = "passed"
     runs[0][GREEN] = "failed" if new_failure else "passed"
     plan = {"sha": PRE_QUARANTINE_DEV, "tree": git("rev-parse", "HEAD^{tree}").decode().strip(),
             "base_sha": PRE_QUARANTINE_DEV, "replicas": [1], "smoke": False}
     Path("plan.json").write_text(json.dumps(plan), encoding="utf-8")
     quarantine = decode_registry(b"[]", TODAY)
 
-    def collect_reports(*_, evidence):
+    def collect_reports(*_, evidence, first_attempt):
         evidence.recovered[RED] = "failed"
         evidence.reruns[RED] = 1
-        return runs
+        return [runs[0] | {RED: "failed"}] if first_attempt else runs
 
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_RUN_ID", "1")
@@ -161,7 +161,7 @@ def test_empty_quarantine_verdict_matches_pre_quarantine_dev(monkeypatch, tmp_pa
                                          "--output", str(path), "--base-sha", PRE_QUARANTINE_DEV])
         monkeypatch.setattr(verifier, "git", lambda *args: git(*args).decode().strip())
         monkeypatch.setattr(verifier, "datetime", PolicyClock)
-        monkeypatch.setattr(verifier, "collect_reports", collect_reports)
+        monkeypatch.setattr(verifier, "collect_reports", partial(collect_reports, first_attempt=verifier is ratchet))
         monkeypatch.setattr(verifier, "product_error_nodes", lambda *_, **__: set())
         verifier.main(**options)
         verifier.write_summary()
@@ -170,10 +170,14 @@ def test_empty_quarantine_verdict_matches_pre_quarantine_dev(monkeypatch, tmp_pa
 
     expected = result(old, tmp_path / "old")
     actual = result(ratchet, tmp_path / "new", quarantine=quarantine)
-    assert actual == expected
-    assert json.loads(actual[3]["verdict.json"])["passed"] is not new_failure
-    proposals = json.loads(actual[3]["outside-observations.json"])["proposed_list_entries"]
+    assert json.loads(expected[3]["verdict.json"])["passed"] is not new_failure
+    verdict = json.loads(actual[3]["verdict.json"])
+    assert verdict["passed"] is False and RED in verdict["reason"]
+    assert (GREEN in verdict["reason"]) is new_failure
+    name = "outside-observations.json"
+    proposals = json.loads(actual[3][name])["proposed_list_entries"]
     assert [row["node"] for row in proposals] == [RED]
+    assert actual[3][name] == expected[3][name]
 
 
 def test_merge_group_accepts_a_listed_failure_that_remains_red():
@@ -357,9 +361,9 @@ def test_fails_to_unstable_requires_differing_results_on_two_runs():
     with pytest.raises(ValueError, match="different results"):
         check(current, base, [{RED: "failed"}] * 2)
     assert check(current, base, [{RED: "failed"}, {RED: "passed"}])
-    assert check(current, base, [{RED: "passed"}], group=True, merge_group=True, recovered={RED: "failed"})
-    with pytest.raises(ValueError, match="verified recovery on retry"):
-        check(current, base, [{RED: "passed"}], group=True, merge_group=True)
+    for recovered in ({RED: "failed"}, {}):
+        with pytest.raises(ValueError, match="two full runs with different results"):
+            check(current, base, [{RED: "failed"}], group=True, merge_group=True, recovered=recovered)
 
 
 def test_parameter_redaction_keeps_siblings_distinct_without_display_labels():
@@ -455,7 +459,7 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
     import trusted_ci
     import trusted_verdict as trusted
 
-    def run(label, *, outcome, retry=None, branch="dev", event="pull_request", old=False, node=RED,
+    def run(label, *, outcome, retry=None, later=None, branch="dev", event="pull_request", old=False, node=RED,
             base_kind=None, candidate_kind=None, base_registry=(), candidate_registry=None, reviewed_skip=False,
             base_retired=(), candidate_retired=(), base_legacy=False, candidate_legacy=False,
             browser_shards=1, merge_group_shards=None, default="dev", replicas=None, missing_browser=False,
@@ -467,7 +471,23 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             replicas = (1, 2) if event == "push" and (old or branch != default) else (1,)
         plan = reports(folder / "reports", replicas=replicas, red_suites=(), unit_node=node, unit_outcome=outcome,
                        unit_retry=retry, base_sha=plan_base or base, run_id="1", browser_shards=browser_shards)
-        if missing_browser:
+        attempt = "1"
+        if later is not None:
+            from latest_reports import keep_latest
+
+            attempt = "2"
+            newer = folder / "newer"
+            reports(newer, replicas=replicas, red_suites=(), unit_node=node, unit_outcome=later,
+                    base_sha=plan_base or base, run_id="1", browser_shards=browser_shards)
+            for artifact in newer.iterdir():
+                receipt = artifact / "shard-receipt.json"
+                data = json.loads(receipt.read_bytes())
+                receipt.write_text(json.dumps({**data, "run_attempt": attempt}), encoding="utf-8")
+                artifact.rename(folder / "reports" / artifact.name.replace("ci-test-1-", "ci-test-2-", 1))
+            if missing_browser:
+                (folder / "reports/ci-test-1-browser-1-1").rename(folder / "missing-browser")
+            keep_latest(folder / "reports", plan)
+        elif missing_browser:
             (folder / "reports/ci-test-1-browser-1-1").rename(folder / "missing-browser")
         candidate = plan["sha"]
         output = folder / "verdict"
@@ -600,7 +620,7 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             for key, value in {
                 "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/heads/" + branch,
                 "GITHUB_SHA": candidate, "CANDIDATE_SHA": candidate,
-                "TRUSTED_BOOTSTRAP": "false", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                "TRUSTED_BOOTSTRAP": "false", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": attempt,
                 "GITHUB_STEP_SUMMARY": str(step_summary), "RUNNER_TEMP": str(folder),
                 "NEEDS_JSON": json.dumps({key: {"result": "success"} for key in ("checks", "static", "unit", "browser")}),
             }.items():
@@ -627,7 +647,7 @@ def quarantine_row(node=RED, kind="baseline"):
 @pytest.mark.parametrize(("replicas", "outcome", "missing_browser", "refusal"), [
     ((1,), "passed", False, None),
     ((1,), "passed", True, "Missing or unexpected shard artifacts: browser-1-1"),
-    ((1,), "failed", False, "Missing push retry evidence: junit.xml"),
+    ((1,), "failed", False, "Trusted known-failure comparison refused the evidence"),
     ((1, 2), "passed", False, "Replica count differs from the trusted reader context"),
 ])
 def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, refusal):
@@ -636,6 +656,9 @@ def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, r
     assert error == refusal
     if refusal is None:
         assert verdict["passed"] is True
+    elif outcome == "failed":
+        assert verdict["passed"] is False
+        assert "New failures outside the known-failure list" in verdict["reason"]
     else:
         assert verdict is None
 
@@ -660,16 +683,42 @@ def test_pr_verdict_binds_evidence_to_verified_base_with_stale_event(trusted_res
     assert error == "Evidence is not bound to the independently resolved candidate/target" and verdict is None
 
 
-@pytest.mark.parametrize("event", ["push", "merge_group"])
+@pytest.mark.parametrize("event", ["pull_request", "merge_group", "push"])
 def test_default_branch_retry_evidence_reports_recovered_failure(trusted_result, event):
     (error, verdict), (_, _, artifacts) = trusted_result(
         "recovered", branch="main", default="main", event=event, outcome="failed", retry="passed")
-    assert error is None
-    assert verdict["passed"] is True
+    assert error == "Trusted known-failure comparison refused the evidence"
+    assert verdict["passed"] is False
+    assert verdict["reason"] == "New failures outside the known-failure list: " + RED
     assert json.loads(artifacts["outside-observations.json"])["unstable_count"] == 1
     assert json.loads(artifacts["recovered-tests.json"]) == [
         {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
     ]
+
+
+@pytest.mark.parametrize("event", ["pull_request", "merge_group", "push"])
+@pytest.mark.parametrize(("outcome", "later"), [("failed", "passed"), ("passed", "failed")])
+def test_later_workflow_observations_leave_the_first_verdict(trusted_result, event, outcome, later):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "later", branch="main", default="main", event=event, outcome=outcome, later=later)
+    assert verdict["passed"] is (outcome == "passed")
+    if outcome == "failed":
+        assert error == "Trusted known-failure comparison refused the evidence"
+        assert verdict["reason"] == "New failures outside the known-failure list: " + RED
+        assert json.loads(artifacts["recovered-tests.json"]) == [
+            {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
+        ]
+    else:
+        assert error is None
+
+
+def test_latest_pass_cannot_replace_missing_first_attempt(trusted_result):
+    (error, verdict), (_, _, artifacts) = trusted_result(
+        "missing-first-attempt", outcome="passed", later="passed", missing_browser=True)
+    assert error == "Trusted known-failure comparison refused the evidence"
+    assert verdict == {"passed": False, "reason": "Missing first-attempt shard evidence"}
+    assert json.loads(artifacts["outside-observations.json"])["unobserved_attempts"] == [
+        {"suite": "browser", "shard": 1, "replica": 1, "attempt": 1}]
 
 
 @pytest.mark.parametrize("event", ["push", "merge_group"])
@@ -878,7 +927,8 @@ def test_same_pr_quarantine_flake_does_not_hide_new_failure(trusted_result):
     assert result[0] == "Trusted known-failure comparison refused the evidence"
     assert result[1]["reason"] == "New failures outside the known-failure list: " + node
     result, evidence = trusted_result("recovered", node=node, outcome="failed", retry="passed", candidate_registry=[row])
-    assert result[0] is None and result[1]["passed"]
+    assert result[0] == "Trusted known-failure comparison refused the evidence"
+    assert result[1]["reason"] == "New failures outside the known-failure list: " + node
     proposal, = json.loads(evidence[2]["outside-observations.json"])["proposed_list_entries"]
     assert (proposal["node"], proposal["status"], proposal["observations"]) == (node, "PROPOSED", ["failed", "passed"])
 
@@ -912,8 +962,12 @@ def test_verdict_refuses_known_failure_quarantine_overlap(trusted_result):
 def test_empty_quarantine_trusted_verdict_matches_history(trusted_result, outcome, retry):
     expected = trusted_result("old", old=True, outcome=outcome, retry=retry)
     actual = trusted_result("new", outcome=outcome, retry=retry)
-    assert actual == expected
-    assert actual[0][1]["passed"] is (outcome == "passed" or retry == "passed")
+    if retry == "passed":
+        assert expected[0][1]["passed"] is True
+        assert actual[0][1]["reason"] == "New failures outside the known-failure list: " + RED
+    else:
+        assert actual == expected
+    assert actual[0][1]["passed"] is (outcome == "passed")
 
 
 @pytest.mark.parametrize("event", ["pull_request", "merge_group"])
@@ -965,8 +1019,8 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
     group_plan = reports(group, replicas=(1,), red_suites=("unit",))
     output = tmp_path / "verdict"
     group_collect = partial(ratchet.collect_reports, group_plan, group, "fixture", "2", output)
-    with pytest.raises(ValueError, match="Missing merge-group retry evidence"):
-        group_collect()
+    with pytest.raises(ValueError, match="New failures outside the known-failure list"):
+        check(listing(), listing(), group_collect(), group=True)
     without_retry = group_collect(listed={RED})
     assert without_retry[0][RED] == "failed"
     assert check(listing([RED]), listing([RED]), without_retry, group=True)
@@ -1003,7 +1057,8 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             with pytest.raises(ValueError, match="exactly the unlisted"):
                 group_collect(listed={RED})
             updated = group_collect()
-            assert len(updated) == 1 and all(value == "passed" for value in updated[0].values())
+            assert len(updated) == 1
+            assert updated[0] == {node: "failed" if node == RED else "passed" for node in runs[0]}
             assert json.loads((output / "recovered-tests.json").read_text()) == [
                 {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
             ]
@@ -1011,7 +1066,8 @@ def test_aggregate_requires_every_source_bound_shard(tmp_path, monkeypatch):
             group_collect(evidence=collected)
             recovered = collected.recovered
             assert recovered == {RED: "failed"}
-            assert check(listing(), listing(), updated, group=True, recovered=recovered)
+            with pytest.raises(ValueError, match="New failures outside the known-failure list"):
+                check(listing(), listing(), updated, group=True, recovered=recovered)
             summary = output / "summary.md"
             monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
             proposal, = ratchet.report_outside(known, updated, output, recovered=recovered)
@@ -1100,18 +1156,12 @@ def test_pr_verdict_uses_verified_retry(tmp_path, monkeypatch, outcome):
         receipt.write_text(json.dumps(data), encoding="utf-8")
 
     output, summary = configure_pr_verdict(tmp_path, tmp_path, monkeypatch, plan, listing())
-    if outcome is None:
-        with pytest.raises(ValueError, match="Missing pull-request retry evidence"):
-            ratchet.main()
-        assert not (output / "verdict.json").exists()
-        return
-
     ratchet.main()
     verdict = json.loads((output / "verdict.json").read_text(encoding="utf-8"))
-    assert verdict["passed"] is (outcome == "passed")
+    assert verdict["passed"] is False
+    assert "New failures outside the known-failure list" in verdict["reason"]
     outside = json.loads((output / "outside-observations.json").read_text(encoding="utf-8"))
-    if outcome == "failed":
-        assert "New failures outside the known-failure list" in verdict["reason"]
+    if outcome != "passed":
         assert outside["proposed_list_entries"] == []
     else:
         proposal, = outside["proposed_list_entries"]
@@ -1148,7 +1198,7 @@ def test_pr_retry_cannot_move_a_baseline_entry_to_unstable(monkeypatch):
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     base, current = listing([RED], unstable=[GREEN]), listing(unstable=[RED])
     with pytest.raises(ValueError, match="two full runs with different results"):
-        check(current, base, [{RED: "passed"}], group=ratchet.retry_run({"replicas": [1]}),
+        check(current, base, [{RED: "failed"}], group=ratchet.first_attempt_gate({"replicas": [1]}),
               recovered={RED: "failed"})
 
 
@@ -1161,7 +1211,7 @@ def test_ineligible_pr_plan_refuses_retry_receipts(tmp_path, monkeypatch, replic
     receipt = {"reports": [{"file": "junit.xml", "retry": {"file": "junit-retry.xml", "exit_code": 0, "sha256": {}}}]}
     (tmp_path / "shard-receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
     with pytest.raises(ValueError, match="Unexpected retry evidence"):
-        verify_directory(tmp_path, allow_retry=ratchet.retry_run(plan))
+        verify_directory(tmp_path, allow_retry=ratchet.first_attempt_gate(plan))
 
 
 @pytest.mark.parametrize("fault", ["wrong-tree", "wrong-run", "changed-junit", "duplicate-shard"])

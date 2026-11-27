@@ -235,7 +235,7 @@ def census_files(plan, files):
     return set(files)
 
 
-def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False, trace=False):
+def invocation(targets, suite, report, extra, workers, base_targets=None, *, partial=False):
     """Keep raw deliberate FAIL/ERROR; normalization removes only verified random sentinels."""
     flags=hardening.load()
     config_file = Path.cwd() / "pyproject.toml"
@@ -303,7 +303,7 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
             collected = json.loads(census.read_text(encoding="utf-8"))
         # The parent retains the collection snapshot; the test process cannot change this in-memory copy.
         env.pop("TRUSTED_COLLECTION_OUTPUT")
-        env["PW_TRACE_MODE"] = "on" if trace else "off"
+        env["PW_TRACE_MODE"] = "off"
         code = subprocess.call([*command, "-n", workers, "--dist", "worksteal", "--hosted-deselected-output=" + str(deselected),
                                 "--junitxml=" + str(raw)], env=env)
         if flags['canaries'] and code != 1:
@@ -338,21 +338,10 @@ def invocation(targets, suite, report, extra, workers, base_targets=None, *, par
         return int(any(canaries.outcome(c) in {"failed", "error"} for c in parsed.getroot().iter("testcase")))
 
 
-def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, candidate, partial=False, listed=frozenset()):
-    def attempt(selected, path, options, parallelism, before, *, partial=False, trace=False):
-        code = invocation(selected, suite, path, options, parallelism, before, partial=partial, trace=trace)
-        files = (path, path.with_suffix(".selection.json"), path.with_suffix(".deselected.json"))
-        return {"file": path.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
-
-    first = attempt(targets, report, extra, workers, base_targets, partial=partial)
-    if first["exit_code"] == 1 and maker.retry_run(candidate):
-        original = canaries.report_cases(report, first)
-        failures = maker.retry_nodes(original, listed)
-        if failures:
-            path = report.with_name(report.stem + "-retry.xml")
-            first["retry"] = attempt(failures, path, [], "0", None, trace=suite == "browser")
-            canaries.recovered_nodes(report, first, failures, allow_retry=True)
-    return first
+def invocation_receipt(targets, suite, report, extra, workers, base_targets, *, partial=False):
+    code = invocation(targets, suite, report, extra, workers, base_targets, partial=partial)
+    files = (report, report.with_suffix(".selection.json"), report.with_suffix(".deselected.json"))
+    return {"file": report.name, "exit_code": code, "sha256": {p.name: canaries.sha(p) for p in files}}
 
 
 def registry_at_revision(revision):
@@ -441,22 +430,6 @@ def main():
     workers = os.getenv(f"CI_{args.suite.upper()}_WORKERS", "")
     if not policy.re.fullmatch(r"[1-8]", workers):
         workers = "4"
-    listed = frozenset()
-    if maker.retry_run(candidate):
-        event = policy.event()
-        kind = os.environ["GITHUB_EVENT_NAME"]
-        if kind == "pull_request":
-            branch = event["pull_request"]["base"]["ref"]
-        elif kind == "merge_group":
-            branch = event["merge_group"]["base_ref"].removeprefix("refs/heads/")
-        else:
-            branch = os.environ["GITHUB_REF"].removeprefix("refs/heads/")
-        base = candidate["base_sha"]
-        current = policy.read_file(candidate["sha"], policy.KNOWN)
-        old = policy.read_file(base, policy.KNOWN)
-        _, quarantine = quarantine_policy(base, quarantine_revision(branch, policy.default_branch(event), base, candidate["sha"]),
-                                          old, current)
-        listed = maker.listed_nodes(maker.decode_list(current) if current is not None else None) | quarantine.keys()
     selected = shards[args.shard - 1]["files"]
     commands = [("junit.xml", selected, [])]
     if args.suite == "unit" and hosted.TIMING_NODE.split("::")[0] in selected:
@@ -478,7 +451,7 @@ def main():
             base_targets=[p for index,p in enumerate(files) if index%count==args.shard-1]
         receipt["reports"].append(invocation_receipt(
             targets, args.suite, report, extra, "0" if name == "junit-timing.xml" else workers,
-            base_targets, candidate=candidate, partial="selection" in candidate, listed=listed))
+            base_targets, partial="selection" in candidate))
     if hardening.load()['node_census']:receipt["base_census_sha256"]=canaries.sha(reports/"base-census.json")
     (reports / "shard-receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 

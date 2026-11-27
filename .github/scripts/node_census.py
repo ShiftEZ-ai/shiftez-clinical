@@ -3,7 +3,7 @@ import json
 import hashlib
 import os
 from pathlib import Path
-from latest_reports import planned_shards, producing_attempt
+from latest_reports import earlier_reports, planned_shards, producing_attempt
 
 
 def ledger_additions(before_raw,after_raw):
@@ -69,10 +69,12 @@ def compare(before,after,allowed):
             "label_request":"changes what the checks run on" if removed else None}
 
 
-def base_nodes(plan,reports,base_sha,run_id,attempt,canonical,expected_files):
+def base_nodes(plan,reports,base_sha,run_id,attempt,canonical,expected_files,*,receipts=()):
     expected=planned_shards(plan)
     seen=set();runs={r:set() for r in plan["replicas"]};files={r:[] for r in plan["replicas"]}
-    for path in reports.rglob("base-census.json"):
+    census = (path.with_name("base-census.json") for path in receipts) if receipts else reports.rglob("base-census.json")
+    for path in census:
+        root = reports if path.is_relative_to(reports) else earlier_reports(reports)
         data=json.loads(path.read_bytes())
         receipt=json.loads((path.parent/"shard-receipt.json").read_bytes())
         if receipt.get("base_census_sha256")!=hashlib.sha256(path.read_bytes()).hexdigest():
@@ -80,7 +82,7 @@ def base_nodes(plan,reports,base_sha,run_id,attempt,canonical,expected_files):
         identity=(data["suite"],data["shard"],data["replica"])
         if (identity not in expected or identity in seen or data["base_sha"]!=base_sha
                 or data["head_sha"]!=plan["sha"] or data["run_id"]!=run_id
-                or data["run_attempt"]!=producing_attempt(reports,path,identity,attempt)
+                or data["run_attempt"]!=producing_attempt(root,path,identity,attempt)
                 or not isinstance(data["nodes"],list) or len(data["nodes"])!=len(set(data["nodes"]))):
             raise ValueError("Base node census binding/completeness differs")
         seen.add(identity)
