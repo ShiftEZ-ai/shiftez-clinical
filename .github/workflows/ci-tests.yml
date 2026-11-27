@@ -114,15 +114,21 @@ jobs:
       env:
         PG_PORT: ${{ job.services.postgres.ports['5432'] }}
       run: |
-        python3 .github/scripts/hosted_ci.py runtime --tool python
+        python_temp="$RUNNER_TEMP"
+        if [ "$SUITE" = unit ]; then
+          python_temp=$(mktemp -d /tmp/ci-unit-python.XXXXXXXX)
+          chmod 755 "$python_temp"
+        fi
+        RUNNER_TEMP="$python_temp" python3 .github/scripts/hosted_ci.py runtime --tool python
         python3 .github/scripts/hosted_ci.py runtime --tool node
+        echo "CI_PYTHON_TEMP=$python_temp" >> "$GITHUB_ENV"
         echo "TEST_POSTGRES_URL=postgresql+psycopg://rota_test:ephemeral-ci-only-password@127.0.0.1:$PG_PORT/rota_disposable_test" >> "$GITHUB_ENV"
         echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/public-ci-playwright" >> "$GITHUB_ENV"
     - name: Install hash-locked dependencies
       run: |
-        python3 -m venv "$RUNNER_TEMP/public-ci-venv"
-        "$RUNNER_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock"
-        echo "$RUNNER_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
+        python3 -m venv "$CI_PYTHON_TEMP/public-ci-venv"
+        "$CI_PYTHON_TEMP/public-ci-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r requirements/build.lock -r requirements/test.lock -r requirements/postgres.lock -r "$GITHUB_WORKSPACE/.trusted-controls/requirements/policy.lock"
+        echo "$CI_PYTHON_TEMP/public-ci-venv/bin" >> "$GITHUB_PATH"
         npm ci --ignore-scripts
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: inputs.suite == 'browser'
@@ -202,10 +208,10 @@ jobs:
       run: |
         runtime=$(python -I -c 'import sys; print(sys.base_prefix)')
         case "$runtime" in
-          "$RUNNER_TEMP"/runtime-python-*/python) ;;
+          "$CI_PYTHON_TEMP"/runtime-python-*/python) ;;
           *) echo 'Expected the pinned runner-local Python runtime'; exit 1 ;;
         esac
-        chmod -R a+rX -- "$runtime" "$RUNNER_TEMP/public-ci-venv" apps packages
+        chmod -R a+rX -- "$runtime" "$CI_PYTHON_TEMP/public-ci-venv" apps packages
     - name: Run the exact planned shard once
       env:
         CI_CHECKS_PLAN: ${{ steps.shard-plan.outcome == 'success' && format('{0}/checks-plan/shard-plan.json', runner.temp) || '' }}
