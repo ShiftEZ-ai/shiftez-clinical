@@ -7,6 +7,8 @@ from sqlalchemy import event, select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.serialization import record
+from apps.api.services.swaps import AUDIENCE_NOTICE_TITLE, UNKNOWN_AUDIENCE_REASON
 from apps.worker import main as worker
 from packages.contracts.schemas import NotificationReadResult, NotificationRow
 from .test_request_decide_many import request_row, REASON
@@ -78,6 +80,7 @@ def test_read_reply_contains_projected_changed_row_and_badge_without_list_reload
     reply = h.command("staff", "notification.ack", target=note_id, revision=1)
     NotificationReadResult.model_validate(reply)
     [changed] = reply["notifications"]
+    assert reply['notification'] == changed
     assert changed["id"] == note_id and changed["revision"] == 2 and changed["read_at"]
     assert changed["kind"] == "request" and changed["link"]["request_id"] == request_id
     assert reply["unread_total"] == 0
@@ -87,6 +90,49 @@ def test_read_reply_contains_projected_changed_row_and_badge_without_list_reload
     all_read = h.command("staff", "notification.ack_all")
     NotificationReadResult.model_validate(all_read)
     assert all_read["unread_total"] == 0
+
+
+@pytest.mark.parametrize('publication', [True, False], ids=['publication-title', 'swap-message'])
+def test_inbox_read_replies_and_receipts_use_the_visible_notification(h, publication):
+    kind = 'publication' if publication else 'swap'
+    raw_title = 'Rota · swap Staff 02(test) ↔ Staff 03(test) published' if publication else AUDIENCE_NOTICE_TITLE
+    raw_message = 'The rota is final.' if publication else 'Earlier synthetic notice wording.'
+    payload = {} if publication else {'notice': 'no_recipients'}
+    with transaction(h.app.state.engine, write=True) as db:
+        event = m.Outbox(department_id=h.seed['department_id'], event_key='inbox-projection-' + kind,
+                         kind=kind, payload=payload)
+        db.add(event)
+        db.flush()
+        note = m.Notification(outbox_id=event.id, identity_id=h.seed['identities']['staff'],
+                              title=raw_title, message=raw_message)
+        db.add(note)
+        db.flush()
+        note_id = note.id
+
+    key = 'inbox-projection-read-' + kind
+    reply = h.command('staff', 'notification.ack', target=note_id, revision=1, key=key)
+    [changed] = reply['notifications']
+    assert reply['notification'] == changed
+    assert (changed['title'], changed['message']) == (
+        ('Rota published', raw_message) if publication else (raw_title, UNKNOWN_AUDIENCE_REASON))
+    assert changed['revision'] == 2 and changed['read_at']
+    with transaction(h.app.state.engine, write=True) as db:
+        receipt = db.scalar(select(m.CommandReceipt).where(m.CommandReceipt.key == key))
+        assert receipt.result['notification'] == receipt.result['notifications'][0] == changed
+        saved_note = db.get(m.Notification, note_id)
+        raw = record(saved_note)
+        assert (raw['title'], raw['message']) == (raw_title, raw_message)
+        # Older receipts can retain the unprojected member. Leave the evidence stored as it was.
+        receipt.result = {**receipt.result, 'notification': raw}
+        saved_note.revision += 1
+
+    recovered = h.get('staff', '/api/commands/' + key)['result']
+    retried = h.command('staff', 'notification.ack', target=note_id, revision=1, key=key)
+    for result in (recovered, retried):
+        assert result['notification'] == result['notifications'][0] == changed
+    with transaction(h.app.state.engine) as db:
+        receipt = db.scalar(select(m.CommandReceipt).where(m.CommandReceipt.key == key))
+        assert (receipt.result['notification']['title'], receipt.result['notification']['message']) == (raw_title, raw_message)
 
 
 @pytest.mark.parametrize("query", ["offset=-1", "limit=101", "limit=0", "kind=" + "x" * 41, "search=" + "x" * 201])

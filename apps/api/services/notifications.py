@@ -208,10 +208,25 @@ def command(db, actor, value):
         db.execute(update(N).where(N.identity_id == actor.identity_id, N.source_kind == source_kind,
             N.source_id == source_id, pending).values(**values))
     db.flush()
-    return {**({"notification": record(note)} if note is not None else {}),
+    projected = _rows(db, actor, N.id == note.id) if note is not None else []
+    return {**({"notification": projected[0]} if projected else {}),
             **({"receipt": record(receipt)} if receipt is not None else {}),
-            "notifications": _rows(db, actor, N.id == note.id) if note is not None else [],
+            "notifications": projected,
             "unread_total": unread_total(db, actor)}
+
+
+def read_command_result(db, actor, result):
+    note = result.get('notification')
+    if not isinstance(note, dict) or not note.get('id'):
+        return result
+    projected = _rows(db, actor, m.Notification.id == note['id'])
+    if not projected:
+        return {**{key: value for key, value in result.items() if key != 'notification'}, 'notifications': []}
+    [row] = projected
+    # Keep the original read and acknowledgement outcome while applying current visibility.
+    original = next((item for item in (result.get('notifications') or ()) if item.get('id') == note['id']), note)
+    row.update({key: original[key] for key in ('revision', 'read_at', 'acknowledged_at') if key in original})
+    return {**result, 'notification': row, 'notifications': projected}
 
 
 def unack(db, actor, value):
