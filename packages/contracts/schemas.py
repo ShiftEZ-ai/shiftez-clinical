@@ -5497,6 +5497,10 @@ class WorkspaceValidation(Decision):
     automatic: bool = False
 
 
+class WorkspaceUndoInput(Decision):
+    undo_of: ID | None = None
+
+
 class ApprovalNote(Schema):
     """An independent approval needs no invented reason; retain the legacy reason input."""
     note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] | None = None

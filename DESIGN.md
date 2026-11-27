@@ -294,8 +294,9 @@ and a desktop window narrowed below it gets the same rule at once.
     The session it fixed becomes ✓ who, the focus stays on a session that is still open or moves on, and the counts are
     the delta's ("Checking…" until the complete check lands, which is the next read). One source: the footer,
     its Rota health popover and the panel all read that delta, then the next full read; no surface keeps a count of its
-    own. Its Undo (the toast's and the top bar's are one) is an edit with its own delta: the session is back in
-    its cause and its ✓ chip goes; a ✓ chip never outlives a delta or read that lists its session again.
+    own. The toast's Undo acts on that edit. The top bar takes back the latest available edit each time. Both return
+    an edit delta that puts the session back in its cause and removes its ✓ chip. A ✓ chip never outlives a delta
+    or read that lists its session again.
   - **Server fields:** a field is shown only where it replaces words or makes a choice right, never
     as an extra line.
     - `missing` is already the line (`detail_line`: "5 sessions · each has 1 of 2 <rank>"), so it is not drawn twice.

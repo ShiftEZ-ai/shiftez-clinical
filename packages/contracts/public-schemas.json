@@ -22245,6 +22245,35 @@
     "title": "DraftEditDelta",
     "type": "object"
   },
+  "WorkspaceUndoInput": {
+    "additionalProperties": false,
+    "properties": {
+      "reason": {
+        "maxLength": 500,
+        "minLength": 3,
+        "title": "Reason",
+        "type": "string"
+      },
+      "undo_of": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Undo Of"
+      }
+    },
+    "required": [
+      "reason"
+    ],
+    "title": "WorkspaceUndoInput",
+    "type": "object"
+  },
   "MembershipInput": {
     "additionalProperties": false,
     "properties": {

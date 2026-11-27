@@ -409,9 +409,14 @@ def assignment_reply_available(db, command):
         if (workspace is None or workspace.status != 'draft' or workspace.base_publication_id
                 or not background_checks_available(db)):
             return False
-        change = db.scalar(latest_change(workspace, m.ChangeSet))
-        if change is None or command.kind == 'workspace.undo' and change.undone or (
-                command.kind == 'workspace.redo' and not change.before_snapshot.get('_undo_of')):
+        if command.kind == 'workspace.undo':
+            target = undo_target(db, workspace)
+            change = db.get(m.ChangeSet, target) if target else None
+        else:
+            change = db.scalar(latest_change(workspace, m.ChangeSet))
+            if change is not None and not change.before_snapshot.get('_undo_of'):
+                return False
+        if change is None:
             return False
         current = workspace_content(db, workspace)
         target = change.before_snapshot
@@ -783,7 +788,10 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                        current_input_revision=current_organisation.get('input_revision'),
                        current_availability_revision=current_organisation.get('availability_revision'),
                        bounded=not generation_apply)
-    workspace_record = record(workspace, exclude=("validation",))
+    workspace_record = {**record(workspace, exclude=("validation",)),
+                        'can_undo': undoable or undo_target(db, workspace) is not None}
+    if undoable:
+        workspace_record['undo_change_id'] = change.id
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
     from packages.domain.rota_summary import rota_summary
@@ -2167,15 +2175,47 @@ def move(db, actor, command):
     return result
 
 
-def latest_change(workspace, *columns, skip_single_sort=False):
-    """The edit Undo puts back (or, after an Undo, the step Redo re-applies): the newest at the rota's content revision."""
+def latest_change(workspace, *columns, skip_single_sort=False, before=None):
+    """Newest history entry at the current content revision or an earlier Undo boundary."""
     revision = m.ChangeSet.before_snapshot['workspace']['revision'].as_integer()
+    content_revision = workspace.content_revision if before is None else before.content_revision
+    query = select(*columns).where(m.ChangeSet.workspace_id == workspace.id,
+                                   m.ChangeSet.resulting_content_revision == content_revision)
+    if before is not None:
+        query = query.where(revision < before.revision)
     if skip_single_sort:
         # Extract the revision from the large snapshot only when it can affect the choice.
         revision = case((func.count().over() > 1, revision))
-    return (select(*columns).where(m.ChangeSet.workspace_id == workspace.id,
-                                   m.ChangeSet.resulting_content_revision == workspace.content_revision)
-            .order_by(revision.desc()).limit(1))
+    return query.order_by(revision.desc()).limit(1)
+
+
+def edit_history_head(db, workspace, before=None):
+    C = m.ChangeSet
+    return db.execute(latest_change(workspace, C.id, C.undone, C.actor_id,
+        C.before_snapshot['_undo_of'].as_string().label('undo_of'),
+        skip_single_sort=True, before=before)).first()
+
+
+def undo_target(db, workspace, head=None):
+    """An Undo step points to the original edit's pre-state, where Undo continues."""
+    head = edit_history_head(db, workspace) if head is None else head
+    C = m.ChangeSet
+    revision = C.before_snapshot['workspace']['revision'].as_integer()
+    while head is not None and head.undo_of is not None:
+        # Read the head revision only when the linked edit exists.
+        head_revision = select(revision).where(C.id == head.id).correlate(None).scalar_subquery()
+        before = db.execute(select(revision.label('revision'),
+            C.before_snapshot['workspace']['content_revision'].as_integer().label('content_revision'),
+            C.before_snapshot['workspace']['status'].as_string().label('status'),
+            head_revision.label('head_revision'))
+            .where(C.id == head.undo_of, C.workspace_id == workspace.id)).first()
+        # A reopened review can leave an acknowledgement-only Undo at the boundary.
+        if (before is None or before.status not in (None, 'draft')
+                or before.revision is None or before.content_revision is None
+                or before.head_revision is None or before.revision >= before.head_revision):
+            return None
+        head = edit_history_head(db, workspace, before)
+    return head.id if head is not None and not head.undone else None
 
 
 def put_back(db, actor, workspace, snapshot, current):
@@ -2203,14 +2243,16 @@ def put_back(db, actor, workspace, snapshot, current):
 
 
 def undo(db, actor, command):
-    value = s.Decision.model_validate(command.payload)
+    value = s.WorkspaceUndoInput.model_validate(command.payload)
     workspace = draft(db, actor, command.target_id, command.expected_revision)
     lock_jobs = not db.info.get('_planner_preview') and db.info.get('_planning_preparation', {}).get('replay', True)
     if lock_jobs:
         db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
         draft(db, actor, command.target_id, command.expected_revision)
-    change = db.scalar(latest_change(workspace, m.ChangeSet))
-    require(change is not None and not change.undone, "NO_UNDO", "Only the latest edit can be undone, and it has already been undone or replaced", 409)
+    target = undo_target(db, workspace)
+    require(value.undo_of is None or value.undo_of == target, "STALE_UNDO", "This edit can no longer be undone", 409)
+    require(target is not None, "NO_UNDO", "Nothing left to undo", 409)
+    change = db.get(m.ChangeSet, target)
     current = workspace_content(db, workspace)
     require_change_authority(db, actor, workspace, current, after=change.before_snapshot)
     content_changed = put_back(db, actor, workspace, change.before_snapshot, current)
@@ -2235,20 +2277,24 @@ def undo(db, actor, command):
                 job.progress = job_progress_record(job.progress)
                 job.revision += 1
                 unapplied.append(job.id)
-    # Undo is one step: the undo itself is not undoable (Undo again is refused). Its change set keeps the arrangement it
-    # replaced, marked as an Undo, so the same person can Redo it until the rota changes again (redo below, SW3-A-06).
+    # Record which original edit was undone. Undo follows that edit's
+    # pre-state; Redo follows the arrangement this Undo replaced.
     current = {**current, '_undo_of': change.id, '_unapplied_job_ids': unapplied}
     return changed(db, actor, workspace, current, value.reason, content_changed=content_changed, undoable=False,
                    defer_assignments=bool(db.info.get('_assignment_reply')))
 
 
-def redo_available(db, actor, workspace):
-    """Redo applies right after this person's own Undo, while the rota's content is still what that Undo left."""
+def edit_availability(db, actor, workspace):
+    """Return Undo and Redo availability using the same edit lookup as both commands."""
     if workspace.status != 'draft' or workspace.archived_at is not None:
-        return False
-    row = db.execute(latest_change(workspace, m.ChangeSet.actor_id,
-                                   m.ChangeSet.before_snapshot['_undo_of'].as_string(), skip_single_sort=True)).first()
-    return row is not None and row[1] is not None and row[0] == actor.identity_id
+        return False, False
+    row = edit_history_head(db, workspace)
+    return (row is not None and undo_target(db, workspace, row) is not None,
+            row is not None and row.undo_of is not None and row.actor_id == actor.identity_id)
+
+
+def redo_available(db, actor, workspace):
+    return edit_availability(db, actor, workspace)[1]
 
 
 def require_redo_placements(db, actor, workspace, snapshot, current):
