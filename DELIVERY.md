@@ -1,6 +1,6 @@
 # Delivery
 
-Follows engineering standard v1.29.7. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
+Follows engineering standard v1.29.8. The Delivery Lead owns delivery, including gates, pipeline faults and CI speed.
 The QA Lead owns the Test policy section, nightly-test triage, `tests/quarantine.json`, known failures, known skips, the
 frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.md and the design contract is in DESIGN.md.
 
@@ -53,11 +53,12 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   defers the suites, the gate records the deferral.
 - `ci.yml` plans and checks each run, calls `ci-tests.yml` for unit and browser shards, and reports the verdict.
   `working-policy.yml` checks protected changes, `dependency-graph.yml` submits locked dependencies, and
-  `image.yml` publishes deployable images. Limits live in the workflows. The [CI timing sample](.github/ci-timings.json)
+  `image.yml` publishes deployable images; the published build contains public code only. Limits live in the workflows. The [CI timing sample](.github/ci-timings.json)
   records first-attempt timings by job producer and event, using each run's slowest leg of each matrix.
 - File a bug for a red scheduled run that day and link the run. Nightly admission applies the capacity check first.
 - Every check, build, image publish and release job runs on GitHub-hosted runners, never on a machine of ours. A
-  guard fails any workflow whose `runs-on` is not a GitHub-hosted label.
+  guard fails any workflow whose `runs-on` is not a GitHub-hosted label. No host holds a credential for the
+  repository.
 - Jobs run in parallel; independent jobs never wait on each other; suites are sharded and shard counts follow
   measured times. Caches hold only dependencies keyed by lock hash, never results.
 - Workflows use only GitHub-owned and `docker/*` actions pinned by full commit SHA, with a read-only default token.
@@ -221,7 +222,7 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 | Scheduled production backups and quarterly restore evidence | Backup and drill tools exist. Production scheduling and a completed quarterly production drill await evidence. | 2026-12-01 |
 | Nightly full suite | The hosted schedule starts suites only when capacity allows. Separate nightly quarantine reporting is tracked in issue 1003. | 2026-12-01 |
 | First-attempt CI | The exception in Test policy remains until issue 1473 removes it. | 2026-12-01 |
-| CI job limits | Browser keeps its limit while artifact download stalls in issue 856 and the install budget in issue 1458 remain open. The image job keeps its limit pending more runs of the new scanner, including a tag push. Include release-branch pushes once they run. | 2026-12-01 |
+| CI job limits | Browser and ci-gate keep their limits while artifact download stalls in issue 856 and the install budget in issue 1458 remain open. The image job keeps its limit pending more runs of the new scanner, including a tag push. Include release-branch pushes once they run. | 2026-12-01 |
 | PR feedback and merge-queue duration | The hosted timing sample exceeds the feedback and full-suite targets. | 2026-12-01 |
 | Formatter coverage | Hosted checks enforce whitespace, generated contracts, Python lint and TypeScript types. Language formatter checks are pending. | 2026-12-23 |
 | Required checks and independent verdict | The ruleset also requires the working-policy workflow. The publisher enforces the critical review before auto-merge. | 2026-12-23 |
@@ -252,8 +253,9 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Security reports go through GitHub's private vulnerability reporting.
 
 ## Speed and quality gates
-- Measure delivery timings before setting limits. Security, data-protection, resource and fail-closed bounds
-  stay in force. Diagnose timeouts at their source.
+- Measure before setting any limit (timeout, deadline, budget, cap). Raising a limit needs a new measurement and
+  is never part of a fix PR. Security, data-protection, resource and fail-closed bounds stay in force. Diagnose
+  timeouts at their source.
 - Speed is measured in the browser, on production-class hardware, to a written definition of "usable". Every gate
   number comes with an agreed tolerance, recorded with the gate.
 - Before tuning a slow action, get its waterfall (every request, with server and client time).

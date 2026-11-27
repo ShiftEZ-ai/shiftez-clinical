@@ -147,9 +147,10 @@ A critical change gets one independent review of the full PR diff (merge base to
   `person.anonymise` clears identifying directory and account fields, private notes, copied delivery addresses
   and unapplied staged payloads. It disables sign-in and revokes active sessions and calendar feeds. Rotas and
   fairness keep a former-staff reference. See `apps/api/services/leavers.py` and `tests/test_leavers.py`.
-- Publications, audit records and definition history can retain personal references indefinitely. The leaver
-  workflow removes private leave reasons from availability history. Deleting or rewriting real data requires
-  the owner's separate, explicit yes.
+- Publication and audit evidence is never deleted or rewritten, with two exceptions: the leaver workflow removes
+  private leave reasons from availability history, and authentication events age out as described below.
+  Publications, audit records and definition history can retain personal references indefinitely. Deleting or
+  rewriting real data requires the owner's separate, explicit yes.
 - Worker cleanup deletes expired sessions after `EXPIRED_SESSION_DAYS`, sign-in attempts after the sign-in rate
   window plus one day, rate-limit rows at their expiry and authentication events after
   `password_login_audit_retention_days`. Mailbox consent expires at `oauth_flow_minutes`. Cleanup removes the flow

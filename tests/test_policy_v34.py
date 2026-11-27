@@ -452,6 +452,13 @@ class ImporterV34Tests(unittest.TestCase):
                         # The observed browser tail still needs the original cap. See DELIVERY.md.
                         self.assertEqual(job.get('timeout-minutes'),
                                          "${{ inputs.suite == 'unit' && " + str(unit_limit) + " || 60 }}")
+                    elif name == 'ci.yml' and job_id == 'ci-gate':
+                        # Its artifact downloads share the browser stall (issue 856). See DELIVERY.md.
+                        self.assertEqual(job.get('timeout-minutes'), '10')
+                    elif job_id not in measured.get(name, {}):
+                        # A new job keeps the default cap until the timing sample measures it.
+                        self.assertEqual(job.get('timeout-minutes'), '10',
+                                         f'{name} {job_id} has no timing record: keep 10 until measured')
                     else:
                         limit, measured_max = job_limit(name, job_id)
                         self.assertLessEqual(limit, 10)
