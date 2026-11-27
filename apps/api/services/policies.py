@@ -358,21 +358,16 @@ def people_data(db, actor, day, *, last=None):
     work at) for people in the department on `day`, its retained duty contexts, and that day's local bounds."""
     from packages.domain.time import local_midnight
     from packages.domain.validation import person_active_on
+    from .people import period_records
     last = last or day + timedelta(days=1)
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
-    in_period = lambda cls: (cls.department_id == actor.department_id) & (cls.starts_on < last) & (
-        cls.ends_on.is_(None) | (cls.ends_on > day))
+    # Dated person records come period-bounded (rotations through the ORM for their mentor); catalogues in one read.
+    data = DomainSnapshot({"organisation": {"timezone": zone}, **period_records(db, department.id, day, last)})
     keyed = {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
              "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
              "services": m.Service, "locations": m.Location}
-    dated = {"memberships": m.Membership, "eligibilities": m.Eligibility, "grants": m.CapabilityGrant,
-             "programme_memberships": m.ProgrammeMembership}
-    # Period-bounded dated records and the catalogues in one read; rotations go through the ORM for their mentor.
-    rows = records_many(db, {**{name: (cls, in_period(cls)) for name, cls in dated.items()},
-                             **{name: (cls, cls.department_id == actor.department_id) for name, cls in keyed.items()}})
-    data = DomainSnapshot({"organisation": {"timezone": zone}, **{name: rows[name] for name in dated},
-                           "rotations": [record(r) for r in db.scalars(select(m.Rotation).where(in_period(m.Rotation)))]})
+    rows = records_many(db, {name: (cls, cls.department_id == actor.department_id) for name, cls in keyed.items()})
     for name in keyed:
         data[name] = {r["id"]: r for r in rows[name]}
     first_membership = {}

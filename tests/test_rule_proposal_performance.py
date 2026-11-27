@@ -60,7 +60,8 @@ def test_legacy_lead_conversion_preview_select_budget(scale_harness, backend):
     assert [source['type_id'] for source in preview['legacy_lead_conversion']['sources']] == [duty['id']]
     reached = {person['person_id'] for line in preview['reach_details']['lines'] for person in line['people']}
     assert len(reached) == 163 and reached == set(people)
-    assert 0 < metrics['sql']['SELECT'] <= 22, metrics['sql']
+    # 23: people.period_records reads each dated person table in its own period-bounded ORM statement.
+    assert 0 < metrics['sql']['SELECT'] <= 23, metrics['sql']
 
 
 def measured(label, operation, ceiling):
