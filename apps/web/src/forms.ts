@@ -4,7 +4,7 @@ import {ruleReview} from './rule_review.js';
 import {draftImpact} from './draft_impact.js';
 import {helpButton,icon,popover,menuItem,multiPick,type Choice,type IconName,emptyLine,CAPABILITY} from './dom.js';
 import {WEEKDAYS,weekOrder,weekdayOptions,weekdayNames,routineReason,inlineCheck,el,field,area,select,check,multi,button,iconButton,formDialog,formInto,showDialog,note,notify,labelOf,table,dateUnits,formatDate,formatTime,toLocal,spanLabel,confirmAction,roleLabel,statusBadge,type Field} from './dom.js';
-import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES,selfApprovedBadge} from './dom.js';
+import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES} from './dom.js';
 import {command,get,instant,knownRevision,plainWords,request,rotaMeta} from './api.js';
 import {fillOptions} from './candidates.js';
 import {overlapChoice,type Overlaps} from './schedule.js';
@@ -1101,8 +1101,8 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
     const privacy=el('small',{class:'hint',id:reason.input.id+'-hint'},'Private · no patient information');reason.wrap.append(privacy);reason.input.setAttribute('aria-describedby',privacy.id);
     if(many&&ctx.me.person_id&&mayDecide(ctx.me,'request.decide',true)){
       const own=ctx.me.person_id,reasonLabel=reason.wrap.querySelector('label')!;
-      const message='Your leave will be self-approved when recorded.';
-      const approval=el('div',{},selfApprovedBadge(),' ',el('span',{},message));approval.hidden=true;
+      const message='Your leave is self-approved only if it can be recorded without separate review.';
+      const approval=el('div',{},message);approval.hidden=true;
       const showApproval=()=>{const self=many.values().includes(own);if(approval.hidden===!self)return;
         approval.hidden=!self;reasonLabel.textContent=self?'Reason for self-approval':'Reason';
         if(self&&approval.isConnected)announce(message,true);};
@@ -1161,10 +1161,12 @@ export function availabilityFields(ctx:Context,form:HTMLElement,requestOnly:bool
       if(clash&&await clash.duplicate(input,range))throw new Error(input.person===ctx.me.person_id?'You already asked for exactly this. Open it under Requests instead of sending it again.':'This person already has exactly this request. Open it under Requests instead of sending it again.');
       const common={...range,private_reason,kind:input.kind,leave_type_id:input.leaveType};
       if(ids.length>1){
-        await runBulk({collection:'availability',noun:['leave record','leave records'],message:'Recorded for {n} people. Review live staffing gaps and arrange cover.',onDone:()=>ctx.refresh(),
+        await runBulk({collection:'availability',noun:['leave record','leave records'],message:'Saved for {n} people. Review pending requests and staffing gaps.',onDone:()=>ctx.refresh(),
           body:{item_kind:'availability.record',common,items:ids.map(id=>({payload:{person_id:id}})),reason:'Leave recorded for several people'}});return;}
-      const result=await command<{message:string;warnings?:string[]}>(edit?'request.edit':requestOnly?'request.create':'availability.record',{person_id:ids[0],...common},edit?.id,edit?.revision);
-      notify(requestOnly?[edit?'Request updated. It is still waiting for a decision.':'Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);await ctx.refresh();};
+      const result=await command<{message:string;approval_required?:boolean;warnings?:string[]}>(edit?'request.edit':requestOnly?'request.create':'availability.record',{person_id:ids[0],...common},edit?.id,edit?.revision);
+      if(result.approval_required)notify(result.message);
+      else notify(requestOnly?[edit?'Request updated. It is still waiting for a decision.':'Request submitted, not yet approved.',...(result.warnings?.length?['Warning:',...result.warnings]:[])].join(' '):'Leave recorded. Check the rota for gaps and arrange cover.',requestOnly&&result.warnings?.length?'warning':undefined);
+      await ctx.refresh();};
 }
 
 type RequestDates={from:string;until:string;savedStart?:string;savedEnd?:string};

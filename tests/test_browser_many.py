@@ -52,7 +52,7 @@ def test_known_unavailability_for_several_people(browser, live_server, h):
         form.get_by_label('Type', exact=True).select_option(label='Annual')
         form.get_by_label('Reason', exact=True).fill('Department training morning')
         form.get_by_role('button', name='Record leave', exact=True).click()
-        expect(page.get_by_text('Recorded for 2 people.', exact=False)).to_be_visible()
+        expect(page.get_by_text('Saved for 2 people.', exact=False)).to_be_visible()
         records = h.get('coordinator', '/api/availability')['availability']
         assert sorted(r['person_id'] for r in records) == sorted(chosen)
     finally:
@@ -109,7 +109,7 @@ def test_people_bulk_record_leave_uses_the_one_form_prefilled_with_the_people(br
         form.get_by_label('Type', exact=True).select_option(label='Annual')
         form.get_by_label('Reason', exact=True).fill('Department away day')
         form.get_by_role('button', name='Record leave', exact=True).click()
-        expect(page.get_by_text('Recorded for 2 people.', exact=False)).to_be_visible()
+        expect(page.get_by_text('Saved for 2 people.', exact=False)).to_be_visible()
         records = h.get('coordinator', '/api/availability')['availability']
         assert sorted(r['person_id'] for r in records) == sorted(chosen)
     finally:

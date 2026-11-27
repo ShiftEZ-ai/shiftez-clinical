@@ -198,12 +198,13 @@ def record_availability(db, actor, command):
     value = s.AvailabilityInput.model_validate(command.payload)
     person_access(db, actor, value.person_id)
     lead_protects(db, actor, value.kind, value.person_id, value.start, value.end)
-    permission = independence.ensure_subject(db, actor, "request.decide", (value.person_id,), actor.identity_id,
-        "A different coordinator must record your own absence", value.private_reason)
     values = {**value.model_dump(), **_availability_values(db, actor, value)}
     findings = rotation_leave_conflicts(db, actor, absence=value)
+    needs_review = bool(findings) and value.kind not in RECORDED_FACT_KINDS
+    permission = independence.ensure_subject(db, actor, "request.decide", (value.person_id,), actor.identity_id,
+        "A different coordinator must record your own absence", value.private_reason, record_decision=not needs_review)
     require_rotation_leave(findings, record_kind=value.kind)
-    if findings and value.kind not in RECORDED_FACT_KINDS:
+    if needs_review:
         return _route_rotation_leave(db, actor, value, values, findings)
     row = m.Availability(department_id=actor.department_id, recorded_by=actor.identity_id, **values)
     db.add(row)
