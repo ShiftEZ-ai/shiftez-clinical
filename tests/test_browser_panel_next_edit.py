@@ -76,9 +76,7 @@ def held_as_footer_says(page, words=None, press=False):
     words = submit.get_attribute('data-tip')
     assert words
     expect(page.locator('.app-footer')).to_contain_text(words)
-    described = submit.evaluate("b => (b.getAttribute('aria-describedby') || '').split(' ')"
-                                ".map(id => document.getElementById(id)?.textContent || '').join(' ')")
-    assert words in described, described
+    expect(submit).to_have_accessible_description(re.compile(re.escape(words)))
     if press:
         submit.click(force=True)  # a real press on the held control (Playwright waits for aria-disabled ones otherwise)
         expect(page.locator('#toast-tray .toast').first).to_have_text(words)
