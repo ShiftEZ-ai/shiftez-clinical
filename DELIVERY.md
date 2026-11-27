@@ -162,9 +162,9 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
   No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
   Nothing in the repository names or reveals where the product runs.
-- Main images published to the public package carry a provenance attestation signed by `image.yml` on
-  `refs/heads/main`. The dev slot verifies it offline and pins the signer workflow and ref. Staging and production
-  images do not carry this attestation yet.
+- Main publishes the same scanned build to the primary and public packages. The public package digest carries a
+  provenance attestation signed by `image.yml` on `refs/heads/main`. The dev slot verifies it offline and pins the
+  signer workflow and ref.
 - The operator machine pushes the image to each server over a private network by exact digest; the server verifies
   it by image ID and revision label and reports nothing back. Every deploy is recorded. Deploy definitions and host
   facts live outside this repository.
@@ -192,8 +192,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Deviations
 
-- **One artifact per commit.** Main builds a second image for the public package with Buildx provenance disabled.
-  The private build's embedded provenance contains non-public build metadata. Review on 2026-12-23.
+- **Signed provenance for version tags.** Version-tag publication ends after digest verification. Follow the
+  tag-attestation work in issue 1339. Review on 2026-12-23.
 
 ## Hotfixes
 - A hotfix is its own board item. Use the release-branch flow for the patch release, test the new candidate on
@@ -212,11 +212,12 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   yes.
 - Every free GitHub security feature is on and stays on; nothing paid is enabled without the owner's yes.
 - Secrets never enter the repository, its variables or its environments.
-- Before publication, the public main image and every version-tag image go through the privacy scan. The scan
-  checks the config and all added layers. It verifies pinned base layer digests and hashes from installed wheel RECORDs. A finding in
-  package-manager metadata is allowed when its line is byte-identical to a line at the same path in the verified
-  base layers. The exception table binds historical wheel bytecode findings to a path, class and SHA-256.
-  New public builds disable wheel bytecode generation. Any other finding blocks the public push.
+- Every main and version-tag build scans one image archive before loading, tagging or pushing it. The scan uses
+  the Static checks public patterns on the config and all added layers and verifies the pinned base layer digests
+  and installed wheel RECORD hashes. Package metadata findings are allowed only on byte-identical lines at the
+  same path in verified base layers.
+  The exception table binds historical wheel bytecode findings to a path, class and SHA-256. Image builds disable
+  wheel bytecode generation. An unverified input or any other finding blocks publication.
 - Security reports go through GitHub's private vulnerability reporting.
 
 ## Speed and quality gates
