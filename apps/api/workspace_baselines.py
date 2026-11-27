@@ -512,8 +512,10 @@ def _catalogue_destination_at_least_as_strict(source, destination):
     destination_rules = [rule for rule in active_rules([destination]) if rule.get("kind") in LIVE_SAFETY_KINDS]
     for source_rule in source_rules:
         kind = source_rule["kind"]
-        target = next((rule for rule in destination_rules
-                       if rule.get("kind") == kind and shape(rule, kind) == shape(source_rule, kind)), None)
+        target = next((candidate for candidate in destination_rules
+                       if candidate.get("kind") == kind and shape(candidate, kind) == shape(source_rule, kind)
+                       and (candidate.get("starts_on") or "") <= (source_rule.get("starts_on") or "")
+                       and (candidate.get("ends_on") or "\uffff") >= (source_rule.get("ends_on") or "\uffff")), None)
         if target is None:
             return False
         source_body = (source_rule.get("definition") or {}).get("rule") or {}

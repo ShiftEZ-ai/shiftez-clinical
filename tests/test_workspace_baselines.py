@@ -182,6 +182,18 @@ def test_review_replaces_captured_seed_counts_with_current_counts_in_a_mixed_rul
             if p['definition']['rule']['kind'] == 'restriction'} == {(1,), (4,)}
 
 
+def test_catalogue_safety_dedup_keeps_a_captured_rule_with_longer_dates(h):
+    from apps.api.workspace_baselines import _catalogue_destination_at_least_as_strict
+    from .test_rule_catalogue_api import approve, line, propose
+
+    original = line(numbers={'min': {'value': 11}})
+    saved = approve(h, propose(h, 'rest_between_duties', [original])['record'])
+    earlier = {**saved, 'starts_on': '2026-10-01', 'ends_on': '2026-10-08'}
+    assert _catalogue_destination_at_least_as_strict(earlier, dict(earlier))
+    assert not _catalogue_destination_at_least_as_strict(earlier, {**earlier, 'starts_on': '2026-10-02'})
+    assert not _catalogue_destination_at_least_as_strict(earlier, {**earlier, 'ends_on': '2026-10-07'})
+
+
 def test_safety_catalogue_conversion_binds_once_before_and_after_draft_capture(h):
     from packages.domain.conditions import active_rules
     from .test_rule_catalogue_guard import world
