@@ -1531,7 +1531,12 @@ if(typeof window!=='undefined'&&typeof document!=='undefined'&&typeof document.a
     if((e.target as HTMLElement|null)?.closest?.('input,textarea,select,[contenteditable=""],[contenteditable=true]')&&e.key.toLowerCase()!=='m')return;
     e.preventDefault();
     const to=tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-action')||tray?.querySelector<HTMLElement>('.toast:not([hidden]) .toast-close');
-    if(to)to.focus();else announce('No messages');
+    if(!to){announce('No messages');return;}
+    // Chromium does not count a key with Alt as keyboard use for :focus-visible, so the key shows the ring and keeps
+    // where focus came from itself (focusin above only sees a plain focus here).
+    const from=document.activeElement as HTMLElement|null;
+    const ring:FocusOptions&{focusVisible?:boolean}={focusVisible:true};to.focus(ring);
+    if(from&&!tray!.contains(from))trayFrom=openerOf(from);
   },true);
 }
 /** The screen's own status for the footer (left side): rota health, counts, a score. A page puts it anywhere in its
