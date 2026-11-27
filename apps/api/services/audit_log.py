@@ -109,13 +109,14 @@ def folded(db, query, zone, limit, cursor=None):
         day = cast(func.timezone(zone.key, e.created_at), Date)
     source = query.order_by(None).with_only_columns(e.id, e.seq, e.created_at, e.action, e.actor_id,
         masked_reason(e).label('reason'),
-        func.coalesce(e.detail['catalogue'].as_string(), '').label('catalogue'), day.label('day')).subquery()
+        func.coalesce(e.detail['catalogue'].as_string(), '').label('catalogue'), day.label('day'),
+        case((e.detail['leave_allowance_changes'].as_string().is_not(None), e.id), else_='').label('allowance_event')).subquery()
     order = (source.c.created_at.desc(), source.c.seq.desc())
-    signature = [source.c[key] for key in ('action', 'actor_id', 'reason', 'catalogue', 'day')]
+    signature = [source.c[key] for key in ('action', 'actor_id', 'reason', 'catalogue', 'day', 'allowance_event')]
     position = func.row_number().over(order_by=order)
     ranked = select(source, position.label('position'),
         (position - func.row_number().over(partition_by=signature, order_by=order)).label('island')).cte()
-    keys = [ranked.c[key] for key in ('action', 'actor_id', 'reason', 'catalogue', 'day', 'island')]
+    keys = [ranked.c[column.key] for column in signature] + [ranked.c.island]
     groups = select(*keys, func.count().label('count'),
         func.min(ranked.c.position).label('newest'), func.max(ranked.c.position).label('oldest'),
         func.min(ranked.c.created_at).label('first_at'), func.max(ranked.c.created_at).label('last_at')).group_by(*keys).subquery()
@@ -239,6 +240,8 @@ def event_action(kind, result):
 
 def subject_detail(db, kind, result, *, department_id=None):
     """Persist only an access-event description, never account credentials or private request text."""
+    if kind == 'department.leave_balance_settings' and result.get('leave_allowance_changes'):
+        return {'leave_allowance_changes': result['leave_allowance_changes']}
     if kind == 'department.create':
         return {'target_label': result['department']['name'],
                 'first_admin_binding_id': result['first_admin_binding']['id'], 'created': result['created']}
