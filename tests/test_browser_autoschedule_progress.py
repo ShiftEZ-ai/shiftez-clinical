@@ -229,11 +229,11 @@ def test_a_rota_check_runs_in_the_footer_not_the_panel(browser, cp_server, h):
         panel.get_by_role('button', name='Check the whole rota', exact=True).click()
         footer = page.locator('.app-footer')
         # DL D-063, kept by DL-018 (Design Lead) + Master 10 Nov: one wording rule; a queued check says Waiting to check
-        expect(footer.get_by_role('status').filter(has_text='Waiting to check')).to_be_visible()
+        expect(footer.locator('[data-check-line]').filter(has_text='Waiting to check')).to_be_visible()
         expect(footer.get_by_role('button', name='Cancel: waiting to check', exact=True)).to_be_visible()
         expect(panel.get_by_role('button', name='Cancel check', exact=True)).to_have_count(0)
         expect(panel.get_by_role('button', name='Run auto-schedule', exact=True)).to_be_visible()
         assert process_one(h.app.state.engine)
-        expect(footer.get_by_role('status').filter(has_text=re.compile('Waiting to check|Checking the rota'))).to_have_count(0, timeout=20000)
+        expect(footer.locator('[data-check-line]').filter(has_text=re.compile('Waiting to check|Checking the rota'))).to_have_count(0, timeout=20000)
     finally:
         context.close()

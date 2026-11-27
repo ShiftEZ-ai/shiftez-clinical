@@ -2,9 +2,9 @@ import {groupSections,attributed,groupRow,groupFill,planningOf,type PlanningCont
 import {issueGlyph,issueList,dayLabels,type Issue} from './issue_marker.js';
 import {formatTime,formatDay,needRow,adoptPopover,footerAct,el,button,badge,icon,plural,popover,formatDate,departmentTimeZone,type Child,needText,legend,type Legend,emptyLine,readFailed} from './dom.js';
 import {get,keptRead,ApiError,type KeptReadOptions} from './api.js';
-import {summaryCheckWords} from './rule_check_api.js';
+import {CHECK_AGAIN,summaryCheckWords} from './rule_check_api.js';
 import {addDays} from './planner_logic.js';
-import {skeleton,swap} from './loading.js';
+import {skeleton,swap,clock} from './loading.js';
 import {collectionToolbar,builtinViewItems,savedViewItems,optionMenu,fetchViews,conditionFilter,joinFilter,mentions,type SavedView,type FilterState} from './table_view.js';
 import {treeMatches,lineMatches} from './conditions.js';
 import type {Row} from './types.js';
@@ -40,7 +40,10 @@ export type FixCause=Omit<FixListCause,'action'|'rule_lines'|'who'|'evidence'|'a
   rule_lines:FixRuleLine[];who:Conditions[];evidence:FixEvidence[];acknowledgement?:FixAcknowledgement|null};
 /** `checking`: a recheck is running (keep the last counts, with a spinner); `since`: causes cleared / new today. */
 export type FixSummary=Omit<FixListSummary,'since'>&{since?:{at?:string;cleared:number;new:number}|null;
-  /** The check's words where its job is known (the Planner: checkingWords); else the summary's (summaryCheckWords). */checking_words?:string};
+  /** The check's words where its job is known (the Planner: checkingWords); else the summary's (summaryCheckWords). */checking_words?:string;
+  /** When the check began (epoch ms; the Planner's one clock, from the server's stale_since): "· m:ss" after its words. */checking_since?:number;
+  /** Must fix the server marked New on the held list (#1437's late must fix first): "n must fix · 1 new". */added?:number;
+  check_stop?:{lead:string;cause:string;tryAgain?:()=>void}};
 export type FixList=Omit<FixListWire,'summary'|'causes'|'review_items'>&{summary:FixSummary;causes:FixCause[];review_items?:ReviewItem[]};
 export type ReviewItem=Omit<RotaReviewItem,'source'>&{source:Row};
 export type ReviewDecision=RotaItemDecision;
@@ -205,7 +208,7 @@ export function fixRow(c:FixCause,h:FixHooks,o:{primary?:boolean;extra?:Child;de
   const focus=h.act?h.fill?.(c)||null:null,assign=h.act&&!focus?h.assign?.(c)||null:null;
   const own=h.act&&c.action?button(actionLabel(c),()=>h.act!(c),(o.primary&&!focus&&!assign?'primary':'secondary')+' small',{'aria-describedby':id}):null;
   // Assign is the row's fix when one assignment can fix it; the cause's own action then joins its other fixes (▾).
-  const act=focus?null:assign?button(fixLabel(c,'assign','Assign someone'),assign,(o.primary?'primary':'secondary')+' small',{'aria-describedby':id}):own;
+  const act=focus?null:assign?button(fixLabel(c,'assign','Assign someone'),assign,(o.primary?'primary':'secondary')+' small',{'aria-describedby':id,'data-busy':'Applying…'}):own;  // #1436: its save, in the footer's words
   const aside=(focus||assign)&&!ASSIGN_KINDS.has(c.action?.kind)?own:null;  // the server's action is often Assign itself
   const detail=o.detail===false?null:deferredEvidence.has(c)?el('div',{class:'fix-detail'}):evidence(c,h,aside);
   // A worded toggle (no arrow glyph): "Show evidence" / "Hide evidence", its state in aria-expanded, its cause by aria-describedby.
@@ -272,16 +275,22 @@ const withIconPrimary=(label:string,run:()=>unknown)=>{const b=button(label,run,
 /** The gate line (R1): what stops submitting, in must-fix causes (`scoped`: how many of them are in this view), beside
  *  the places filled, the day's cleared / new, and when it was checked; "Checking…" keeps the last counts meanwhile. */
 export function fixGate(s:FixSummary,lead?:Child,scoped?:{count:number;view:string},step:FixStep='submit'):HTMLElement{
+  if(s.check_stop){const {lead,cause,tryAgain}=s.check_stop;
+    return el('div',{class:'fix-gate warn check-stopped'},icon('clock'),
+      el('span',{class:'grow'},el('strong',{},lead),cause?' '+cause:''),
+      tryAgain?button(CHECK_AGAIN,tryAgain,'secondary small'):'');}
   const blocked=s.must>0||!!s.submission_issue,places=s.places_total&&!scoped?`${s.places_filled} of ${s.places_total} places filled`:'';
   // SW3-A-22: said in words ("Today: 2 cleared · 1 new"), not a bare "−2 +1".
   const since=s.since&&(s.since.cleared||s.since.new)?el('span',{class:'fix-since'},'Today: ',
     s.since.cleared?el('span',{class:'up'},`${s.since.cleared} cleared`):'',s.since.cleared&&s.since.new?' · ':'',s.since.new?el('span',{class:'down'},`${s.since.new} new`):''):'';
-  return el('div',{class:'fix-gate '+(blocked?'err':'ok'),role:'status'},icon(blocked?'alert':'check'),
+  return el('div',{class:'fix-gate '+(blocked?'err':'ok'),...(s.checking_since?{}:{role:'status'})},icon(blocked?'alert':'check'),
     el('span',{class:'grow'},...(lead?[lead]:s.submission_issue?[el('strong',{},s.submission_issue.message)]:blocked?[el('strong',{},mustWords(s.must)),step==='submit'?' before you submit':'']:[el('strong',{},'Nothing must be fixed'),step?` · ready to ${step}`:'']),
       scoped?[' · ',el('strong',{},String(scoped.count)),` in ${scoped.view}`]:'',places?` · ${places}`:'',
       // Who was checked is the server's explanation, not the verdict: contextual help beside it (FIXLIST-UX).
       s.population_note?el('button',{type:'button',class:'icon-button bare page-info fix-population','aria-label':'Who was checked','data-help':'','data-tip':s.population_note},icon('help')):''),
-    since,s.checking?el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),s.checking_words||summaryCheckWords(s)||'Checking…'):s.checked_at?el('span',{class:'muted'},checkedAgo(s.checked_at)):'');
+    since,s.checking?el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),s.checking_words||summaryCheckWords(s)||'Checking…',
+      // The time ticks in place (app.ts tickCheck) and is never said: nothing is announced while the check runs.
+      ...(s.checking_since?[' · ',el('span',{class:'elapsed-time','data-check-clock':String(s.checking_since),'aria-hidden':'true'},clock(Date.now()-s.checking_since))]:[])):s.checked_at?el('span',{class:'muted'},checkedAgo(s.checked_at)):'');
 }
 export const byLevel=(l:FixList,level:FixLevel)=>l.causes.filter(c=>c.level===level);
 /** The Planner's Fix list panel (FIXLIST-UX direction A): the gate, every must-fix cause open (the one in focus with its
@@ -324,7 +333,7 @@ export function fixPills(s:FixSummary,o:{load?:()=>Promise<FixList>;held?:()=>Fi
     },{label:'Rota health',placement:'below',key});});
     queueMicrotask(()=>adoptPopover(key,b));
     return b;};
-  if(s.must)wrap.append(pill('err','alert',String(s.must),' must fix',mustWords(s.must)+(o.lists?'':' · open the fix list')));
+  if(s.must)wrap.append(pill('err','alert',String(s.must),' must fix'+(s.added?` · ${s.added} new`:''),mustWords(s.must)+(s.added?` · ${s.added} new`:'')+(o.lists?'':' · open the fix list')));
   else{const word=o.clear||'Ready',ready=o.clear||(o.step?`Ready to ${o.step}`:'Ready');wrap.append(pill('ok','check','',score!=null?`${word} · score ${score}`:word,score!=null?`${ready} · score ${score}`:ready));}
   // Could improve: the issue marker's gold circle (D78), on a draft and the published rota alike.
   if(s.could)wrap.append(pill('warn could','notice',String(s.could),' could improve',couldWords(s.could)));
@@ -380,6 +389,7 @@ export interface FixPageHooks extends FixHooks{
   /** The rota's whole Fix list as the page holds it (an edit's fix_list_delta applied, no read per edit); a scheduling
    *  group's view still reads its own. Unset: read it. */
   read?:()=>Promise<FixList>;
+  checkSummary?:(summary:FixSummary)=>FixSummary;
 }
 /** Whether a cause meets a view's Filter. Its plain rows (`filters`): the rule lines' population (who) names one of a
  *  property's values, or someone in the cause has one. The rest of its tree (`conditions`) is read with the shared
@@ -421,7 +431,8 @@ export async function fixListPage(target:HTMLElement,workspaceId:string,h:FixPag
         body.replaceChildren(readFailed('the Fix list',error,draw));});}return;}
     const shown=list.causes.filter(c=>inView(c)).sort((a,b)=>rankOf(a,view.sort)-rankOf(b,view.sort));h.all=shown;key.clear();
     const must=shown.filter(c=>c.level==='must'),could=shown.filter(c=>c.level==='could'),filtered=narrows(view);
-    const parts:HTMLElement[]=[fixGate(list.summary,undefined,filtered?{count:must.length,view:active()?.name||'this view'}:undefined,h.step)];
+    const summary=h.checkSummary?.(list.summary)??list.summary;
+    const parts:HTMLElement[]=[fixGate(summary,undefined,filtered?{count:must.length,view:active()?.name||'this view'}:undefined,h.step)];
     if(list.summary.submission_issue&&h.addSession)parts.push(button('Add session',h.addSession,'primary small'));
     if(view.group==='rule'){
       const by=new Map<string,FixCause[]>();for(const c of shown){const k=h.ruleName?.(c.rule_lines[0]?.rule_id||'')||'Other';by.set(k,[...(by.get(k)||[]),c]);}
@@ -434,6 +445,7 @@ export async function fixListPage(target:HTMLElement,workspaceId:string,h:FixPag
       const row=(name:string,n:number,open?:()=>void)=>el('li',{class:'fix-outside'},el('strong',{},name),el('span',{class:'grow'}),badge(String(n),n?'err':'neutral','fix-count'),el('span',{class:'muted'},'must fix'),open?button('Open view',open,'link-button'):'');
       const rows=[...others.map(v=>row(v.name,rest.filter(c=>inView(c,stateOf(v.definition))).length,()=>{take(v);})),...(elsewhere.length?[row('Everyone else',elsewhere.length)]:[])];
       if(rows.length)parts.push(el('section',{class:'panel fix-panel','aria-label':'Outside this view'},el('div',{class:'fix-level'},el('h2',{},'Outside this view'),badge(String(rest.length),'neutral')),el('ul',{class:'fix-list'},...rows)));}
+    if(summary.checking)body.setAttribute('aria-busy','true');else body.removeAttribute('aria-busy');
     body.replaceChildren(...parts);search();bar.sync();};
   // Search reads what each row says (its sentence, line and evidence, names included): nothing is counted again.
   let searching:Promise<void>|null=null;

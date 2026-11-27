@@ -194,7 +194,7 @@ def workspace_validation(db, workspace):
     from .read_projections import cached, CANONICAL_AUDIENCE
     validation = normalized_check(workspace.validation) or {}
     score = validation.get('score')
-    if (validation.get('scope') != 'command_changes' or isinstance(score, dict)
+    if (validation.get('scope') != 'command_changes' or validation.get('display_pending') or isinstance(score, dict)
             or not validation.get('evaluated_at')):
         return validation
     data = db.info.get('read_snapshots', {}).get(workspace.id)

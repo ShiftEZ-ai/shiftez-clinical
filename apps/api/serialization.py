@@ -10,7 +10,8 @@ from packages.domain.serialization import PLAIN, json_default, json_value
 from packages.domain.generation_scope import selected_session_ids
 
 
-CHECK_SUMMARY = ('valid', 'error_count', 'warning_count', 'evaluated_at', 'fingerprint', 'engine_version', 'scope')
+CHECK_SUMMARY = ('valid', 'error_count', 'warning_count', 'evaluated_at', 'fingerprint', 'engine_version', 'scope',
+                 'stale_since', 'stale_shift_ids')
 JOB_SUMMARY_FIELDS = ('required_places', 'filled_places', 'open_places_count',
                       'open_extra_cover_places_count', 'open_extra_cover_session_count')
 CANDIDATE_EVIDENCE_REF = 'candidate_evidence_ref'

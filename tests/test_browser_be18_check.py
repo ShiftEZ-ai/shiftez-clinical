@@ -34,7 +34,7 @@ def test_implicit_complete_check_is_visible_and_worker_completion_refreshes_the_
         navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
         # D76: the check is the footer's working item with its Cancel; it never opens the Auto-schedule panel.
         # DL D-063, kept by DL-018 (Design Lead) + Master 10 Nov: one wording rule; a queued check says Waiting to check
-        progress = page.locator('.app-footer').get_by_role('status').filter(has_text=re.compile('Waiting to check|Checking the rota'))
+        progress = page.locator('.app-footer').locator('[data-check-line]').filter(has_text=re.compile('Waiting to check|Checking the rota'))
         expect(progress).to_contain_text('Waiting to check')
         expect(page.get_by_role('button', name='Cancel: waiting to check', exact=True)).to_be_visible()
         expect(page.locator('#auto-panel')).to_be_hidden()
@@ -95,7 +95,7 @@ def test_a_queued_check_nobody_starts_is_taken_over_by_the_page_once(h, browser,
             reads.hold(summary_url)
             navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
             footer = page.locator('.app-footer')
-            progress = footer.get_by_role('status').filter(has_text=CHECK_WORDS)
+            progress = footer.locator('[data-check-line]').filter(has_text=CHECK_WORDS)
             expect(progress).to_contain_text('Waiting to check')  # DL-018: queued, unchanged
             wait_held(page, reads[summary_url])
             remaining = min(10_000, BOUND // 2)
@@ -152,7 +152,7 @@ def test_a_check_refused_for_the_persons_own_access_only_says_so(h, browser, liv
             held.hold(status_url)
             navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
             footer = page.locator('.app-footer')
-            progress = footer.get_by_role('status').filter(has_text=CHECK_WORDS)
+            progress = footer.locator('[data-check-line]').filter(has_text=CHECK_WORDS)
             expect(progress).to_contain_text('Waiting to check')
             wait_held(page, held[summary_url])
             with page.expect_response(lambda response: response.url == summary_url) as summary:
@@ -206,7 +206,7 @@ def test_a_take_over_that_fails_too_says_the_check_has_not_started(h, browser, l
             held.hold(status_url)
             navigate(page, 'schedule/week/2026-10-04?edit=' + w['id'])
             footer = page.locator('.app-footer')
-            progress = footer.get_by_role('status').filter(has_text=CHECK_WORDS)
+            progress = footer.locator('[data-check-line]').filter(has_text=CHECK_WORDS)
             expect(progress).to_contain_text('Waiting to check')
             wait_held(page, held[summary_url])
             with page.expect_response(lambda response: response.url == summary_url) as summary:

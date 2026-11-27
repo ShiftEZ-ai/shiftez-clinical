@@ -1680,7 +1680,8 @@ def _merge_session_checks(partial, shifts, findings, coverage, session_start):
     coverage.sort(key=lambda row: (row['status'] in {'cancelled', 'closed'}, order[row['shift_id']]))
 
 
-def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False, trial_cache=None) -> dict:
+def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findings=True, session_parts=False,
+             trial_cache=None, include_goals=True) -> dict:
     """`session_cache`: private to assignment-copy trials on one otherwise immutable snapshot.
     Reuse unchanged sessions' checks; department reports remain fresh.
     Internal decision/score trials may omit cause/hint decoration; all constraint checks still run.
@@ -2645,7 +2646,7 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
 
     from .fairness import evaluate_goals
     goals = (evaluate_goals(data, add, quota_report=quota_report)
-             if data.get("workspace") and not data.get('_skip_staffing_quota') else [])
+             if include_goals and data.get("workspace") and not data.get('_skip_staffing_quota') else [])
     check()
 
     from .resources import evaluate_resources

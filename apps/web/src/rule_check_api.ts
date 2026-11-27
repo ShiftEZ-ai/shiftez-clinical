@@ -48,6 +48,9 @@ export const checkUnfinished=(status?:string|null,waitedMs=0,worker?:CheckWorker
 export const checkCancellable=(job?:{status:string}|null)=>job?.status==='queued'||job?.status==='running';
 /** What a check nobody is running offers, beside its words. */
 export const CHECK_AGAIN='Check again';
+/** Why a draft's Submit waits (one reason from the save's start to the current revision's complete check),
+ *  and why they still wait once that check stopped. */
+export const CHECK_WAIT='Waits for the rota check',CHECK_INCOMPLETE='Needs a complete check';
 /** DL-018 + Master 10 Nov 2026, the one automatic fallback: should the page take a check over (stop its queued job,
  *  then run the check itself)? Only a job still queued at the bound (at once when no worker answers), and once: never
  *  a check that is running (it is being served), never one that ended, never again for a job or rota version already
@@ -102,6 +105,11 @@ export const summaryCheckWords=(s?:{checking?:boolean;check_status?:string|null;
   serverChecking(null,s)?checkingWords(s!.check_status,s!.check_queued_at?Date.now()-Date.parse(s!.check_queued_at):0):'';
 /** A check that never started, said once: checkingWords past the bound, and a take-over that failed too. */
 export const CHECK_NOT_STARTED="Check hasn't started";
+/** The one polite line a settled check says ("Rota checked: 1 cleared. 2 must fix left."); `cleared`: must-fix causes
+ *  this check cleared, `must`: those left. */
+export const checkSettledWords=(cleared:number,must:number)=>cleared
+  ?`Rota checked: ${cleared} cleared. ${must?`${must} must fix left.`:'Nothing must be fixed.'}`
+  :`Rota checked: ${must?`${must} must fix.`:'nothing must be fixed.'}`;
 /** A draft's effect in words with its badge tone; null while it is still being checked (the caller shows elapsed time). */
 export function effectWords(x:Effect):{text:string;tone:'ok'|'warn'|'err'|'neutral'}|null{
   // A later check can fail without clearing an already proven conflict.

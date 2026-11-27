@@ -1,5 +1,6 @@
 """Scoped command checks never authorize a whole rota; the worker stores canonical complete evidence."""
 import copy
+import logging
 
 import pytest
 from sqlalchemy import select
@@ -9,7 +10,7 @@ from apps.api.db import transaction
 from apps.api.services import planning
 from apps.worker import main as worker
 from apps.worker.main import process_one
-from packages.domain import proposal_reconciliation
+from packages.domain import proposal_reconciliation, rota_summary, score
 from packages.domain.validation import evaluate
 from packages.domain.validation_scope import assignment_scope, evaluate_assignments
 from packages.contracts.schemas import ParticipantInput
@@ -56,7 +57,7 @@ def edit(h, workspace, shift, participants, **kwargs):
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
-def test_edit_queues_coalesced_check_and_worker_stores_exact_complete_result(h, monkeypatch):
+def test_edit_queues_coalesced_check_and_worker_stores_exact_complete_result(h, monkeypatch, caplog):
     freeze_clock(monkeypatch)
     w = h.workspace()
     typ = optional_type(h)
@@ -75,15 +76,34 @@ def test_edit_queues_coalesced_check_and_worker_stores_exact_complete_result(h, 
     def no_empty_pairing(*args):
         pytest.fail('An empty assignment edit has no supervisor pairs to name')
     monkeypatch.setattr(planning, 'name_attached_supervisors', no_empty_pairing)
-    result = edit(h, w, shift, [])
+
+    def no_display_check(*args, **kwargs):
+        pytest.fail('A pending assignment reply must leave display work to its check job')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(rota_summary, 'rota_summary', no_display_check)
+        patch.setattr(rota_summary, 'fix_list_context', no_display_check)
+        patch.setattr(score, 'schedule_score', no_display_check)
+        result = edit(h, w, shift, [])
+    assert result['health']['checked'] is False and 'fix_list' not in result
+    assert result['health']['summary']['fix_list']['summary']['stale'] is True
+    assert not result['delta'].get('summary_counts')
+    assert not result['fix_list_delta']['causes']
     assert queued == [w['id']]
     w = result['workspace']
+    refused = h.command('coordinator', 'workspace.submit', {'reason': 'Submit draft'}, w['id'], w['revision'], status=409)
+    assert refused['error']['code'] == 'CHECK_NOT_CURRENT'
+    from apps.api.services import rota_summary as reader_summary
+    with monkeypatch.context() as patch:
+        patch.setattr(reader_summary, 'evaluate', no_display_check)
+        assert not h.detail(w)['workspace']['validation'].get('score')
     summary = h.get('coordinator', f'/api/workspaces/{w["id"]}/summary')
     assert summary['worker_liveness'] == 'running'
     assert summary['worker_heartbeat_max_age_seconds'] == h.settings.worker_heartbeat_max_age_seconds
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Workspace, w['id'])
         assert row.validation['scope'] == 'command_changes'
+        assert row.validation['stale_since'] == m.now().isoformat()
         assert row.validation['fingerprint'] != h.snapshot(w)['fingerprint']
         assert 'score' not in row.validation
         job = db.scalar(select(m.Job).where(m.Job.workspace_id == w['id'], m.Job.kind == 'validation'))
@@ -94,11 +114,14 @@ def test_edit_queues_coalesced_check_and_worker_stores_exact_complete_result(h, 
                      revision=w['revision'])['job']
     assert same['id'] == job_id
     assert h.get('coordinator', f'/api/workspaces/{w["id"]}/summary')['fix_list']['summary']['checking']
-    assert process_one(h.app.state.engine)
+    with caplog.at_level(logging.INFO, logger=worker.log.name):
+        assert process_one(h.app.state.engine)
+    [settled] = [row for row in caplog.records if row.message == 'job_finished' and getattr(row, 'job_id', None) == job_id]
+    assert settled.settle_ms >= 0
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Workspace, w['id'])
         assert row.validation == expected
-        assert not row.validation.get('scope')
+        assert not row.validation.get('scope') and 'stale_since' not in row.validation
         assert row.revision == w['revision']
         assert db.get(m.Job, job_id).status == 'succeeded'
 
@@ -145,6 +168,9 @@ def test_scoped_edit_retains_unrelated_overlap_evidence_and_clears_changed_peer_
     assert not any(f['code'] == 'TIME_OVERLAP' and f['person_id'] == first for f in findings)
     peers = [row for row in result['shifts'] if row['start'] == target['start']]
     assert len(peers) == 2 and all(not row['double_booking_conflicts'] for row in peers)
+    assert set(result['validation']['stale_shift_ids']) == {row['id'] for row in peers}
+    meta = h.get('coordinator', f'/api/workspaces/{w["id"]}?view=compact')
+    assert meta['workspace']['validation']['stale_shift_ids'] == result['validation']['stale_shift_ids']
 
 
 def test_manual_restriction_refusal_still_happens_before_queuing(h):
@@ -267,6 +293,45 @@ def test_invalid_stored_evidence_forces_complete_review_check(h, monkeypatch, in
     if stage == 'approve' and invalid == 'input':
         assert result['error']['code'] == 'STALE_INPUTS'
     assert calls == [None]
+
+
+def test_multiple_assignment_edits_keep_one_stale_since_clock(h, monkeypatch):
+    from datetime import timedelta
+
+    time = [m.now()]
+    freeze_clock(monkeypatch, lambda: time[0])
+    shift_type = optional_type(h)
+    workspace = h.refresh_draft_baseline(h.workspace())
+    first = h.shift(workspace, typ=shift_type)
+    second = h.shift(first['workspace'], '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', typ=shift_type)
+    workspace = second['workspace']
+    shifts = {row['id']: row for row in h.detail(workspace)['shifts']}
+    worker_up(h)
+
+    first_edit = edit(h, workspace, shifts[first['shift_id']], [])
+    time[0] += timedelta(seconds=2)
+    second_edit = edit(h, first_edit['workspace'], shifts[second['shift_id']], [])
+    assert first_edit['validation']['stale_shift_ids'] == [first['shift_id']]
+    assert set(second_edit['validation']['stale_shift_ids']) == {first['shift_id'], second['shift_id']}
+    assert second_edit['validation']['stale_since'] == first_edit['validation']['stale_since']
+    assert second_edit['workspace']['revision'] > first_edit['workspace']['revision']
+    assert process_one(h.app.state.engine)
+    settled = h.detail(second_edit['workspace'])['workspace']['validation']
+    assert not settled.get('scope') and 'stale_since' not in settled and 'stale_shift_ids' not in settled
+
+
+@pytest.mark.parametrize(('state', 'action', 'role'), [
+    ('submitted', 'approve', 'approver'), ('approved', 'publish', 'coordinator'),
+])
+def test_review_transitions_refuse_retained_partial_evidence(h, state, action, role):
+    w = h.refresh_draft_baseline(h.workspace())
+    w = h.shift(w, typ=optional_type(h))['workspace']
+    with transaction(h.app.state.engine, write=True) as db:
+        workspace = db.get(m.Workspace, w['id'])
+        workspace.status = state
+        workspace.validation = {**workspace.validation, 'scope': 'command_changes', 'display_pending': True}
+    refused = h.command(role, f'workspace.{action}', {'reason': 'Review this rota'}, w['id'], w['revision'], status=409)
+    assert refused['error']['code'] == 'CHECK_NOT_CURRENT'
 
 
 def test_without_worker_assignment_edit_still_stores_complete_check(h):
