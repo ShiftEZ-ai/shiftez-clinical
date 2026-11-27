@@ -1849,12 +1849,14 @@ function watchErrors() {
       if (f?.isConnected) { focusProblem(f); announce(n > 1 ? `${n} fields to fix. ${problemSaid(f)}` : problemSaid(f), true); } }); }
     else if (firstProblem.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_PRECEDING) firstProblem = c;
   }, true);
-  const recheck = (e: Event) => { const c = e.target as Element; if (isControl(c) && c.getAttribute('aria-invalid') === 'true') { if (c.checkValidity()) clearProblem(c); else showProblem(c); } };
+  const recheck = (e: Event) => recheckProblem(e.target as Element);
   document.addEventListener('input', recheck); document.addEventListener('change', recheck);
   document.addEventListener('focusout', e => { const c = e.target as Element;
     if (!isControl(c) || !c.closest('form,.field') || c.type === 'checkbox' || c.type === 'radio' || c.getAttribute('aria-invalid') === 'true' || c.checkValidity() || c.validity.valueMissing) return;
     showProblem(c); announce(problemSaid(c), true); });
 }
+/** A field that shows a problem is checked again when its value changes: typed, or put in by the app (suggested). */
+function recheckProblem(c: Element) { if (isControl(c) && c.getAttribute('aria-invalid') === 'true') { if (c.checkValidity()) clearProblem(c); else showProblem(c); } }
 const problemHost = (c: Control) => (c.closest('.date-range,.field,.checkbox,.pick-field,fieldset') || c.parentElement) as HTMLElement;
 /** A control wrapped in its <label> (check(), a date inside a labelled row) keeps its message inside that label, so the
  *  layout around it never gains a cell (a grid of dates, a row of boxes); the control is then named by the label's own
@@ -1953,6 +1955,8 @@ export function suggested(input: HTMLInputElement, owned = !!input.value.trim())
     if (owned || !value || input.value === value) return false;
     const all = document.activeElement === input && input.selectionStart === 0 && input.selectionEnd === input.value.length;
     input.value = value; if (all) input.select();
+    // A Save pressed before the suggestion landed left "Add a name" on the field: the suggestion answers it, as typing would.
+    recheckProblem(input);
     return true;
   };
 }
