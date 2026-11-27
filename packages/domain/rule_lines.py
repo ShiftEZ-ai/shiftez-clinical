@@ -514,6 +514,18 @@ def weakens_safety_rules(before, after, *, matching_scopes_only=False, from_day=
     return False
 
 
+def weakens_scheduling_fact_safety(before, after):
+    """Personal/calendar no-duties facts are restriction inputs, including bound safety primitives.
+
+    Workload counts, personal targets and overtime offers add no mandatory safety obligation.
+    """
+    if not before or not _safety_fact(before['data']):
+        return False
+    old = fact_policy({**before, 'status': 'active'})
+    new = [fact_policy({**after, 'status': 'active'})] if after else []
+    return weakens_safety_rules([old], new)
+
+
 def catalogue_display_policies(policies, context):
     """Join reconstructed safety lines to their edited catalogue row for rule reads."""
     from packages.contracts.rule_catalogue import CATALOGUE_MAPPING
