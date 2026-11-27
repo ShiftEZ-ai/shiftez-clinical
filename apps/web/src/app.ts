@@ -138,6 +138,7 @@ import {SAFETY_DECIDED,UNDECIDED,baselineSourceLabel,changeLabel,refreshPlan} fr
 import {groupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
 import {tabs as sharedTabs} from './dom.js';  // the one tab set (UX › controls S8)
 import {moreWords} from './dom.js';  // the one "+N" and its words (UX › controls S9)
+import {MESSAGES_KEY} from './dom.js';  // the messages' key (issue 1408)
 import {panelSearch} from './dom.js';  // the one search box in a panel (UX › controls S10)
 import {couldntLoad} from './dom.js';  // a failed read's words (DL-045)
 import {notYet} from './dom.js';  // a control held in place until it can be used (D59)
@@ -324,8 +325,12 @@ async function readWindow(meta:Awaited<ReturnType<typeof rotaMeta>>,days:string[
 // redraws reading only the draft. `inPlace`: every save since the last refresh was patched so (refreshOnce).
 let inPlace=true;
 window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(!patchDraft(d?.result,d?.kind||'')){forgetSchedule();inPlace=false;}});
-// R3: the edit's own message says what it cleared and what it broke (the Fix list's delta, server-computed).
-window.addEventListener('rota-saved',e=>toastClause(deltaWords((e as CustomEvent).detail?.result)));
+// Session saves use the same must-fix total as the Fix list and footer.
+window.addEventListener('rota-saved',e=>{
+  const {kind,result}=(e as CustomEvent).detail||{};
+  const must=kind==='shift.create'||kind==='shift.update'?fixDeltaOf(result)?.summary?.must:0;
+  toastClause(must?mustWords(must)+'.':deltaWords(result));
+});
 /** A draft edit's reply (every draft edit and its Undo answer alike, planning.changed): the draft's row in the rota list
  *  takes the reply's rota and health summary, the sidebar's open-places count follows, and the draft (and the calendar
  *  windows showing it) are read again: a reply carries only a summary of the check, not its findings and coverage.
@@ -866,7 +871,7 @@ window.addEventListener('pageshow',e=>{if(!e.persisted)return;if(!me){location.r
 function shortcutsDialog(){
   showDialog('Keyboard shortcuts','',body=>body.append(table(['Shortcut','Action'],[
     [el('kbd',{},'Ctrl K'),'Search pages and actions'],[el('kbd',{},FEEDBACK_KEY),'Send feedback about this page'],[el('kbd',{},'?'),'Show this list'],[el('kbd',{},'Esc'),'Close a menu, panel or dialog'],
-    [el('kbd',{},'Ctrl Z'),'Undo the last change'],[el('kbd',{},'Ctrl Shift Z'),'Redo what you just undid (also Ctrl Y)'],
+    [el('kbd',{},'Ctrl Z'),'Undo the last change'],[el('kbd',{},MESSAGES_KEY),'Go to the newest message and its Undo (Esc goes back)'],[el('kbd',{},'Ctrl Shift Z'),'Redo what you just undid (also Ctrl Y)'],
     // Schedule keys, named as its views are.
     ...(allowed('schedule')?SCHED_VIEWS.map(v=>[el('kbd',{},v.letter),`Schedule: ${v.label} view`]):[]),
     ...(allowed('schedule')?[[el('kbd',{},'J'),'Fix list focus: next cause'],[el('kbd',{},'K'),'Fix list focus: previous cause']]:[])])));
@@ -8582,7 +8587,7 @@ function auditQuery(){
 function auditFeed(events:Row[]):DocumentFragment{
   const out=document.createDocumentFragment(),selfApproved=(e:Row)=>!!e.detail?.self_approved;
   const runs:{e:Row;n:number;last:Row}[]=[];
-  for(const e of events){const r=runs.at(-1);if(r&&r.e.action===e.action&&r.e.detail?.catalogue===e.detail?.catalogue&&(r.e.target_label||'')===(e.target_label||'')&&r.e.actor_id===e.actor_id&&r.e.reason===e.reason&&toLocal(r.e.created_at,zone()).slice(0,10)===toLocal(e.created_at,zone()).slice(0,10)){r.n++;r.last=e;}else runs.push({e,n:1,last:e});}
+  for(const e of events){const r=runs.at(-1);if(r&&r.e.action===e.action&&!e.detail?.leave_allowance_changes&&!r.e.detail?.leave_allowance_changes&&r.e.detail?.catalogue===e.detail?.catalogue&&(r.e.target_label||'')===(e.target_label||'')&&r.e.actor_id===e.actor_id&&r.e.reason===e.reason&&toLocal(r.e.created_at,zone()).slice(0,10)===toLocal(e.created_at,zone()).slice(0,10)){r.n++;r.last=e;}else runs.push({e,n:1,last:e});}
   let day='';
   for(const {e,n,last} of runs){
     const d=toLocal(e.created_at,zone()).slice(0,10);
@@ -8594,8 +8599,11 @@ function auditFeed(events:Row[]):DocumentFragment{
     const copyRef=iconButton(`Copy reference for ${time} change`,'copy',async()=>{try{await navigator.clipboard.writeText(ref);notify('Reference copied.');}catch{notify('Copying is blocked here. The reference is '+ref,'info');}},{class:'audit-ref','data-tip':ref});
     // A reason that only repeats the change ("Signed in" on a sign-in) is left out.
     const said=e.reason&&e.reason!==e.action&&!verb.startsWith(String(e.reason).toLowerCase())?e.reason:'';
+    const allowances=(e.detail?.leave_allowance_changes||[]) as {leave_type_name:string|null;effective_year_start:string|null;before_days:number|null;after_days:number|null}[];
+    const days=(value:number|null)=>value===null?'No allowance':plural(value,'calendar day');
     out.append(el('div',{class:'audit-row'},el('span',{class:'audit-time mono'},time),el('span',{class:`role-chip duty-${colour}`,title:chip},el('span',{class:'chip-text'},chip)),
-      el('div',{class:'audit-text'},el('span',{},el('strong',{},e.actor_display_name||'Account not available'),` ${verb} ${what}${verb==='submitted'?' for review':''}`,selfApproved(e)?badge('Self-approved','warn','audit-self',{tip:'Their own work, allowed by a self-approval permission'}):''),said?el('small',{title:said},'“'+said+'”'):null),copyRef));
+      el('div',{class:'audit-text'},el('span',{},el('strong',{},e.actor_display_name||'Account not available'),` ${verb} ${what}${verb==='submitted'?' for review':''}`,selfApproved(e)?badge('Self-approved','warn','audit-self',{tip:'Their own work, allowed by a self-approval permission'}):''),said?el('small',{title:said},'“'+said+'”'):null,
+        allowances.map(line=>el('span',{},`${line.leave_type_name||'Leave'}${line.effective_year_start?' from '+formatDate(line.effective_year_start):''} · ${days(line.before_days)} → ${days(line.after_days)}`))),copyRef));
   }
   return out;
 }
