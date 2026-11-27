@@ -98,7 +98,7 @@ def test_negative_confirmation_rechecks_latest_balance_and_audits_approval(h):
 
 
 @pytest.mark.parametrize('role,may_read_balance', [
-    ('staff', True), ('approver', True), ('programme_lead', True), ('coordinator', False),
+    ('staff', True), ('admin', True), ('approver', True), ('programme_lead', True), ('coordinator', False),
 ])
 def test_request_history_uses_balance_read_permissions(h, role, may_read_balance):
     if role == 'programme_lead':
@@ -116,10 +116,11 @@ def test_request_history_uses_balance_read_permissions(h, role, may_read_balance
     assert created['action'] == 'created'
     assert decision['action'] == 'request.decide'
     assert decision['reason'] == 'Review leave'
+    answer = json.dumps(detail)
+    assert 'balance_confirmation' not in answer
+    assert answer.count('"leave_balance_overdrawn"') == int(may_read_balance)
     if may_read_balance:
         assert decision['leave_balance_overdrawn'] is True
-    else:
-        assert 'leave_balance_' not in json.dumps(detail)
 
 
 @pytest.mark.parametrize('role,request_role,may_read_balance', [
@@ -156,13 +157,13 @@ def test_audit_history_uses_balance_read_permissions(h, role, request_role, may_
         event, = (event for event in audit['events'] if event['action'] == 'request.decide')
         assert event['target_id'] == row['id']
         assert event['detail']['receipt_id']
+        answer = json.dumps(audit)
+        assert answer.count('"leave_balance_overdrawn"') == int(may_read_balance)
+        assert answer.count('"balance_confirmation"') == int(may_read_balance and not batch)
         if may_read_balance:
             assert event['detail']['leave_balance_overdrawn'] is True
             if not batch:
                 assert 'balance_confirmation' in event['detail']['payload_fields']
-        else:
-            answer = json.dumps(audit)
-            assert 'leave_balance_' not in answer and 'balance_confirmation' not in answer
     with transaction(h.app.state.engine) as db:
         event = db.scalar(select(m.AuditEvent).where(m.AuditEvent.target_id == row['id'],
                                                      m.AuditEvent.action == 'request.decide'))
