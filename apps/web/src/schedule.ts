@@ -371,9 +371,10 @@ export type Overlaps={starts_on:string;ends_on:string;publications:Row[];drafts:
 export type OverlapValue={choice:'start_after'|'replace_from'|'amend';starts_on:string;publication_id?:string};
 const lastDay=(exclusive:string)=>addDays(exclusive,-1);
 /** The three ways to place a rota beside a published one, as a radio group. One component for New draft, the footer's
- *  overlap pill and Publish…. Unavailable options stay visible with the server's reason. `keep`: the choice already
- *  made, kept when the group is drawn again for new dates (if it is still available). */
-export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendText='How should the draft fit?',keep=''){
+ *  overlap pill and Publish…. Unavailable options stay visible with the server's reason. `keep` (an earlier group's
+ *  kept()): the choice already made, kept when the group is drawn again for new dates (if it is still available), with
+ *  the takeover date the person chose while the same published rota still allows it. */
+export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendText='How should the draft fit?',keep:OverlapValue|null=null){
   const fmt=(d:string)=>formatDate(d,zone),pub=o.publications.find(p=>p.relation==='conflict')||o.publications[0];
   const name=pub?.name||'The published rota';
   const all=[pub?.starts_on,o.starts_on].filter(Boolean).sort()[0],stop=[pub?(pub.effective_until||pub.ends_on):'',o.ends_on].sort().at(-1)!;
@@ -382,8 +383,9 @@ export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendTex
   const mini=(label:string,...tracks:HTMLElement[][])=>el('span',{class:'sd-mini',role:'img','aria-label':label},...tracks.map(t=>el('span',{class:'sd-mini-track'},...t)),
     el('span',{class:'sd-mini-axis','aria-hidden':'true'},...[all,stop].map((d,i)=>{const n=el('span',{},fmt(i?lastDay(d):d));n.style.setProperty(i?'right':'left','0');return n;})));
   const group='ov-'+Math.random().toString(36).slice(2,8);
-  const opts=o.options;const preferred=opts.find(x=>x.choice===keep&&x.available)||opts.find(x=>x.default&&x.available)||opts.find(x=>x.available);
-  let date:HTMLInputElement|null=null;
+  const opts=o.options;const preferred=opts.find(x=>x.choice===keep?.choice&&x.available)||opts.find(x=>x.default&&x.available)||opts.find(x=>x.available);
+  // `chosen`: the takeover date is the person's, not the server's suggestion (which follows the dates).
+  let date:HTMLInputElement|null=null,chosen=false;
   const describe=(x:Row)=>{
     // Not available (the published rota covers every day): no range to state; the server's reason says why.
     if(x.choice==='start_after'&&!x.available)return {title:'Start after it',text:'',mini:null};
@@ -396,12 +398,14 @@ export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendTex
     const d=describe(x),input=el('input',{type:'radio',name:group,value:x.choice,disabled:!x.available}) as HTMLInputElement;input.checked=x===preferred;
     const body=el('span',{class:'sd-option-body'},el('strong',{},d.title,x.default?badge('Default'):null),d.text?el('span',{},d.text):null);
     if(x.choice==='replace_from'&&x.available){
-      date=el('input',{type:'date',value:x.starts_on,min:x.earliest,max:x.latest,'aria-label':'Takes over from'}) as HTMLInputElement;
+      const mine=keep?.choice==='replace_from'&&keep.publication_id===x.publication_id&&keep.starts_on&&keep.starts_on>=x.earliest&&keep.starts_on<=x.latest?keep.starts_on:'';
+      chosen=!!mine;
+      date=el('input',{type:'date',value:mine||x.starts_on,min:x.earliest,max:x.latest,'aria-label':'Takes over from'}) as HTMLInputElement;
       const words=el('span',{}),track=el('span',{});
       const draw=()=>{const v=date!.value||x.starts_on;words.textContent=`${name} stays in force until ${fmt(lastDay(v))}; this draft takes over from ${fmt(v)}.`;
         track.replaceChildren(mini(`${name} in force until ${fmt(lastDay(v))}, replaced from ${fmt(v)}; draft from ${fmt(v)}`,
           [seg('sd-mini-pub',pub.starts_on,v,name),seg('sd-mini-gone',v,pub.effective_until||pub.ends_on,'Replaced')],[seg('sd-mini-draft',v,x.ends_on,'Draft')]));};
-      date.addEventListener('input',()=>{input.checked=true;sync();draw();onChange();});draw();
+      date.addEventListener('input',()=>{chosen=true;input.checked=true;sync();draw();onChange();});draw();
       body.append(el('label',{class:'field sd-date'},el('span',{},'Takes over from'),dateInput(date)),words,track);
     }else if(d.mini)body.append(d.mini);
     if(!x.available&&x.why)body.append(el('small',{class:'muted'},x.why));
@@ -418,5 +422,7 @@ export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendTex
     return {choice:i.x.choice,starts_on:i.x.choice==='replace_from'&&date?.value?date.value:i.x.starts_on,publication_id:i.x.publication_id};};
   /** The primary button repeats the choice ("Create draft from 2 Nov"). */
   const verb=(prefix:string)=>{const v=value();return !v?prefix:v.choice==='amend'?'Change the published rota':`${prefix} from ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(v.starts_on+'T12:00:00Z'))}`;};
-  return {root,value,verb,needed:o.publications.some(p=>p.relation==='conflict')};
+  /** What a redraw of the group for new dates keeps (its `keep`): the choice, and the takeover date only when chosen. */
+  const kept=():OverlapValue|null=>{const v=value();return v&&{...v,starts_on:v.choice==='replace_from'&&chosen&&date?.value||''};};
+  return {root,value,kept,verb,needed:o.publications.some(p=>p.relation==='conflict')};
 }
