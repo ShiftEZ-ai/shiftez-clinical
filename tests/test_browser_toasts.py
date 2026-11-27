@@ -1,9 +1,9 @@
-"""Messages (toasts): placed above the bars of whatever they sit in, out of a docked panel's way, each dismissible,
+"""Messages (toasts): placed above the bars of whatever they sit in, out of any side panel's way, each dismissible,
 Ctrl/⌘ Z runs the newest Undo (frontend audit X-16, X-17, G-22; owner decision OD-8) and Alt M reaches it (issue 1408)."""
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, open_config, save_dialog  # noqa: F401
+from .test_browser import browser, live_server, sign_in, open_config, open_rota, open_scheduling, save_dialog  # noqa: F401
 from .test_browser_person_profile import open_person, person
 
 pytestmark = pytest.mark.browser
@@ -74,6 +74,28 @@ def test_messages_stay_clear_of_a_docked_panel(browser, live_server, h):
         page.wait_for_function("""() => {const t = document.querySelector('#toast-tray .toast'), p = document.querySelector('.dock-panel');
             return t && p && t.getBoundingClientRect().right <= p.getBoundingClientRect().left;}""")
         assert toast.bounding_box()['x'] + toast.bounding_box()['width'] <= panel.bounding_box()['x']
+    finally:
+        context.close()
+
+
+def test_messages_stay_clear_of_a_pages_own_side_panel(browser, live_server, h):
+    """Issue 1762: a page's own side panel (Auto-schedule) opening while an Undo message shows moves the message over
+    the page column too, so no button in the panel sits under a message."""
+    w = h.shift(h.workspace('Messages beside a panel'), people=[])['workspace']
+    context, page = sign_in(browser, live_server, 'admin', {'width': 1440, 'height': 1000})
+    try:
+        open_config(page, 'Department settings')
+        toast = save_sessions(page, 55)
+        toast.hover()  # its time left pauses while the pointer is over it (WCAG 2.2.1)
+        open_rota(page, w['id'])
+        open_scheduling(page)
+        toast.hover()
+        expect(toast).to_be_visible()
+        page.wait_for_function("""() => {const t = document.querySelector('#toast-tray .toast'), p = document.querySelector('#auto-panel');
+            return t && p && t.getBoundingClientRect().right <= p.getBoundingClientRect().left;}""")
+        assert page.evaluate("""() => [...document.querySelectorAll('#auto-panel button')].filter(b => b.getClientRects().length)
+            .every(b => {const r = b.getBoundingClientRect(); if (r.bottom <= 0 || r.top >= innerHeight) return true;
+                return !document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#toast-tray');})""")
     finally:
         context.close()
 
