@@ -9,7 +9,8 @@ export interface SelectionAction{label:string;icon:IconName;run:()=>unknown;tip?
   /** Same-button confirm (press twice), only for an action that cannot be undone (D42). */armed?:boolean}
 export interface SelectionState{count:number;noun:[string,string];
   /** The line under "selected" (e.g. "lines in Duties per week", "issues · On leave or away"); the noun when not given. */
-  detail?:string;actions:SelectionAction[];clear:()=>void}
+  detail?:string;actions:SelectionAction[];clear:()=>void;
+  /** The selection the actions are for (e.g. its ids): drawn again for the same one, an armed action stays armed. */key?:string}
 
 const run=(a:SelectionAction)=>{try{const r=a.run();if(r instanceof Promise)r.catch(reportError);}catch(e){reportError(e);}};
 const live=new Set<{root:HTMLElement;clear:()=>void;place:()=>void}>();
@@ -44,7 +45,7 @@ export function selectionBar(o:{label?:string;id?:string}={}){
     root.style.setProperty('--sel-left',`${r.left+r.width/2}px`);root.style.setProperty('--sel-max',`${Math.max(0,r.width-16)}px`);fit();};
   // Never wider than its list and never scrolled sideways: when the actions do not fit (a phone), the secondary ones
   // go into ⋯ More, last first, and then "selected" gives way to the count alone.
-  let state:SelectionState|null=null,folded=-1;
+  let state:SelectionState|null=null,folded=-1,drawnKey:string|undefined;
   const fit=()=>{if(!state||root.hidden||!root.isConnected)return;
     const over=()=>root.scrollWidth>root.clientWidth+1,foldable=state.actions.filter(a=>!a.more&&!a.danger&&!a.primary).length;
     for(let n=0;n<=foldable+1;n++){if(n!==folded)draw(state,n);if(!over())return;}};
@@ -52,7 +53,7 @@ export function selectionBar(o:{label?:string;id?:string}={}){
   let unwatch=()=>{},watched:Element|null=null;
   function show(s:SelectionState|null){
     root.hidden=!s||!s.count;state=s&&s.count?s:null;folded=-1;
-    if(!s||!s.count){extra=[];root.replaceChildren();return;}
+    if(!s||!s.count){extra=[];drawnKey=undefined;root.replaceChildren();return;}
     entry.clear=s.clear;if(root.isConnected)live.add(entry);
     draw(s,0);
     const host=root.parentElement;if(host&&host!==watched){unwatch();unwatch=observeSize(host,()=>place());watched=host;}
@@ -60,6 +61,10 @@ export function selectionBar(o:{label?:string;id?:string}={}){
   }
   function draw(s:SelectionState,fold:number){
     folded=fold;
+    // An armed action drawn again for the same selection (a check answering between the two presses) stays armed: its
+    // second press acts, as in a redrawn menu (dom.ts menu keep). A press elsewhere or leaving it has disarmed it already.
+    const was=s.key!==undefined&&s.key===drawnKey?root.querySelector<HTMLElement>('.sel-act.armed'):null,focused=!!was&&was===document.activeElement;
+    drawnKey=s.key;
     const word=s.count===1?s.noun[0]:s.noun[1];
     const act=(a:SelectionAction)=>{
       const b=el('button',{type:'button',class:'sel-act'+(a.primary?' primary':'')+(a.danger?' danger':''),'aria-label':a.label,'data-tip':a.tip||a.label,...(a.disabled?{'aria-disabled':'true'}:{})},icon(a.icon),el('span',{class:'label'},a.label));
@@ -79,6 +84,8 @@ export function selectionBar(o:{label?:string;id?:string}={}){
       el('span',{class:'sel-sep','aria-hidden':'true'}),...inline.map(act),...(more?[more]:[]),
       ...(danger.length?[el('span',{class:'sel-sep','aria-hidden':'true'}),...danger.map(act)]:[]),
       el('span',{class:'sel-sep','aria-hidden':'true'}),clear);
+    const again=was&&[...root.querySelectorAll<HTMLElement>('.sel-act')].find(b=>b.getAttribute('aria-label')===was.dataset.armedFrom);
+    if(again){again.click();if(focused)again.focus();}
   }
   return {root,show,place};
 }
