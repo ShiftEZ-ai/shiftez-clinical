@@ -59,7 +59,7 @@ def test_home_and_requests_share_independent_programme_decisions(audit_h):
         assert attention['requests']['count'] == requests['to_decide'] == 4
         mine = h.get(role, '/api/requests/all?for_me=true')
         assert {row['id'] for row in mine['items']} == expected_ids
-        assert {r['person'] for r in attention['requests']['sample']} == {'Alex Morgan'}
+        assert {r['person'] for r in attention['requests']['sample']} == {'Staff 01(test)'}
         assert 'private' not in json.dumps(attention['requests']).lower()
     # Approvers cannot decide overtime offers; coordinators can. The shared count unions roles only once.
     identity(h, 'workflow-combined', ['approver', 'coordinator'])
@@ -278,3 +278,9 @@ def test_worker_exception_produces_recovery_without_copying_private_error_text(a
     assert detail['recovery']['action'] == 'report_problem'
     assert detail['recovery']['link_target'] is None
     assert 'Fictional private' not in json.dumps(detail)
+
+
+def test_demo_seed_marks_every_person_as_test_data(h):
+    people = h.get('coordinator', '/api/catalogues')['people']
+    labels = sorted(person['display_name'] for person in people)
+    assert labels == ['Staff 01(test)', 'Staff 02(test)', 'Staff 03(test)']

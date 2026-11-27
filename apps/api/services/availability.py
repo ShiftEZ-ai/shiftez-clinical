@@ -536,6 +536,15 @@ def may_decide(db, actor, row, *, approval_context=None):
     return decision_allowed(db, actor, row, include_independence=False, approval_context=approval_context)
 
 
+def readable_request_balance_ids(db, actor, request_ids):
+    if not request_ids:
+        return set()
+    row = m.RequestRecord
+    may_decide_request = decision_scope(db, actor, row, include_independence=False)
+    return set(db.scalars(select(row.id).where(row.department_id == actor.department_id, row.id.in_(request_ids),
+                                               or_(row.person_id == actor.person_id, may_decide_request))))
+
+
 def owns_request(actor, row):
     """Current submitter or subject ownership, including after an identity is relinked."""
     return (row.created_by == actor.identity_id
@@ -544,6 +553,11 @@ def owns_request(actor, row):
 
 def _leave_has_started(row):
     return aware(row.start) <= m.now()
+
+
+def _require_leave_has_not_started(row):
+    require(not _leave_has_started(row), "LEAVE_ALREADY_STARTED",
+            "Ask an approver to correct leave that has already started", 409)
 
 
 def require_request_decision(db, actor, row, decision, *, approval_context=None):
@@ -619,8 +633,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             inputs_changed = bool(retired)
         if row.kind == "leave" and withdraw_approved:
             from .leave_balances import BALANCE_LEAVE_KINDS
-            require(not _leave_has_started(row), "LEAVE_ALREADY_STARTED",
-                    "Ask an approver to correct leave that has already started", 409)
+            _require_leave_has_not_started(row)
             require(row.workspace_id is None, "REQUEST_UNDO_LINKED",
                     "Remove the linked rota before withdrawing approved leave", 409)
             absences = list(db.scalars(select(m.Availability).where(
@@ -789,6 +802,7 @@ def undo_decision(db, actor, command, *, batch=False):
                 bump_inputs(db, actor, availability=True)
     withdrawn_approval = (row.details or {}).get("withdrawn_approval") if row.kind == "leave" and row.status == "withdrawn" else None
     if withdrawn_approval is not None:
+        _require_leave_has_not_started(row)
         from .leave_balances import require_undo_balance
         for ref in withdrawn_approval["absences"]:
             absence = scoped(db, m.Availability, ref["id"], actor)
@@ -1702,10 +1716,13 @@ def _history(db, actor, source, row, item):
     if source == "availability":
         linked = or_(linked, m.AuditEvent.id.in_(
             _untargeted_recording_events(row.department_id, [row.id]).with_only_columns(m.AuditEvent.id)))
+    # Refused commands stay in the audit trail, outside the request's decision history.
+    recorded = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, linked,
+                                                         m.AuditEvent.action != 'command.refused')
+                              .order_by(m.AuditEvent.created_at, m.AuditEvent.seq)))
+    show_balance = (source == 'request' and any((e.detail or {}).get('leave_balance_overdrawn') for e in recorded)
+                    and row.id in readable_request_balance_ids(db, actor, [row.id]))
     return events + [{"action": e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": "" if e.reason == e.action else e.reason,
                       **({"self_approved": True} if (e.detail or {}).get("self_approved") else {}),
-                      **({"leave_balance_overdrawn": True} if (e.detail or {}).get("leave_balance_overdrawn") else {})}
-                     # A refused command changed nothing: it stays in the audit trail, not in what was done to the request.
-                     for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, linked,
-                                                                    m.AuditEvent.action != 'command.refused')
-                                         .order_by(m.AuditEvent.created_at, m.AuditEvent.seq))]
+                      **({"leave_balance_overdrawn": True} if show_balance and (e.detail or {}).get("leave_balance_overdrawn") else {})}
+                     for e in recorded]

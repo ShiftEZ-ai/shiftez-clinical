@@ -126,7 +126,7 @@ def test_planner_list_and_coverage_share_column_wrap_actions(browser, live_serve
         staffed.click()
         expect(page.get_by_role('dialog', name=re.compile('QA clinic sessions on'))).to_be_visible()
         # A phone names people short by default (app.ts labelNow: full names default to the short label on a phone).
-        expect(page.get_by_role('dialog', name=re.compile('QA clinic sessions on'))).to_contain_text('A. Morgan' if width < 720 else 'Alex Morgan')
+        expect(page.get_by_role('dialog', name=re.compile('QA clinic sessions on'))).to_contain_text('S. 01(test)' if width < 720 else 'Staff 01(test)')
     finally:
         context.close()
 
@@ -145,16 +145,16 @@ def test_exposure_wrap_controls_keep_matrix_keyboard_and_drilldown(browser, live
         column_menu(page, person, 'Person', keyboard=True).get_by_role('menuitemcheckbox', name='Wrap all columns').click()
         expect(heat.locator('.dt-column-cell:not(.dt-wrap)')).to_have_count(0)
         expect(person).to_be_focused()
-        jordan = heat.locator('thead').get_by_role('button', name='Jordan Lee', exact=True)
-        column_menu(page, jordan, 'Jordan Lee').get_by_role('menuitemcheckbox', name='Wrap this column').click()
-        expect(heat.locator('thead th').filter(has=page.get_by_role('button', name='Jordan Lee', exact=True))).not_to_have_class(re.compile(r'\bdt-wrap\b'))
-        expect(heat.get_by_role('button', name='Alex Morgan with Jordan Lee: 2')).to_have_text('2')
+        jordan = heat.locator('thead').get_by_role('button', name='Staff 02(test)', exact=True)
+        column_menu(page, jordan, 'Staff 02(test)').get_by_role('menuitemcheckbox', name='Wrap this column').click()
+        expect(heat.locator('thead th').filter(has=page.get_by_role('button', name='Staff 02(test)', exact=True))).not_to_have_class(re.compile(r'\bdt-wrap\b'))
+        expect(heat.get_by_role('button', name='Staff 01(test) with Staff 02(test): 2')).to_have_text('2')
         heat.locator('td[tabindex="0"]').focus()
         page.keyboard.press('ArrowRight')
         cell = heat.locator('td[data-i="0"][data-j="1"]')
         expect(cell).to_be_focused()
         cell.press('Enter')
-        drill = page.get_by_role('region', name='Duties shared with a partner · Alex Morgan with Jordan Lee')
+        drill = page.get_by_role('region', name='Duties shared with a partner · Staff 01(test) with Staff 02(test)')
         expect(drill.locator('tbody tr')).to_have_count(2)
         # The compact detail table gets the shared column menus only when, unwrapped, it is wider than its box (X-18):
         # it fits on a desktop and needs them on a phone.

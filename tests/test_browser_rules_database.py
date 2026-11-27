@@ -65,7 +65,7 @@ def test_lines_selected_across_rules_change_together_and_an_approver_approves(br
         expect(main.locator('li.rt-item').filter(has_text='Duties per week')).to_contain_text('1 change')
         expect(page.locator('.topbar').get_by_role('button', name='Propose 2 changes', exact=True)).to_be_in_viewport(ratio=1)
         shot(page, f'rules-changed-actions-{width}-{scheme}')
-        # One proposal per rule, sent together; the line for everyone still gives way to Alex Morgan's.
+        # One proposal per rule, sent together; the line for everyone still gives way to Staff 01(test)'s.
         propose_all(page, 'Busier winter')
         expect(main.locator('li.rt-item').filter(has_text='Waiting for approval')).to_have_count(2)
         expect(page.locator('.topbar').get_by_role('button', name='Propose', exact=True)).to_be_disabled()
@@ -97,9 +97,9 @@ def test_a_line_opens_beside_the_table_moves_with_the_arrows_and_keeps_an_edit(b
     try:
         navigate(page, 'rules/duties_per_week')
         main, panel = page.locator('#main'), page.locator('.rc-line-panel')
-        alex = main.locator('tr[data-row]').filter(has_text='Alex Morgan')
+        alex = main.locator('tr[data-row]').filter(has_text='Staff 01(test)')
         alex.locator('td[data-col="who"]').click()
-        expect(panel.get_by_role('heading', level=2)).to_have_text('Alex Morgan at all clinics · ≤ 3 · Mandatory')
+        expect(panel.get_by_role('heading', level=2)).to_have_text('Staff 01(test) at all clinics · ≤ 3 · Mandatory')
         expect(panel).to_contain_text('Duties per week › Line 2 of 2')  # the table's order: everyone first
         expect(alex).to_have_class(re.compile('is-explained'))
         panel.get_by_role('button', name='Previous line').click()
@@ -114,7 +114,7 @@ def test_a_line_opens_beside_the_table_moves_with_the_arrows_and_keeps_an_edit(b
         page.keyboard.press('Escape')
         panel.get_by_label('Maximum', exact=True).fill('2')
         panel.get_by_role('button', name='Keep change').click()
-        expect(panel.get_by_role('heading', level=2)).to_have_text('Alex Morgan at Continuity clinic · ≤ 2 · Mandatory')
+        expect(panel.get_by_role('heading', level=2)).to_have_text('Staff 01(test) at Continuity clinic · ≤ 2 · Mandatory')
         expect(alex.get_by_label(re.compile('^Max: '))).to_have_text('2 Mandatory')
         expect(page.locator('.app-footer')).to_contain_text('1 change not yet proposed')
         shot(page, 'line-panel')
@@ -128,9 +128,9 @@ def test_a_line_opens_beside_the_table_moves_with_the_arrows_and_keeps_an_edit(b
         main.get_by_role('button', name='← Rules').click()
         expect(page.locator('.app-footer')).to_contain_text('2 changes not yet proposed')
         main.locator('li.rt-item').get_by_role('button', name='Duties per week', exact=True).click()  # within the Rules page: no question
-        expect(main.locator('tr[data-row]').filter(has_text='Alex Morgan').get_by_label(re.compile('^Max: '))).to_have_text('2 Mandatory')
+        expect(main.locator('tr[data-row]').filter(has_text='Staff 01(test)').get_by_label(re.compile('^Max: '))).to_have_text('2 Mandatory')
         # Remove line (press twice), then Esc closes the panel.
-        main.locator('tr[data-row]').filter(has_text='Alex Morgan').locator('td[data-col="where"]').click()
+        main.locator('tr[data-row]').filter(has_text='Staff 01(test)').locator('td[data-col="where"]').click()
         remove = panel.get_by_role('button', name='Remove line')
         remove.click()
         panel.get_by_role('button', name=re.compile('Remove this line')).click()
@@ -164,10 +164,10 @@ def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, li
     flag(h)
     today = date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day'])
     a = h.seed['people'][0]
-    # Alex's leave line sets only "max 0": blank inherits the monthly minimum for everyone (a conflict); another line
+    # Staff 01's leave line sets only "max 0": blank inherits the monthly minimum for everyone (a conflict); another line
     # ends within 30 days.
     catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line'),
-                                           line({'max': {'value': 0, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex on leave')])
+                                           line({'max': {'value': 0, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 on leave')])
     catalogue_rule(h, 'people_per_session', [line({'max': {'value': 3, 'level': 'mandatory'}}, ends_on=str(today + timedelta(days=11)))])
     found = h.get('coordinator', '/api/rules/catalogue')['attention']
     assert [(x['kind'], x['fixes'][0]['kind']) for x in found] == [('inherits', 'none'), ('ending', 'acknowledge')]
@@ -181,7 +181,7 @@ def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, li
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules')
         main = page.locator('#main')
-        # RU-02 counts lines: the inherits issue names Alex's line and the Everyone line (the ending issue is
+        # RU-02 counts lines: the inherits issue names Staff 01's line and the Everyone line (the ending issue is
         # acknowledged above). F-R1: said once, on the saved-view button (one warning icon), not again in the footer.
         expect(main.locator('button.dt-saved .dt-view-warn')).to_have_text('2 lines need attention')
         expect(main.locator('button.dt-saved .dt-view-warn svg')).to_have_count(1)
@@ -213,7 +213,7 @@ def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, li
         dialog.get_by_role('button', name='Apply', exact=True).click()
         expect(main.get_by_text('Nothing needs attention')).to_be_visible()
         expect(page.locator('.app-footer')).to_contain_text('1 change not yet proposed')
-        propose_all(page, 'No monthly minimum while Alex is on leave')
+        propose_all(page, 'No monthly minimum while Staff 01 is on leave')
         main.locator('button.dt-saved').click()
         page.get_by_role('menuitemradio', name=re.compile(r'^All rules\b')).click()
         expect(main.locator('li.rt-item').filter(has_text='Duties per month')).to_contain_text('Waiting for approval')
@@ -230,7 +230,7 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
     flag(h)
     a = h.seed['people'][0]
     catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line'),
-                                           line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex line')])
+                                           line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 line')])
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
@@ -240,11 +240,11 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
         expect(alex.locator('.rt-ln-num .rule-num')).to_have_text('1↰ – 10 duties')  # the number and its measure, one phrase
         expect(alex.locator('.rc-inh')).to_have_attribute('data-tip', 'Inherited from Everyone · All clinics')
         main.locator('li.rt-item').get_by_role('button', name='Duties per month', exact=True).click()
-        row = main.locator('tr[data-row]').filter(has_text='Alex line')
+        row = main.locator('tr[data-row]').filter(has_text='Staff 01 line')
         expect(row.get_by_label(re.compile('^Min: '))).to_have_text('1↰ Mandatory')
         row.locator('td[data-col="who"]').click()
         panel = page.locator('.rc-line-panel')
-        expect(panel.get_by_role('heading', level=2)).to_have_text('Alex Morgan at all clinics · 1↰ – 10 · Mandatory')
+        expect(panel.get_by_role('heading', level=2)).to_have_text('Staff 01(test) at all clinics · 1↰ – 10 · Mandatory')
         expect(panel.get_by_label('Minimum', exact=True)).to_have_attribute('placeholder', '1↰')
         expect(panel.get_by_label('Minimum', exact=True)).to_have_attribute('title', '↰ 1 from Everyone · All clinics')
         panel.get_by_role('button', name='None').first.click()
@@ -253,7 +253,7 @@ def test_an_inherited_number_shows_its_value_and_source_and_none_removes_it(brow
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog', name=re.compile('^Propose'))
         expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
-        dialog.get_by_label('Reason', exact=True).fill('No minimum for Alex')
+        dialog.get_by_label('Reason', exact=True).fill('No minimum for Staff 01')
         dialog.get_by_role('button', name='Propose', exact=True).click()
         expect(main.locator('.rc-waiting')).to_be_visible()
     finally:
@@ -375,19 +375,19 @@ def test_a_pill_opens_its_line_every_day_reads_pressed_and_none_shows_only_when_
     flag(h)
     a = h.seed['people'][0]
     catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line'),
-                                           line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex line')])
+                                           line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 line')])
     context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
     try:
         page.emulate_media(color_scheme=scheme)
         navigate(page, 'rules/duties_per_month')
         main, panel = page.locator('#main'), page.locator('.rc-line-panel')
-        main.locator('[data-row]').filter(has_text='Alex line').locator('.rp.person').first.click()  # a table row or a phone card
-        expect(panel.get_by_role('heading', level=2)).to_contain_text('Alex Morgan')
+        main.locator('[data-row]').filter(has_text='Staff 01 line').locator('.rp.person').first.click()  # a table row or a phone card
+        expect(panel.get_by_role('heading', level=2)).to_contain_text('Staff 01(test)')
         days = panel.get_by_role('group', name='Days').get_by_role('button')
         expect(days).to_have_count(7)
         for n in range(7):
             expect(days.nth(n)).to_have_attribute('aria-pressed', 'true')
-        # Alex's line sets a max and inherits the min: both have None; the everyone line has no target to drop.
+        # Staff 01's line sets a max and inherits the min: both have None; the everyone line has no target to drop.
         expect(panel.get_by_label('Minimum', exact=True).locator('xpath=../..').get_by_role('button', name='None')).to_have_attribute('data-tip', "No minimum for this line: don't take 1")
         expect(panel.locator('.rc-none')).to_have_count(2)
         panel.get_by_role('button', name='Previous line').click()
@@ -520,7 +520,7 @@ def test_list_orders_lines_anchor_then_exception_and_keeps_stored_numbers(browse
     """Unsorted Rules lines show the anchor first, then its exception, with their stored numbers."""
     flag(h)
     a = h.seed['people'][0]
-    catalogue_rule(h, 'duties_per_month', [line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Alex line'),
+    catalogue_rule(h, 'duties_per_month', [line({'max': {'value': 10, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 line'),
                                            line({'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line')])
     context, page = sign_in(browser, live_server, 'coordinator')
     try:

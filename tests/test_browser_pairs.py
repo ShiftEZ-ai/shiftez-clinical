@@ -108,7 +108,7 @@ def test_supervision_team_grouping_follows_each_sessions_recorded_supervisor(bro
             assert name in group and '8 h' in group
             chip.click()
             panel = page.locator('.wk-panel')
-            expect(panel.get_by_role('heading', level=2)).to_have_text('Alex Morgan')
+            expect(panel.get_by_role('heading', level=2)).to_have_text('Staff 01(test)')
             expect(panel.locator('.wk-panel-head')).to_contain_text('Mon' if day.endswith('05') else 'Sun')
             page.keyboard.press('Escape')
         choose(page.locator('.planner-toolbar'), 'Group', 'Group by', 'Rank')

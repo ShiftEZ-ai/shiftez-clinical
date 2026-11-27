@@ -21,9 +21,9 @@ def test_display_previous_values_restore_defaults_and_reject_stale_or_unauthoris
 
 
 def test_saved_view_update_returns_checked_previous_definition_without_cross_owner_access(h):
-    value = {'table_key': 'people', 'name': 'Original view', 'definition': definition(q='Alex')}
+    value = {'table_key': 'people', 'name': 'Original view', 'definition': definition(q='Staff 01')}
     original = h.command('staff', 'table_view.create', value)['view']
-    changed = h.command('staff', 'table_view.update', {**value, 'name': 'Changed view', 'definition': definition(q='Jordan')},
+    changed = h.command('staff', 'table_view.update', {**value, 'name': 'Changed view', 'definition': definition(q='Staff 02')},
                         original['id'], original['revision'])
     assert changed['previous_view'] == {k: original[k] for k in ('table_key', 'name', 'definition', 'scope')}
     h.command('coordinator', 'table_view.update', changed['previous_view'], original['id'], changed['view']['revision'], status=404)
@@ -36,7 +36,7 @@ def test_saved_view_update_returns_checked_previous_definition_without_cross_own
 
 
 def test_deleted_view_can_be_recreated_only_as_an_owned_valid_view_within_the_limit(h):
-    value = {'table_key': 'people', 'name': 'Recover this view', 'definition': definition(q='Alex')}
+    value = {'table_key': 'people', 'name': 'Recover this view', 'definition': definition(q='Staff 01')}
     original = h.command('staff', 'table_view.create', value)['view']
     h.command('coordinator', 'table_view.delete', {}, original['id'], original['revision'], status=404)
     h.command('staff', 'table_view.delete', {}, original['id'], original['revision'] + 1, status=409)

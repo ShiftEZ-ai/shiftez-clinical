@@ -295,10 +295,10 @@ def check_weekly_limit(data, ids, spec):
 
 
 def check_scenario(data, ids, spec):
-    if spec['id'] == 'A-FAIR-01':
+    if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
         return check_fair_share(data, ids, spec)
-    if spec['id'] == 'A-SPREAD-01':
+    if 'session_loads' in spec['expect']:
         from tests.golden_atlas import check_spread
         return check_spread(data, ids, spec)
     if 'safety' in spec['expect']:

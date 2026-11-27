@@ -537,7 +537,7 @@ def test_the_rules_database_opens_rules_to_their_lines_and_the_rule_page(browser
         lines = main.locator('li.rt-ln')
         expect(lines).to_have_count(2)
         expect(lines.first.locator('.rt-ln-num')).to_contain_text('≤ 5')
-        expect(lines.nth(1).locator('.rp.person')).to_have_text('Alex Morgan')
+        expect(lines.nth(1).locator('.rp.person')).to_have_text('Staff 01(test)')
         expect(main.get_by_role('button', name='+ New line in Duties per week')).to_be_visible()
         shot(page, f'rules-{width}-{scheme}')
         # The static toggle name exposes state through aria-expanded; Alt+click closes all rules.

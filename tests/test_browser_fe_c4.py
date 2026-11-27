@@ -173,16 +173,16 @@ def test_a_returned_change_says_so_with_the_reason_and_is_taken_back_to_edit(bro
         fake.install(page)
         s = next(x for x in fake.shifts if x['start'][:10] == tomorrow.isoformat())
         fake.changes = [{'id': 'c1', 'kind': 'absence', 'shift_id': s['id'], 'assignment_id': s['participants'][0]['id'], 'absence_reason': 'Sick',
-                         'reason': 'Alex absent', 'status': 'submitted', 'workspace_id': 'candidate', 'created_at': '2026-11-03T10:00:00+00:00',
+                         'reason': 'Staff 01 absent', 'status': 'submitted', 'workspace_id': 'candidate', 'created_at': '2026-11-03T10:00:00+00:00',
                          'urgency': 'routine', 'submitted_at': '2026-11-03T10:05:00+00:00',
-                         'returned': {'by_name': 'Fictional approver', 'at': '2026-11-03T11:00:00+00:00', 'reason': 'Ask Taylor first'}}]
+                         'returned': {'by_name': 'Fictional approver', 'at': '2026-11-03T11:00:00+00:00', 'reason': 'Ask Staff 03 first'}}]
         show(page, f'schedule/week/{tomorrow.isoformat()}')
         chip = page.locator('.pc-chip')
         expect(chip).to_have_text('1 change returned')
         chip.click()
         panel = page.locator('.dock-panel.pc-panel')
         expect(panel).to_contain_text('Returned by Fictional approver')
-        expect(panel).to_contain_text('“Ask Taylor first”')
+        expect(panel).to_contain_text('“Ask Staff 03 first”')
         expect(panel.locator('.badge').filter(has_text='Returned')).to_be_visible()
         expect(panel.locator('.badge').filter(has_text='Waiting')).to_have_count(0)
         shot(page, 'SW-06-returned-change-list-1440')
@@ -196,14 +196,14 @@ def test_a_returned_change_says_so_with_the_reason_and_is_taken_back_to_edit(bro
 
 
 def absent_alone(browser, live_server, h):
-    """Taylor is alone in three days; the coordinator marks them absent (FakeChanges: nobody left)."""
+    """Staff 03 is alone in three days; the coordinator marks them absent (FakeChanges: nobody left)."""
     _, later = published(h)
     context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
     fake = FakeChanges(h, closes=True)
     fake.install(page)
     panel = open_session(page, h, later, person=2)
-    panel.get_by_role('button', name='Change Taylor Noor on this session').click()
-    page.get_by_role('menu', name='Change Taylor Noor').get_by_role('menuitem', name='Mark absent · Sick').click()
+    panel.get_by_role('button', name='Change Staff 03(test) on this session').click()
+    page.get_by_role('menu', name='Change Staff 03(test)').get_by_role('menuitem', name='Mark absent · Sick').click()
     return context, page, panel, fake
 
 
@@ -214,13 +214,13 @@ def test_an_absence_that_leaves_nobody_keeps_the_session_open_and_offers_replace
     try:
         expect(panel).to_contain_text('Nobody is left on this session.')
         expect(panel).to_contain_text('Its place stays open.')
-        replace = panel.get_by_role('button', name='Replace Taylor Noor…')
+        replace = panel.get_by_role('button', name='Replace Staff 03(test)…')
         expect(replace).to_have_class(re.compile(r'\bprimary\b'))
         expect(panel.get_by_role('button', name='Keep it closed')).to_have_count(0)
         expect(panel.get_by_role('button', name='Close the session…')).not_to_have_class(re.compile(r'\bprimary\b'))
         shot(page, 'SW-02-nobody-left-1440')
         replace.click()
-        expect(panel.get_by_role('heading', name='Replace Taylor Noor')).to_be_visible()
+        expect(panel.get_by_role('heading', name='Replace Staff 03(test)')).to_be_visible()
         assert [k for k, _, _ in fake.sent] == ['publication.change']  # SW3-A-18: opening Replace keeps the absence
     finally:
         page.unroute_all(behavior='ignoreErrors')

@@ -127,7 +127,7 @@ def test_name_examples_come_from_the_department_and_save_sits_in_the_header(brow
         navigate(page, 'configuration')
         page.get_by_role('navigation', name='Configuration sections').get_by_role('button', name='Names & codes', exact=True).click()
         pane = page.locator('.config-pane')
-        expect(pane.get_by_role('radiogroup', name='Show names as')).to_contain_text('A. Morgan')  # Alex Morgan, from the seed
+        expect(pane.get_by_role('radiogroup', name='Show names as')).to_contain_text('S. 01(test)')  # Staff 01(test), from the seed
         expect(pane).not_to_contain_text('Felix Lewis')
         expect(pane.locator('th', has_text='Automatic')).to_have_count(0)  # the code shows once, in its input
         bar = pane.get_by_role('region', name='Unsaved changes')

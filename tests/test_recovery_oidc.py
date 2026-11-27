@@ -138,7 +138,7 @@ def test_oidc_signed_token_verification(idp,rsa_key,monkeypatch,mutation):
 
 
 def test_oidc_unknown_subject_does_not_auto_provision_by_name(h,idp):
-    with pytest.raises(Problem,match='add your hospital sign-in'),transaction(h.app.state.engine,write=True) as db:
+    with pytest.raises(Problem,match='add your institutional sign-in'),transaction(h.app.state.engine,write=True) as db:
         oidc.finish_flow(db,idp,{'sub':'unknown','name':'Admin','email':'admin@example.test','roles':['admin']})
 
 

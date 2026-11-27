@@ -152,9 +152,9 @@ def test_tags_are_kept_in_one_place_and_offered_when_editing_a_person(browser, l
         frame = page.locator('#main .table-scroll').first
         assert frame.evaluate('s => s.scrollHeight <= s.clientHeight && s.scrollWidth <= s.clientWidth')
         navigate(page, 'people')
-        page.locator('#main tr').filter(has_text='Alex Morgan').get_by_role('button', name=re.compile('^Open')).click()
+        page.locator('#main tr').filter(has_text='Staff 01(test)').get_by_role('button', name=re.compile('^Open')).click()
         # P-02: the row button is Open (the side panel); its Edit opens the person form with the tags.
-        page.get_by_role('button', name=re.compile('^Edit Alex Morgan')).click()
+        page.get_by_role('button', name=re.compile('^Edit Staff 01\\(test\\)')).click()
         # One tags editor (P-05): the shared creatable picker offers the department's tags for people (never a clinic tag).
         page.get_by_role('dialog').get_by_role('button', name=re.compile('^Tags: ')).click()
         expect(page.get_by_role('option', name='Part_time', exact=True)).to_be_visible()

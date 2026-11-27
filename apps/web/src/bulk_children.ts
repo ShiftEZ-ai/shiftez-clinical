@@ -142,7 +142,7 @@ export async function relatedPage(target:HTMLElement,child:string){
       keepSelection(selectionKey('related-'+child,parentSelection(p!)),carry.filter(id=>scope.has(id)));carry=null;}
     table=dataTable<Record<string,any>>({id:'related-'+child,noun:nounOf(child),rows,rowId:r=>String(r.id),
       collection:child,parent:()=>parentSelection(p!),controls:[chip],serverPaged:true,serverTotal:()=>total,serverFilters:['status'],
-      // A record is named by its first two properties ("Alex Morgan · Continuity clinic").
+      // A record is named by its first two properties ("Staff 01(test) · Continuity clinic").
       rowLabel:r=>columns.slice(0,2).map(c=>c.text?.(r)).filter(Boolean).join(' · ')||String(r.id),
       asOf:spec!.dated?d=>{day=d===departmentToday()?'':d;want=PAGE;void load();}:undefined,
       onSearch:(text,options)=>{q=text;so=options;want=PAGE;return load();},

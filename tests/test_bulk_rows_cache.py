@@ -64,7 +64,7 @@ def test_next_page_reuses_resolved_identities_and_loads_only_page_related_contex
     with bulk._ROWS_CACHE_LOCK:
         cache = bulk._ROWS_CACHE[h.app.state.engine]
         assert all(set(value) == {'refs', 'token', 'groups', 'expires'} for value in cache.values())
-        assert 'Alex' not in repr(cache) and 'Taylor' not in repr(cache)
+        assert 'Staff 01' not in repr(cache) and 'Staff 03' not in repr(cache)
 
 
 def test_field_scoped_context_preserves_the_shared_person_and_clinic_facts(h):

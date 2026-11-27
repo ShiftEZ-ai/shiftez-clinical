@@ -32,7 +32,7 @@ def test_required_dropdown_starts_on_choose_and_blocks_an_untouched_save(browser
         assert person.evaluate("s => s.validity.valueMissing")
         assert len(h.get("credentialer", "/api/catalogues")["eligibilities"]) == before
         # A choice clears it.
-        person.select_option(label="Alex Morgan")
+        person.select_option(label="Staff 01(test)")
         assert not person.evaluate("s => s.validity.valueMissing")
     finally:
         context.close()

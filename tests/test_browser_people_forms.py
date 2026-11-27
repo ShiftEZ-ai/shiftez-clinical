@@ -71,7 +71,7 @@ def test_relationship_forms_speak_the_page_and_say_what_is_missing(browser, live
     context, page = sign_in(browser, live_server, "forms-coordinator")
     try:
         navigate(page, "people")
-        row(page, "Alex Morgan").get_by_role("button", name=re.compile("^Open ")).click()
+        row(page, "Staff 01(test)").get_by_role("button", name=re.compile("^Open ")).click()
         panel = page.locator(".dock-panel.person-panel")
         panel.get_by_role("button", name="Add rank", exact=True).click()
         form = page.get_by_role("dialog", name="Add rank")
@@ -98,7 +98,7 @@ def test_a_retired_rank_still_records_its_history(browser, live_server, h):
     context, page = sign_in(browser, live_server, "retired-coordinator")
     try:
         navigate(page, "people")
-        row(page, "Alex Morgan").get_by_role("button", name=re.compile("^Open ")).click()
+        row(page, "Staff 01(test)").get_by_role("button", name=re.compile("^Open ")).click()
         page.locator(".dock-panel.person-panel").get_by_role("button", name="Add rank", exact=True).click()
         form = page.get_by_role("dialog", name="Add rank")
         expect(form.locator(".missing-setup")).to_have_count(0)
@@ -125,8 +125,8 @@ def test_the_tags_picker_says_the_servers_limits_under_the_field(browser, live_s
     page.on("request", lambda r: r.method == "POST" and "/api/commands" in r.url and "catalogue.update" in (r.post_data or "") and sent.append(r))
     try:
         navigate(page, "people")
-        row(page, "Alex Morgan").get_by_role("button", name=re.compile("^Open ")).click()
-        page.get_by_role("button", name=re.compile("^Edit Alex Morgan")).click()
+        row(page, "Staff 01(test)").get_by_role("button", name=re.compile("^Open ")).click()
+        page.get_by_role("button", name=re.compile("^Edit Staff 01\\(test\\)")).click()
         form = page.get_by_role("dialog")
         form.get_by_role("button", name=re.compile("^Tags: ")).click()
         long = "A" * 25
@@ -202,7 +202,7 @@ def test_editing_job_title_preserves_contacts_omitted_from_people_list(browser, 
         panel = open_person(page, p)
         panel.get_by_role("button", name=f"Edit {p['display_name']}", exact=True).click()
         form = page.get_by_role("dialog", name="Edit person", exact=True)
-        for label in ("Hospital phone", "Office extension", "Pager number"):
+        for label in ("Work phone", "Office extension", "Pager number"):
             expect(form.get_by_label(label, exact=True)).to_have_value("")
         form.get_by_label("Job title", exact=True).fill("Updated title")
         form.get_by_role("button", name="Save version", exact=True).click()
