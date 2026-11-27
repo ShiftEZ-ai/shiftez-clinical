@@ -80,8 +80,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Test policy
 - No retries to get green, no skipped or quietly removed tests. Fix causes; never re-run an unchanged failure.
-  The first test attempt determines the verdict on pull requests, merge groups and default-branch pushes.
-  Later observations are diagnostic evidence.
+  The first test attempt determines the verdict for single-replica pull request, merge group and
+  default-branch push plans. Later observations are diagnostic evidence.
 - A failing test is repaired by restoring what it asserts. Never weaken, skip, delete, quarantine or
   re-parameterise away a failing assertion.
 - A replaced test keeps every assertion, or says for each retired one which design decision made it untrue.

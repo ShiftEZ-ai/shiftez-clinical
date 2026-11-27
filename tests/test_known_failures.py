@@ -647,7 +647,8 @@ def quarantine_row(node=RED, kind="baseline"):
 @pytest.mark.parametrize(("replicas", "outcome", "missing_browser", "refusal"), [
     ((1,), "passed", False, None),
     ((1,), "passed", True, "Missing or unexpected shard artifacts: browser-1-1"),
-    ((1,), "failed", False, "Trusted known-failure comparison refused the evidence"),
+    pytest.param((1,), "failed", False, "Trusted known-failure comparison refused the evidence",
+                 id="first-attempt-failure-stays-red"),
     ((1, 2), "passed", False, "Replica count differs from the trusted reader context"),
 ])
 def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, refusal):
@@ -657,8 +658,7 @@ def test_main_push_verdict(trusted_result, replicas, outcome, missing_browser, r
     if refusal is None:
         assert verdict["passed"] is True
     elif outcome == "failed":
-        assert verdict["passed"] is False
-        assert "New failures outside the known-failure list" in verdict["reason"]
+        assert verdict == {"passed": False, "reason": "New failures outside the known-failure list: " + RED}
     else:
         assert verdict is None
 
@@ -672,6 +672,19 @@ def test_release_verdict_requires_its_base_and_all_shard_evidence(trusted_result
     assert error == "Evidence is not bound to the independently resolved candidate/target" and verdict is None
     (error, verdict), _ = trusted_result("incomplete", **options, missing_browser=True)
     assert "Missing or unexpected shard artifacts: browser-1-1" in error and verdict is None
+
+
+def test_two_replica_push_refuses_recovered_known_skip(trusted_result):
+    options = {"branch": "release/v1.2.3", "default": "main", "event": "push",
+               "replicas": (1, 2), "reviewed_skip": True, "later": "passed"}
+    (error, verdict), _ = trusted_result("passes", outcome="passed", **options)
+    assert error is None and verdict["passed"] is True
+
+    result, (_, _, artifacts) = trusted_result("recovered", outcome="failed", **options)
+    assert result == ("Release/known-skip execution contains a failure or error", None)
+    assert json.loads(artifacts["recovered-tests.json"]) == [
+        {"node": RED, "class": "unstable", "observations": ["failed", "passed"]},
+    ]
 
 
 def test_pr_verdict_binds_evidence_to_verified_base_with_stale_event(trusted_result):
@@ -710,13 +723,17 @@ def test_later_workflow_observations_leave_the_first_verdict(trusted_result, eve
         ]
     else:
         assert error is None
+        assert json.loads(artifacts["later-test-failures.json"]) == [
+            {"node": RED, "observations": ["passed", "failed"]},
+        ]
 
 
 def test_latest_pass_cannot_replace_missing_first_attempt(trusted_result):
     (error, verdict), (_, _, artifacts) = trusted_result(
         "missing-first-attempt", outcome="passed", later="passed", missing_browser=True)
     assert error == "Trusted known-failure comparison refused the evidence"
-    assert verdict == {"passed": False, "reason": "Missing first-attempt shard evidence"}
+    assert verdict == {"passed": False, "reason": (
+        "Missing first-attempt shard evidence. Push or update the branch to start a new first attempt.")}
     assert json.loads(artifacts["outside-observations.json"])["unobserved_attempts"] == [
         {"suite": "browser", "shard": 1, "replica": 1, "attempt": 1}]
 

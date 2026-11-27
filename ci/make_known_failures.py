@@ -328,6 +328,15 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
             if first_run.keys() & outcomes.keys():
                 raise ValueError("A node executed more than once in a full run")
             first_run.update(outcomes)
+        if output is not None and int(run_attempt) > 1:
+            later_failures = [
+                {"node": node, "observations": ["passed", outcome]}
+                for node, outcome in sorted(runs[1].items())
+                if outcome in {"failed", "error"} and first_run.get(node) == "passed"
+            ]
+            if later_failures:
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "later-test-failures.json").write_text(encoded(later_failures), encoding="utf-8")
         return [first_run]
     return [runs[replica] for replica in plan["replicas"]]
 
@@ -841,7 +850,7 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                            reruns=evidence.reruns, unobserved=evidence.unobserved,
                            quarantined=() if release else quarantined)
             if first_attempt and any(row["attempt"] == 1 for row in evidence.unobserved):
-                raise ValueError("Missing first-attempt shard evidence")
+                raise ValueError("Missing first-attempt shard evidence. Push or update the branch to start a new first attempt.")
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,

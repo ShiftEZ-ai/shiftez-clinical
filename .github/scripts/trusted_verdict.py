@@ -267,6 +267,9 @@ def main():
             error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)
             outside = {row["node"] for row in maker.outside_observations(policy.decode(current), runs)}
             error_nodes |= product_errors & outside
+            recovered = evidence.recovered
+            if recovered and (release or allowed_skips & recovered.keys()):
+                raise ValueError("Release/known-skip execution contains a failure or error")
             compared, skipped = known_skips.comparison_runs(
                 runs, allowed_skips, release=release, allowed_errors=error_nodes, quarantined=quarantine)
             print("Known skips: reviewed=" + str(len(allowed_skips)) + "; observed=" + str(len(skipped)))
