@@ -38,7 +38,7 @@ def inherited_conflict(h):
     catalogue_rule(h, 'duties_per_month', [
         line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone'),
         line({'max': {'value': 0, 'level': 'mandatory'}},
-             who={'conditions': [{'field': 'person_ids', 'values': [h.seed['people'][0]]}]}, note='Alex on leave'),
+             who={'conditions': [{'field': 'person_ids', 'values': [h.seed['people'][0]]}]}, note='Staff 01 on leave'),
     ])
 
 
@@ -190,7 +190,7 @@ def test_attention_fix_preserves_other_unsent_numbers(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules/duties_per_month')
-        stage_max(page, 2, 'Alex on leave')
+        stage_max(page, 2, 'Staff 01 on leave')
         page.get_by_role('button', name='← Rules').click()
         view(page, 'Needs attention')
         page.get_by_role('button', name='Give line 2 no min (None)', exact=True).click()
@@ -288,7 +288,7 @@ def test_attention_counts_and_empty_copy_track_local_fix_undo_and_discard(browse
             expect(page.get_by_role('menu', name='Saved views')).to_have_count(0)
 
         expect(saved).to_have_attribute('aria-label', 'Saved views: Needs attention')
-        attention(2)  # RU-02 counts lines: the one inherited conflict names Alex's line and the Everyone line
+        attention(2)  # RU-02 counts lines: the one inherited conflict names Staff 01's line and the Everyone line
         apply = page.get_by_role('button', name='Give line 2 no min (None)', exact=True)
         apply.click()
         attention(0)

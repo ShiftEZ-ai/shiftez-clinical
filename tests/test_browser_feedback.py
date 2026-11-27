@@ -449,7 +449,7 @@ def test_a_long_table_is_copied_row_by_row_only_where_it_is_in_view(browser, liv
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
         toolbar(page.locator('#main'), 'Filter').get_by_role('button', name='Clear all filters', exact=True).click()

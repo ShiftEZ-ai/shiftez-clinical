@@ -42,16 +42,16 @@ def test_saved_table_view_update_and_delete_undo_restore_query_selection_and_rel
     try:
         navigate(page, 'people')
         search = page.get_by_role('searchbox', name='Search people', exact=True)
-        search.fill('Alex')
+        search.fill('Staff 01')
         toolbar(page, 'Saved views').get_by_role('menuitem', name='New view…', exact=True).click()
         dialog = page.get_by_role('dialog', name='New view', exact=True)
         dialog.get_by_label('View name', exact=True).fill('My recovered people')
         save_dialog(dialog, 'Save view')
         original = h.get('coordinator', '/api/table-views?table=people')['views'][0]
-        search.fill('Jordan')
+        search.fill('Staff 02')
         toolbar(page, 'Saved views').get_by_role('menuitem', name='Update “My recovered people”', exact=True).click()
         page.locator('.toast').filter(has_text='View updated.').get_by_role('button', name='Undo', exact=True).click()
-        expect(search).to_have_value('Alex')
+        expect(search).to_have_value('Staff 01')
         expect(page.get_by_role('button', name='Saved views: My recovered people', exact=True)).to_be_visible()
         restored = h.get('coordinator', '/api/table-views?table=people')['views'][0]
         assert restored['definition'] == original['definition']
@@ -61,12 +61,12 @@ def test_saved_table_view_update_and_delete_undo_restore_query_selection_and_rel
         assert h.get('coordinator', '/api/table-views?table=people')['views'] == []
         page.locator('.toast').filter(has_text='View deleted.').get_by_role('button', name='Undo', exact=True).click()
         expect(page.get_by_role('button', name='Saved views: My recovered people', exact=True)).to_be_visible()
-        expect(search).to_have_value('Alex')
+        expect(search).to_have_value('Staff 01')
         recovered = h.get('coordinator', '/api/table-views?table=people')['views'][0]
         assert recovered['id'] != original['id'] and recovered['definition'] == original['definition']
         page.reload()
         expect(page.get_by_role('button', name='Saved views: My recovered people', exact=True)).to_be_visible()
-        expect(search).to_have_value('Alex')
+        expect(search).to_have_value('Staff 01')
     finally:
         context.close()
 

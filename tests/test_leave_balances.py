@@ -300,6 +300,28 @@ def test_withdrawal_undo_cannot_overdraw_without_an_approver(h):
     assert next(row for row in requests if row['id'] == first['id'])['status'] == 'withdrawn'
 
 
+def test_withdrawal_undo_refuses_at_leave_start(h, monkeypatch):
+    start = freeze_clock(monkeypatch) + timedelta(minutes=1)
+    configure(h, 4)
+    row = request_leave(h, start=start.isoformat(), end=(start + timedelta(hours=1)).isoformat())['record']
+    approved = decide(h, row)['record']
+    withdrawn = decide(h, approved, 'withdraw', 'staff')['record']
+    reason = {'reason': 'Restore approved leave'}
+
+    restored = h.command('staff', 'request.undo', reason, withdrawn['id'], withdrawn['revision'])['record']
+    assert restored['status'] == 'approved'
+    assert balances(h, row)[0]['used_days'] > 0
+
+    withdrawn = decide(h, restored, 'withdraw', 'staff')['record']
+    freeze_clock(monkeypatch, start)
+    denied = h.command('staff', 'request.undo', reason, withdrawn['id'], withdrawn['revision'], status=409)
+    assert denied['error']['code'] == 'LEAVE_ALREADY_STARTED'
+    requests = h.get('staff', '/api/requests')['requests']
+    saved = next(record for record in requests if record['id'] == row['id'])
+    assert (saved['status'], saved['revision']) == ('withdrawn', withdrawn['revision'])
+    assert not any(balance['used_days'] for balance in balances(h, row))
+
+
 def test_recorded_leave_counts_and_started_approval_cannot_be_withdrawn(h):
     from .test_leave_types import absence
 

@@ -61,13 +61,15 @@ def check_leadership(data, ids, spec):
     [line] = [row for row in policy['definition']['rule']['lines']
               if row['settings']['team_lead_requirement'].get('count_scope') == 'concurrent_duties']
     line['settings']['team_lead_requirement']['count_scope'] = 'duty'
-    [gap] = lead_errors(separate)
+    separate_gaps = lead_errors(separate)
+    [gap] = separate_gaps
     assert (gap['code'], gap['shift_id'], gap['detail']['available']) == (
         concurrent['gap_code'], ids[concurrent['unled_duty']], 0)
 
     excess = copy.deepcopy(shared)
     shift(excess, ids[concurrent['unled_duty']])['participants'][0]['team_lead'] = True
-    [gap] = lead_errors(excess)
+    excess_gaps = lead_errors(excess)
+    [gap] = excess_gaps
     assert gap['code'] == concurrent['gap_code']
     assert gap['detail']['scheduled'] == 2
     assert set(gap['detail']['affected_shift_ids']) == set(members)
@@ -81,4 +83,4 @@ def check_leadership(data, ids, spec):
                    for p in shift(candidate, shift_id)['participants']) == 1
     return {'assertions': {'boundary_min', 'boundary_max', 'continuity', 'counterfactual', 'seed_robustness',
                            'concurrent_leaders'},
-            'bindings': {'lead': len(minimum) + len(maximum) + len(whole) + 2}}
+            'bindings': {'lead': len(minimum) + len(maximum) + len(whole) + len(separate_gaps) + len(excess_gaps)}}

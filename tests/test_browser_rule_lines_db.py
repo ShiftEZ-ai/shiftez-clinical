@@ -79,7 +79,7 @@ def test_lines_are_edited_in_a_draft_and_proposed_together(browser, live_server,
         expect(panel.get_by_role('heading', level=2)).to_contain_text('Continuity clinic')
         panel.get_by_role('button', name='Close panel', exact=True).click()
         expect(main.locator('tr[data-row]')).to_have_count(3)  # three lines: nothing was added
-        # Select the lines (Shift ticks the range) and switch their strength together. Alex Morgan's line goes Advisory
+        # Select the lines (Shift ticks the range) and switch their strength together. Staff 01(test)'s line goes Advisory
         # too: a more specific line outranks a broader one only at the same strength, else both apply (maintenance, 21e096a0d),
         # so the line for everyone gives way to it again.
         boxes = main.locator('tbody tr[data-row] input.bulk-check')
@@ -231,7 +231,7 @@ def test_many_issues_show_as_one_summary_and_a_badge_per_line(browser, live_serv
         panel.get_by_role('button', name='Close panel', exact=True).click()
         expect(main.locator('tbody tr[data-row]')).to_have_count(3)
         # The person's line twice: the same line, and both overlap the line for everyone.
-        main.locator('tr').filter(has_text='Alex Morgan').locator('input.bulk-check').check()
+        main.locator('tr').filter(has_text='Staff 01(test)').locator('input.bulk-check').check()
         duplicate(page)
         bar = main.locator('.rc-checkbar')
         expect(bar).to_contain_text('2 duplicate lines')
@@ -239,8 +239,8 @@ def test_many_issues_show_as_one_summary_and_a_badge_per_line(browser, live_serv
         bar.get_by_role('button', name='Show these lines').click()
         expect(page.locator('.app-footer .dt-count')).to_have_text('2 lines')  # only the two copies; the others have no issue
         expect(main.locator('tr').filter(has_text='Continuity clinic')).to_have_count(0)
-        main.locator('tr').filter(has_text='Alex Morgan').first.get_by_role('button', name='⚠ Same line').click()
-        expect(page.get_by_role('dialog', name='The same line twice')).to_contain_text('“Alex Morgan at all clinics · Sun–Sat · ≤ 3 · Mandatory · 1 Oct 2026 → 14 Nov 2026” is there twice')
+        main.locator('tr').filter(has_text='Staff 01(test)').first.get_by_role('button', name='⚠ Same line').click()
+        expect(page.get_by_role('dialog', name='The same line twice')).to_contain_text('“Staff 01(test) at all clinics · Sun–Sat · ≤ 3 · Mandatory · 1 Oct 2026 → 14 Nov 2026” is there twice')
         page.keyboard.press('Escape')
         bar.get_by_role('button', name='Show all lines').click()
         expect(page.locator('.app-footer .dt-count')).to_have_text('4 lines')

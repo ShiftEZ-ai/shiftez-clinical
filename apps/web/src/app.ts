@@ -5230,7 +5230,7 @@ function ruleStemFor(p:Row,people:Map<string,string>){
   const parts=n.replace(/\d{4}-\d{2}(-\d{2})?/g,'').split(/\s+[·\-–]\s+|^\s*[·\-–]\s*|\s*[·\-–]\s*$/).map(x=>x.trim()).filter(Boolean);
   const out=parts.join(' · ');return out?out[0].toUpperCase()+out.slice(1):String(p.name);}
 const ruleFamilyFor=(p:Row,people:Map<string,string>)=>`${p.definition.rule.kind}|${ruleStemFor(p,people).toLocaleLowerCase()}`;
-/** A hospital phone as a dial link; several office extensions stay separate links (never one long number). */
+/** A work phone as a dial link; several office extensions stay separate links (never one long number). */
 const dial=(value:unknown)=>{const v=String(value||'').trim();return v?el('a',{href:'tel:'+v.replace(/[^+\d]/g,'')},v):el('span',{class:'muted'},'—');};
 const extensions=(value:unknown)=>{const parts=String(value||'').split(/\s*[-,;/]\s*/).filter(Boolean);return parts.length?el('span',{},...parts.map((n,i)=>el('span',{},i?' / ':'',dial(n)))):dial('');};
 /** People = the department directory and, for those who manage them, ranks, eligibility and skills: one list whose
@@ -5322,7 +5322,7 @@ async function peoplePage(target:HTMLElement){
     // The recorded title only: the rank is its own column (P-02).
     {key:'title',label:'Title',text:p=>String(p.title??''),facet:p=>String(p.title??''),cell:p=>p.title||none()},
     {key:'section',label:'Section',field:'directory_section',text:sectionLabel,facet:sectionLabel,cell:p=>sectionLabel(p)||none()},
-    {key:'phone',label:'Hospital phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
+    {key:'phone',label:'Work phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
     {key:'ext',label:'Extension',field:'work_extension',text:p=>String(p.work_extension||''),cell:p=>extensions(p.work_extension)},
     ...extraContacts,
   ];
@@ -8337,16 +8337,16 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
   const admin=permits(CAPABILITY.ADMIN),fullAccess=admin||may('access.system_roles');
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
   const onboard=admin&&access.accounts_enabled?button('Onboard staff',()=>onboardingPanel(rows('people'),new Set(identities.map(i=>i.person_id).filter(Boolean)),refresh),'secondary'):null;
-  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
-  /** A hospital sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
+  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add institutional sign-in',()=>void institutionalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; institutional sign-in still works.'})));
+  /** An institutional sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
    *  identity.bind checks against): shown, not typed. Without one there is nothing to bind to: the settings say how. */
-  async function hospitalSignIn(){
+  async function institutionalSignIn(){
     const cfg=await get<AuthConfigStatus>('/api/admin/auth-config').catch(e=>{reportError(e);return null;});if(!cfg)return;
-    if(!cfg.issuer){showDialog('Hospital sign-in is not set up','',(body,close)=>body.append(note('This server has no hospital sign-in provider yet, so a hospital user cannot be added.','warning'),
+    if(!cfg.issuer){showDialog('Institutional sign-in is not set up','',(body,close)=>body.append(note('This server has no institutional sign-in provider yet, so no one can be added this way.','warning'),
       el('div',{class:'actions'},button('Open sign-in settings',()=>{close();navigate('configuration/sign_in');},'primary'))));return;}
-    formDialog('Add a hospital sign-in','Type the user ID exactly as your hospital’s identity team gives it. The sign-in has no access until it is given a role.',form=>{
-    const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('Hospital user ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
-    form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Hospital sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
+    formDialog('Add an institutional sign-in','Type the user ID exactly as your organisation’s identity service gives it. The sign-in has no access until it is given a role.',form=>{
+    const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('User ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
+    form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Institutional sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
   });}
   // Who gives or revokes a role comes from the server permission contract.
   const manages=(r:string)=>!grantRefusal(r,me!.roles);

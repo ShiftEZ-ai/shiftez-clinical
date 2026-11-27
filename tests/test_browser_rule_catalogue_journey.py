@@ -52,14 +52,14 @@ def test_turn_on_add_a_line_acknowledge_its_overlap_approve_and_undo(browser, li
         navigate(page, 'rules/duties_per_week')
         main = page.locator('#main')
         main.get_by_role('button', name='New line: a person, rank, clinic or #tag').click()
-        page.get_by_role('combobox', name='Search New line').fill('Alex Morgan')
-        page.get_by_role('option', name=re.compile('^Alex Morgan')).first.click()
+        page.get_by_role('combobox', name='Search New line').fill('Staff 01(test)')
+        page.get_by_role('option', name=re.compile('^Staff 01\\(test\\)')).first.click()
         # The new line opens in the panel; it joins the table once it has a number.
         panel = page.locator('.rc-line-panel')
         panel.get_by_label('Maximum', exact=True).fill('3')
         panel.get_by_role('button', name='Keep change').click()
         panel.get_by_role('button', name='Close panel', exact=True).click()
-        alex = main.locator('tr').filter(has_text='Alex Morgan')
+        alex = main.locator('tr').filter(has_text='Staff 01(test)')
         expect(alex.locator('.rt-instead')).to_contain_text('(instead of ≤ 5')
         expect(alex).to_contain_text('3 Mandatory')  # The person line takes the strength it overrides.
         expect(alex.locator('.rc-overlap')).to_have_count(0)
@@ -67,8 +67,8 @@ def test_turn_on_add_a_line_acknowledge_its_overlap_approve_and_undo(browser, li
         page.locator('.topbar').get_by_role('button', name='Propose 1 change').click()
         dialog = page.get_by_role('dialog')
         expect(dialog.get_by_label('I have read which lines give way and that is intended')).to_have_count(0)
-        reason(page, 'Alex returns from leave', 'Propose')
-        expect(main.locator('.rc-waiting')).to_contain_text('Alex Morgan')
+        reason(page, 'Staff 01 returns from leave', 'Propose')
+        expect(main.locator('.rc-waiting')).to_contain_text('Staff 01(test)')
         proposal = entry(h, 'duties_per_week')['proposed']
         broad, personal = proposal['definition']['rule']['lines']
         [replacement] = proposal['check']['overlaps']
@@ -84,9 +84,9 @@ def test_turn_on_add_a_line_acknowledge_its_overlap_approve_and_undo(browser, li
 
         # The approver approves: the rule map reads the new line; Undo retires it and the version before applies again.
         review.reload()
-        expect(review.locator('.rc-waiting tr.rc-prop-added')).to_contain_text('Alex Morgan')
+        expect(review.locator('.rc-waiting tr.rc-prop-added')).to_contain_text('Staff 01(test)')
         review.locator('.rc-waiting').get_by_role('button', name='Review and approve').click()
-        check_and_approve_in_panel(review, h, w, entry(h, 'duties_per_week')['proposed'], 'Add a line for Alex Morgan')
+        check_and_approve_in_panel(review, h, w, entry(h, 'duties_per_week')['proposed'], 'Add a line for Staff 01(test)')
         expect(review.locator('.rc-waiting')).to_have_count(0)
         # The Undo message lasts 10 s unless held: hold it (as a person reading it would) while the server is checked.
         undo = review.locator('.toast').get_by_role('button', name='Undo')

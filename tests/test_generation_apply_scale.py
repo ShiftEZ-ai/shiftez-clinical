@@ -1,10 +1,13 @@
 """Batch proposal writes preserve assignment contracts, audit and atomic undo."""
 from .clock_support import freeze_clock
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 import re
+from threading import Event
 
 import pytest
 from sqlalchemy import event, func, select
+from sqlalchemy.orm import Session
 
 from apps.api import models as m
 from apps.api.db import transaction
@@ -25,6 +28,71 @@ def completed_proposal(h, workspace, additions, removals=()):
         row.status = 'succeeded'
         row.result = {'status': 'candidate_with_gaps', 'additions': additions, 'removals': list(removals)}
     return job
+
+
+@pytest.mark.postgres
+@pytest.mark.parametrize('action,expected_job_status', [('undo', 'applied'), ('redo', 'succeeded')])
+def test_undo_redo_recheck_revision_after_competing_write(pg, action, expected_job_status):
+    workspace = pg.shift(pg.workspace(), people=[])['workspace']
+    shift, = pg.snapshot(workspace)['shifts']
+    person = pg.seed['people'][0]
+    job = completed_proposal(pg, workspace, [{'shift_id': shift['id'], 'participant': {
+        'person_id': person, 'start': shift['start'], 'end': shift['end']}}])
+    workspace = pg.command('coordinator', 'generation.apply', {
+        'workspace_id': workspace['id'], 'job_id': job['id'], 'reason': 'Apply synthetic proposal',
+    }, revision=workspace['revision'])['workspace']
+    if action == 'redo':
+        workspace = pg.lifecycle(workspace, 'undo')['workspace']
+
+    engine = pg.app.state.engine
+    workspace_id = workspace['id']
+    snapshot = select(m.Job.__table__).where(m.Job.id == job['id'])
+    with Session(engine) as db:
+        job_before = db.execute(snapshot).one()
+        assert job_before.status == expected_job_status
+    shifts_before = pg.snapshot(workspace)['shifts']
+    assert [p['person_id'] for p in shifts_before[0]['participants']] == ([person] if action == 'undo' else [])
+
+    taking_lock = Event()
+    competing_write = Event()
+
+    def pause_for_competing_write(connection, cursor, statement, parameters, context, executemany):
+        lock = statement.upper().partition(' FOR ')[2]
+        if not lock.startswith(('NO KEY UPDATE OF WORKSPACES', 'UPDATE OF WORKSPACES')):
+            return
+        if workspace_id not in context.compiled_parameters[0].values():
+            return
+        taking_lock.set()
+        assert competing_write.wait(10), 'Competing workspace write did not reach the lock'
+
+    event.listen(engine, 'before_cursor_execute', pause_for_competing_write)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            response = pool.submit(pg.command, 'coordinator', f'workspace.{action}',
+                                   {'reason': 'Edit synthetic history'}, workspace_id, workspace['revision'], 409)
+            try:
+                assert taking_lock.wait(10), f'{action} did not reach its workspace lock'
+                # Wait until preparation has finished before changing the revision it read.
+                with Session(engine) as db, db.begin():
+                    current = db.get(m.Workspace, workspace_id)
+                    current.name = 'competing draft edit'
+                    current.revision += 1
+                    db.flush()
+                    competing_write.set()
+            finally:
+                competing_write.set()
+            error = response.result(timeout=10)['error']
+    finally:
+        event.remove(engine, 'before_cursor_execute', pause_for_competing_write)
+
+    assert error['code'] == 'STALE_REVISION'
+    assert error['details']['current_revision'] == workspace['revision'] + 1
+    with Session(engine) as db:
+        current = db.get(m.Workspace, workspace_id)
+        assert (current.name, current.revision, current.content_revision) == (
+            'competing draft edit', workspace['revision'] + 1, workspace['content_revision'])
+        assert db.execute(snapshot).one() == job_before
+    assert pg.snapshot(workspace)['shifts'] == shifts_before
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])

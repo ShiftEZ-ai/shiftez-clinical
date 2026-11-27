@@ -974,7 +974,7 @@ def test_reach_popover_shows_shortfall_for_minimum_lines(browser, live_server, h
         # An "Everyone" line's sentence says "Everyone"; its reach link sits in the Who heading.
         panel.locator('.rc-lp-count').get_by_role('button', name=re.compile(r'^\d+ (people|person)$')).first.click()
         pop = page.locator('.picker')
-        alex = pop.get_by_role('option', name=re.compile('^Alex Morgan'))
+        alex = pop.get_by_role('option', name=re.compile('^Staff 01\\(test\\)'))
         expect(alex).to_contain_text('2 of 3, short')
         expect(alex.locator('.picker-meta .rc-load.short .rc-load-bar')).to_have_count(1)
         expect(pop.locator('.picker-foot')).to_contain_text('short')

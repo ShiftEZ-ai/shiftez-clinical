@@ -270,7 +270,7 @@ def test_saved_view_keeps_this_month_and_moves_with_the_day(browser, live_server
         expect(filter_row(pop).locator('.cond-value-name')).to_have_text('This month')
         close_popover(page)
         expect(rows(page)).to_have_count(1)
-        expect(rows(page).first).to_contain_text('Alex')
+        expect(rows(page).first).to_contain_text('Staff 01')
         toolbar(page, 'Saved views').get_by_role('menuitem', name='New view…').click()
         dialog = page.get_by_role('dialog', name='New view', exact=True)
         dialog.get_by_label('View name', exact=True).fill('Starting this month')
@@ -327,7 +327,7 @@ def test_saved_view_keeps_this_month_and_moves_with_the_day(browser, live_server
         expect(my_default).to_be_focused()  # New choices/actions must not move keyboard ownership to another menu item.
         item.click()
         expect(rows(page)).to_have_count(1)
-        expect(rows(page).first).to_contain_text('Jordan')
+        expect(rows(page).first).to_contain_text('Staff 02')
         assert not errors, errors
     finally:
         context.close()
@@ -521,7 +521,7 @@ def test_people_i_approve_on_the_requests_person_column_is_resolved_by_the_serve
             expect(picker).to_be_visible()
             option = picker.get_by_role('option', name=re.compile('^People I approve'))
             if not offered:
-                expect(picker.get_by_role('option', name=re.compile('Taylor|Alex|Jordan')).first).to_be_visible()
+                expect(picker.get_by_role('option', name=re.compile('Staff 03|Staff 01|Staff 02')).first).to_be_visible()
                 expect(option).to_have_count(0)
                 continue
             expect(option).to_have_accessible_name(f"People I approve · {approve['display']}")
@@ -623,7 +623,7 @@ def test_a_last_day_filter_compares_the_day_shown_not_the_day_stored(browser, li
         page.reload()
         today_row = page.locator('#main tbody tr', has_text='Last day clinic')
         expect(today_row).to_have_count(1)
-        expect(today_row).to_contain_text('Jordan Lee')
+        expect(today_row).to_contain_text('Staff 02(test)')
         expect(today_row).to_contain_text(f'{DAY1.day} {MON[DAY1.month - 1]} {DAY1.year}')
         assert not errors, errors
     finally:
@@ -654,7 +654,7 @@ def test_select_by_condition_and_the_list_filter_agree_on_a_last_day(browser, li
         page.locator('.picker .picker-exact input').fill(dec31.isoformat())
         expect(page.locator('.picker')).to_have_count(0)
         expect(ours).to_have_count(1)
-        expect(ours).to_contain_text('Alex Morgan')
+        expect(ours).to_contain_text('Staff 01(test)')
         pop.get_by_role('button', name='Delete filter').click()
         pop.get_by_role('button', name=re.compile('^Delete every rule')).click()
         close_popover(page)
@@ -668,8 +668,8 @@ def test_select_by_condition_and_the_list_filter_agree_on_a_last_day(browser, li
         expect(sel.locator('.bulk-condition-count')).to_contain_text(re.compile(r'^1 '))
         sel.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('1')
-        expect(ours.filter(has_text='Alex Morgan').locator('.bulk-check')).to_be_checked()
-        expect(ours.filter(has_text='Jordan Lee').locator('.bulk-check')).not_to_be_checked()
+        expect(ours.filter(has_text='Staff 01(test)').locator('.bulk-check')).to_be_checked()
+        expect(ours.filter(has_text='Staff 02(test)').locator('.bulk-check')).not_to_be_checked()
     finally:
         context.close()
 
@@ -834,8 +834,8 @@ def test_tags_is_not_hides_an_uppercase_tag(browser, live_server, h):
         picker.get_by_role('option', name=re.compile('NIGHT')).first.check()
         close_popover(page)
         main = page.locator('#main')
-        expect(main.locator('tbody tr', has_text='Jordan Lee')).to_have_count(1)
-        expect(main.locator('tbody tr', has_text='Alex Morgan')).to_have_count(0)
+        expect(main.locator('tbody tr', has_text='Staff 02(test)')).to_have_count(1)
+        expect(main.locator('tbody tr', has_text='Staff 01(test)')).to_have_count(0)
     finally:
         context.close()
 
@@ -903,9 +903,9 @@ def test_selection_by_matches_waits_while_a_relative_value_is_resolving(browser,
         expect(menu.get_by_role('menuitem', name=re.compile('^Select all'))).to_be_disabled()
         expect(menu.get_by_role('menuitem', name='Invert selection')).to_be_disabled()
         page.keyboard.press('Escape')
-        jordan = main.locator('tbody tr', has_text='Jordan Lee').locator('.bulk-check')
+        jordan = main.locator('tbody tr', has_text='Staff 02(test)').locator('.bulk-check')
         jordan.check()  # a hand pick
-        main.locator('tbody tr', has_text='Jordan Lee').locator('td').nth(1).click(position={'x': 2, 'y': 2})
+        main.locator('tbody tr', has_text='Staff 02(test)').locator('td').nth(1).click(position={'x': 2, 'y': 2})
         page.keyboard.press('Control+a')
         bar = page.locator('.selection-bar')
         expect(bar).to_contain_text('Waiting for the filter to be worked out')
@@ -948,7 +948,7 @@ def test_my_clinics_follow_a_permission_change_without_a_reload(browser, live_se
         open_values(page, row).get_by_role('option', name=re.compile('^Clinics I can work at')).check()
         close_popover(page)
         main = page.locator('#main')
-        expect(main.locator('tbody tr', has_text='Jordan Lee')).to_have_count(1)
+        expect(main.locator('tbody tr', has_text='Staff 02(test)')).to_have_count(1)
         expect(main.locator('tbody tr', has_text='Only New Clinic')).to_have_count(0)
         h.command('admin', 'eligibility.create', {'person_id': viewer, 'service_id': clinic['id'], 'starts_on': '2026-01-01'})
         expect(main.locator('tbody tr', has_text='Only New Clinic')).to_have_count(1, timeout=30_000)
@@ -969,9 +969,9 @@ def test_a_rule_line_for_one_person_named_by_a_typed_value_reads_with_their_name
     try:
         navigate(page, 'rules/duties_per_month')
         row = page.locator('#main tr', has_text='Typed person line')
-        expect(row).to_contain_text('Alex Morgan')
+        expect(row).to_contain_text('Staff 01(test)')
         navigate(page, f"rules/duties_per_month/{rule['definition']['rule']['lines'][0]['id']}")
-        expect(page.locator('.rc-line-panel .rc-says')).to_contain_text('Alex Morgan: ')  # the line's sentence names them
+        expect(page.locator('.rc-line-panel .rc-says')).to_contain_text('Staff 01(test): ')  # the line's sentence names them
     finally:
         context.close()
 

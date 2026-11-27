@@ -31,17 +31,17 @@ def test_segment_editor_preview_and_staffing_option_never_autosave(browser,live_
         expect(form.get_by_label('Proposed reserved end',exact=True)).to_have_attribute('readonly', '')
         # The search is the shared collection toolbar's, live once options are calculated.
         search=form.get_by_role('group',name='Staffing options').get_by_role('searchbox',name='Find staff by name')
-        search.fill('Jordan')
+        search.fill('Staff 02')
         before=h.detail(w)
         form.get_by_role('button',name='Calculate staffing options',exact=True).click()
-        expect(form.get_by_role('button',name='Review Jordan Lee in draft',exact=True)).to_be_visible()
+        expect(form.get_by_role('button',name='Review Staff 02(test) in draft',exact=True)).to_be_visible()
         # Each option's findings are shown under their heading, never folded away.
         expect(form.locator('section.candidate-details h4').first).to_contain_text('person-specific blockers')
         expect(form.locator('section.candidate-details details')).to_have_count(0)
         assert h.detail(w)==before
-        search.fill('Taylor')
-        expect(form.get_by_role('button',name='Review Jordan Lee in draft',exact=True)).to_have_count(0)
-        form.get_by_role('button',name='Review Taylor Noor in draft',exact=True).click()
+        search.fill('Staff 03')
+        expect(form.get_by_role('button',name='Review Staff 02(test) in draft',exact=True)).to_have_count(0)
+        form.get_by_role('button',name='Review Staff 03(test) in draft',exact=True).click()
         form=page.locator('.dock-panel');expect(form.get_by_label('Participant',exact=True)).to_have_count(2)
         assert h.detail(w)==before
         save_dialog(form,'Save draft session')
@@ -128,10 +128,10 @@ def test_staffing_search_change_during_pending_response_restarts_and_binds_pages
         page.route('**/api/planner/staffing-suggestions',hold_first)
         search=form.get_by_role('searchbox',name='Find staff by name')
         # Typed and calculated at once: the request carries the typed text although the debounce has not fired.
-        search.fill('Jordan')
+        search.fill('Staff 02')
         with page.expect_request('**/api/planner/staffing-suggestions') as first:
             form.get_by_role('button',name='Calculate staffing options',exact=True).click()
-        assert first.value.post_data_json['search']=='Jordan'
+        assert first.value.post_data_json['search']=='Staff 02'
         # The search changes while that answer is still held: a new calculation starts for the new search.
         search.fill('Paging person')
         reviews=form.get_by_role('button',name=re.compile(r'^Review Paging person \d+ in draft$'))
@@ -141,11 +141,11 @@ def test_staffing_search_change_during_pending_response_restarts_and_binds_pages
         with page.expect_response(lambda r:r.request==first.value):
             held[0].continue_()
         expect(form.get_by_text('Showing 10 of 11',exact=True)).to_be_visible()
-        expect(form.get_by_role('button',name=re.compile('^Review Jordan'))).to_have_count(0)
+        expect(form.get_by_role('button',name=re.compile('^Review Staff 02'))).to_have_count(0)
         form.get_by_role('button',name='Show 1 more',exact=True).click()
         expect(reviews).to_have_count(11)
         assert sent[-1]['search']=='Paging person' and sent[-1]['offset']==10
-        expect(form.get_by_role('button',name=re.compile('^Review Jordan'))).to_have_count(0)
+        expect(form.get_by_role('button',name=re.compile('^Review Staff 02'))).to_have_count(0)
     finally:
         page.unroute('**/api/planner/staffing-suggestions')
         context.close()
