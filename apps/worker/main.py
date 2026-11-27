@@ -763,6 +763,7 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
     ).values(status='running', started_at=started_at, heartbeat_at=started_at, worker_id=WORKER_ID,
              attempts=m.Job.attempts + 1).returning(m.Job.attempts).execution_options(synchronize_session='fetch'))
     if attempt is None:
+        log.warning("job_claim_guard_mismatch", extra={"job_id": job.id, "job_kind": job.kind, "attempts": job.attempts})
         return None
     # Deferred generation first freezes its rota on the worker.  Expose that
     # phase immediately so the client does not label a long snapshot as a
