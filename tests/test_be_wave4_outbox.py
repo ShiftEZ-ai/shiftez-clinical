@@ -95,6 +95,28 @@ def test_request_withdrawal_and_pattern_end_retract_the_undelivered_request(h):
     assert events(h, 'availability-pattern:' + pattern['id'])[0][1] == 'superseded'
 
 
+def test_approved_leave_withdrawal_reaches_approver_when_submission_is_queued(h, monkeypatch):
+    before = freeze_clock(monkeypatch)
+    row = request_row(h)
+    approved = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Confirm leave'},
+                         row['id'], row['revision'])['record']
+    submission = f"request:{row['id']}"
+    assert events(h, submission)[0][1] == 'queued'
+
+    withdrawn = h.command('staff', 'request.decide', {'decision': 'withdraw', 'reason': 'Plans changed'},
+                          approved['id'], approved['revision'])['record']
+    withdrawal = f"request-decision:{row['id']}:{withdrawn['revision']}"
+    assert events(h, submission)[0][1] == 'superseded'
+    assert events(h, withdrawal)[0][1] == 'queued'
+
+    freeze_clock(monkeypatch, before + timedelta(seconds=common.UNDO_GRACE_SECONDS))
+    assert retry_write(h.app.state.engine, worker.dispatch_batch) == {h.seed['department_id']}
+    assert events(h, withdrawal)[0][1] == 'available_in_app'
+    notices = h.get('approver', '/api/notifications')['notifications']
+    assert sum(note['title'].endswith('leave request was withdrawn') for note in notices) == 1
+    assert h.get('staff_two', '/api/notifications')['notifications'] == []
+
+
 def test_feedback_undo_supersedes_the_exact_status_notice(h):
     from tests.test_feedback_api import detail, submit, update
     report = detail(h, submit(h)['id'])

@@ -610,6 +610,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     expected(row, command.expected_revision)
     overtime = row.kind == "overtime_availability"
     withdraw_approved = row.status == "approved" and value.decision == "withdraw" and (overtime or row.kind == "leave")
+    withdraw_approved_leave = withdraw_approved and row.kind == "leave"
     require(row.status == "submitted" or withdraw_approved, "WORKFLOW_STATE",
             "Only waiting requests can be decided. Approved leave and overtime can be withdrawn.", 409)
     inputs_changed = False
@@ -626,7 +627,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
                             "previous_decision_reason": row.decision_reason,
                             "previous_decided_at": json_value(row.decided_at)}
             inputs_changed = bool(retired)
-        if row.kind == "leave" and withdraw_approved:
+        if withdraw_approved_leave:
             from .leave_balances import BALANCE_LEAVE_KINDS
             require(not _leave_has_started(row), "LEAVE_ALREADY_STARTED",
                     "Ask an approver to correct leave that has already started", 409)
@@ -685,18 +686,22 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
                 bump_inputs(db, actor, availability=True)
     if overtime and inputs_changed and not batch:
         bump_inputs(db, actor, availability=True)
-    if not (row.kind == "leave" and withdraw_approved):
+    if not withdraw_approved_leave:
         row.decision_reason = value.reason
     row.decided_at = m.now()
     row.private_undo_note = None
     row.revision += 1
+    submission_key = f"request:{row.id}"
+    if withdraw_approved_leave:
+        # Cancel the obsolete submission notice even when the approved withdrawal must be sent.
+        supersede_outbox(db, actor, submission_key)
     # A decision undone and made again is a new event (the revision tells them apart).
     outbox(db, actor, f"request-decision:{row.id}" + (f":{row.revision}" if row.revision > 2 else ""), "request",
            {"request_id": row.id, "person_id": row.person_id, "request_status": row.status, "request_kind": row.kind,
             **({'replace_action': row.details['replace_action'],
                 'publication_id': row.details['replace_action']['publication_id']}
                if row.kind == 'absence_report' and row.status == 'approved' else {})},
-           undo_of="request:" + row.id if value.decision == "withdraw" else ())
+           undo_of=submission_key if value.decision == "withdraw" and not withdraw_approved_leave else ())
     item = absence_report_record(row, actor, db)
     if self_approval is not None:
         item["self_approved"] = True
