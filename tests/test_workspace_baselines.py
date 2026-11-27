@@ -74,8 +74,12 @@ def test_draft_snapshot_overlays_live_catalogue_safety_rule_after_capture(h):
     assert policy["id"] in {row["id"] for row in snapshot["policies"]}
 
 
-@pytest.mark.parametrize("blocked", [False, True], ids=["current-workload-allows", "captured-safety-blocks"])
-def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, monkeypatch, blocked):
+@pytest.mark.parametrize(("blocked", "same_id"), [
+    pytest.param(False, False, id="current-workload-allows"),
+    pytest.param(True, False, id="captured-safety-blocks"),
+    pytest.param(True, True, id="captured-safety-blocks-after-in-place-revision"),
+])
+def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, monkeypatch, blocked, same_id):
     from packages.domain.conditions import active_rules
     from packages.domain.time import aware
     from packages.domain.validation import evaluate, finding_observations
@@ -98,8 +102,21 @@ def test_review_uses_the_current_workload_number_and_keeps_captured_safety(h, mo
     rota = h.refresh_draft_baseline(h.detail(rota)['workspace'])
     revised = {**cap, 'numbers': {'max': {'value': 3}}}
     live_restriction = {**restriction, 'weekdays': [4]}
-    new = approve(h, propose(h, catalogue, [revised, live_restriction], catalogue_version=2,
-                            policy_id=old['id'], revision=old['revision'])['record'])
+    if same_id:
+        # Model a lifecycle revision that updates an active policy without replacing its row.
+        with transaction(h.app.state.engine, write=True) as db:
+            policy = db.get(m.Policy, old['id'])
+            definition = deepcopy(policy.definition)
+            lines = {item['id']: item for item in definition['rule']['lines']}
+            lines[cap['id']]['numbers']['max']['value'] = revised['numbers']['max']['value']
+            lines[restriction['id']]['weekdays'] = live_restriction['weekdays']
+            policy.definition = definition
+            policy.revision += 1
+            db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+            new = {'id': policy.id}
+    else:
+        new = approve(h, propose(h, catalogue, [revised, live_restriction], catalogue_version=2,
+                                policy_id=old['id'], revision=old['revision'])['record'])
 
     with transaction(h.app.state.engine) as db:
         workspace = db.get(m.Workspace, rota['id'])
