@@ -163,7 +163,11 @@ def check_cent_target_override_after_reload(browser, live_server, h, metric):
     w = h.shift(h.workspace("Cent target override"))["workspace"]
     h.policy({'kind': 'block_quota', 'starts_on': '2026-10-01', 'ends_on': '2026-11-01', 'metric': metric,
               'comparison': 'target', 'amount': 2, 'prorate_department_days': True, 'reference_days': 28}, severity='advisory')
-    h.refresh_draft_baseline(h.detail(w)["workspace"])
+    w = h.refresh_draft_baseline(h.detail(w)["workspace"])
+    h.lifecycle(w, 'validate')
+    checked = h.detail(w)["workspace"]
+    assert checked["validation_current"]
+    assert any(r["target_calculation"] for r in checked["validation"]["quota_report"]["rows"] if r["metric"] == metric)
     context, page = sign_in(browser, live_server, "coordinator")
     try:
         navigate(page, f"planner/{w['id']}")
