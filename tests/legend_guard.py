@@ -89,7 +89,9 @@ def legend_entries(page: Page, key):
     """Entries a reader can use: the visible row plus every item in its +N popover, with the same words and symbols."""
     expect(key).to_be_visible()
     page.evaluate(_FRAME)
-    assert key.evaluate("k => getComputedStyle(k).flexWrap === 'nowrap' && k.scrollWidth <= k.clientWidth + 1 && k.scrollHeight <= k.clientHeight + 1")
+    # Resolve and measure the current key in one browser call because a redraw can replace its node.
+    assert key.evaluate_all('''([k]) => !!k && getComputedStyle(k).flexWrap === 'nowrap'
+        && k.scrollWidth <= k.clientWidth + 1 && k.scrollHeight <= k.clientHeight + 1''')
     assert key.locator(':scope > li:visible').evaluate_all("ns => new Set(ns.map(n => {const r=n.getBoundingClientRect();return Math.round((r.top+r.bottom)/2)})).size === 1")
     assert key.locator(':scope > li:visible').evaluate_all("""ns => ns.every(n => {
         const r=n.getBoundingClientRect(), k=n.parentElement.getBoundingClientRect();
