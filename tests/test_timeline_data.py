@@ -265,9 +265,28 @@ def test_timeline_programme_lead_clips_personal_facts_to_their_membership_author
                ("2026-10-01", "2026-11-01") for item in facts)
 
 
-@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
-@pytest.mark.parametrize("publication_kind", ["original", "amendment", "replacement", "absence"])
-def test_timeline_filters_do_not_recheck_stale_department_balance_findings(h, monkeypatch, publication_kind):
+def test_timeline_filters_do_not_recheck_stale_department_balance_findings(h, monkeypatch):
+    _check_publication_timeline_findings(h, monkeypatch, "original")
+
+
+@pytest.mark.parametrize(
+    "h,publication_kind",
+    [
+        ("sqlite", "amendment"),
+        ("sqlite", "replacement"),
+        ("sqlite", "absence"),
+        pytest.param("postgresql", "original", marks=pytest.mark.postgres),
+        pytest.param("postgresql", "amendment", marks=pytest.mark.postgres),
+        pytest.param("postgresql", "replacement", marks=pytest.mark.postgres),
+        pytest.param("postgresql", "absence", marks=pytest.mark.postgres),
+    ],
+    indirect=["h"],
+)
+def test_timeline_finding_currency_across_publication_variants(h, monkeypatch, publication_kind):
+    _check_publication_timeline_findings(h, monkeypatch, publication_kind)
+
+
+def _check_publication_timeline_findings(h, monkeypatch, publication_kind):
     from apps.api.services import timeline
 
     a, b, c = h.seed["people"]
