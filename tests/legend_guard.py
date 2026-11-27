@@ -89,30 +89,43 @@ def legend_entries(page: Page, key):
     """Entries a reader can use: the visible row plus every item in its +N popover, with the same words and symbols."""
     expect(key).to_be_visible()
     page.evaluate(_FRAME)
-    # Resolve and measure the current key in one browser call because a redraw can replace its node.
-    assert key.evaluate_all('''([k]) => !!k && getComputedStyle(k).flexWrap === 'nowrap'
-        && k.scrollWidth <= k.clientWidth + 1 && k.scrollHeight <= k.clientHeight + 1''')
-    assert key.locator(':scope > li:visible').evaluate_all("ns => new Set(ns.map(n => {const r=n.getBoundingClientRect();return Math.round((r.top+r.bottom)/2)})).size === 1")
-    assert key.locator(':scope > li:visible').evaluate_all("""ns => ns.every(n => {
-        const r=n.getBoundingClientRect(), k=n.parentElement.getBoundingClientRect();
-        return r.left>=k.left-1 && r.right<=k.right+1 && r.top>=k.top-1 && r.bottom<=k.bottom+1 && r.right<=innerWidth+1;
-    })""")
-    entries = key.locator(':scope > li[data-lg-entry]')
+    # A redraw moves swatches from the old entries to the new ones. Read the current row in one browser call.
+    row = key.evaluate_all("""([k]) => {
+        if (!k?.isConnected) return null;
+        const bounds = k.getBoundingClientRect();
+        const items = [...k.querySelectorAll(':scope > li')];
+        const visible = items.map(n => [n, n.getBoundingClientRect()]).filter(([n, r]) =>
+            r.width > 0 && r.height > 0 && getComputedStyle(n).visibility === 'visible');
+        const isEntry = n => n.hasAttribute('data-lg-entry');
+        const more = k.querySelector(':scope > .lg-more > button');
+        return {
+            fits: getComputedStyle(k).flexWrap === 'nowrap'
+                && k.scrollWidth <= k.clientWidth + 1 && k.scrollHeight <= k.clientHeight + 1,
+            oneRow: new Set(visible.map(([, r]) => Math.round((r.top + r.bottom) / 2))).size === 1,
+            contained: visible.every(([, r]) => r.left >= bounds.left - 1 && r.right <= bounds.right + 1
+                && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1 && r.right <= innerWidth + 1),
+            entries: items.filter(isEntry).map(n => n.innerHTML),
+            shown: visible.map(([n]) => n).filter(isEntry).map(n => n.innerHTML),
+            more: more && {text: more.textContent, name: more.getAttribute('aria-label')},
+            label: k.getAttribute('aria-label'),
+        };
+    }""")
+    assert row is not None, 'The legend was detached before it could be read'
+    assert row['fits'], 'The legend must fit without wrapping or scrolling'
+    assert row['oneRow'], 'Legend items must share a single row'
+    assert row['contained'], 'Visible legend items must fit within the key and viewport'
     visible = key.locator(':scope > li[data-lg-entry]:visible')
-    expected = entries.evaluate_all('ns => ns.map(n => n.innerHTML)')
-    shown = visible.evaluate_all('ns => ns.map(n => n.innerHTML)')
-    more = key.locator('.lg-more > button')
-    if not more.count():
+    expected, shown, more = row['entries'], row['shown'], row['more']
+    if more is None:
         assert shown == expected
         yield visible
         return
     hidden = len(expected) - len(shown)
-    expect(more).to_have_text(f'+{hidden}')
+    assert more['text'] == f'+{hidden}'
     noun = 'legend item' if hidden == 1 else 'legend items'
-    expect(more).to_have_attribute('aria-label', f'{hidden} more {noun}: show all {len(expected)}')
-    label = key.get_attribute('aria-label')
-    more.click()
-    panel = page.get_by_role('dialog', name=f'All {label}', exact=True)
+    assert more['name'] == f'{hidden} more {noun}: show all {len(expected)}'
+    key.locator('.lg-more > button').click()
+    panel = page.get_by_role('dialog', name=f"All {row['label']}", exact=True)
     expect(panel).to_be_visible()
     overflow = panel.locator('ol > li > .lg-pop')
     try:
