@@ -5,7 +5,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, planner_tool, open_rule  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, planner_tool, open_rule, draft_chip  # noqa: F401
 from .test_browser_rules_in_planner import open_planner, MON
 from .test_rule_templates import propose, activate
 from .rules_support import rule_row, rule_status
@@ -218,7 +218,7 @@ def test_planner_shows_a_grouped_rule_once_with_each_persons_number(browser, liv
         expect(rule_row(panel, 'Grouped duty cap')).to_have_count(1)
         page.keyboard.press('Escape')
         for person, number, words in ((a, '2 dut', 'their own number'), (b, '5 dut', 'their line')):
-            page.locator(f'.pchip[data-person="{person}"]').first.click()
+            page.locator(draft_chip(person)).first.click()
             side = page.get_by_role('dialog').filter(has_text='Rules applied here')
             row = rule_row(side, 'Grouped duty cap')
             expect(row).to_have_count(1)
@@ -443,7 +443,7 @@ def test_planner_shows_a_rank_lines_number_as_the_persons_number(browser, live_s
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         open_planner(page, w)
-        page.locator(f'.pchip[data-person="{a}"]').first.click()
+        page.locator(draft_chip(a)).first.click()
         side = page.get_by_role('dialog').filter(has_text='Rules applied here')
         row = rule_row(side, 'Rank duty cap')
         expect(row).to_contain_text('2 dut')  # the folded row's one sentence carries the person's own number
