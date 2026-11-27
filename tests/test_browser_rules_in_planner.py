@@ -695,6 +695,37 @@ def test_rule_tag_sweep_stays_within_budget_at_department_scale(browser, live_se
         context.close()
 
 
+def test_a_list_row_keeps_one_exception_mark_across_sweeps(browser, live_server, h):
+    """A planner list row draws its exception mark in its first cell; a sweep that walks the row again, without the row
+    being redrawn, replaces that mark rather than adding another beside it."""
+    w, _ = rota(h)
+    shift_ids = [s['id'] for s in h.detail(w)['shifts']]
+    marker = {'kind': 'exception', 'rule_id': 'r0', 'rule_name': 'Synthetic rule 000', 'text': 'Differs for this session', 'by': 'Approver', 'at': None,
+              'people': [], 'services': [], 'locations': [], 'types': [], 'days': None, 'sessions': [0], 'global': False}
+    payload = json.dumps({'days': [f'2026-10-{d:02}' for d in range(4, 11)], 'shifts': shift_ids, 'checked': True, 'fresh': True,
+                          'rules': synthetic_rules(1, h.seed['people'], shift_ids), 'markers': [marker]})
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        page.route(re.compile(r'.*/rule-map$'), lambda route: route.fulfill(status=200, content_type='application/json', body=payload))
+        page.reload()
+        expect(page.get_by_role('button', name=re.compile(r'^Account menu, '))).to_be_visible()
+        open_planner(page, w)
+        page.locator('.wk-day[data-rk]').first.hover()  # the rule map loads on first use
+        page.wait_for_function("() => document.querySelector('.planner-main')?.dataset.rkRules === '1'", timeout=60000)
+        pick_view(page, 'List')
+        row = page.locator(f'tr[data-rk][data-session="{shift_ids[0]}"]')
+        expect(row.locator('.rk-mark-slot > .rk-mark')).to_have_count(1)
+        # Each node added to the view wakes one more sweep over every tagged place, the unchanged row included.
+        page.evaluate("""() => {window.rkSweeps=0;const measure=performance.measure.bind(performance);
+          performance.measure=(name,o)=>{if(name==='rk-decorate')window.rkSweeps++;return measure(name,o);};}""")
+        for sweeps in (1, 2):
+            page.evaluate("() => document.querySelector('.planner-main').append(document.createElement('span'))")
+            page.wait_for_function(f"() => window.rkSweeps >= {sweeps}")
+        expect(row.locator('.rk-mark')).to_have_count(1)
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
 def test_mouse_selections_open_the_matching_day_person_and_session(browser, live_server, h, width, scheme):
     w, _ = rota(h)
