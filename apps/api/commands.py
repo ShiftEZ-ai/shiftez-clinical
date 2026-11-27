@@ -787,6 +787,9 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
         result = overlap_labels(db, actor, result)
     if db is not None and kind.startswith('swap.'):
         result = swaps.read_command_result(actor, result)
+    if db is not None and kind in {'notification.ack', 'notification.acknowledge'}:
+        from .services import notifications
+        result = notifications.read_command_result(db, actor, result)
     if db is not None and kind.startswith(('person.contact.', 'catalogue.', 'bulk.', 'staff_import.')):
         from .services.contacts import redact_reply
         result = redact_reply(db, actor, result)
