@@ -1,5 +1,6 @@
 """Immediate Undo retracts queued notices; retained and already delivered evidence remains intact."""
 from .clock_support import freeze_clock
+from .governance_support import identity
 from datetime import timedelta
 from types import SimpleNamespace as NS
 
@@ -93,6 +94,29 @@ def test_request_withdrawal_and_pattern_end_retract_the_undelivered_request(h):
         'start_time': '13:00', 'end_time': '17:00', 'starts_on': '2026-10-01'})['pattern']
     h.command('staff', 'availability_pattern.end', {'reason': 'Withdraw'}, pattern['id'], pattern['revision'])
     assert events(h, 'availability-pattern:' + pattern['id'])[0][1] == 'superseded'
+
+
+def test_approved_leave_withdrawal_reaches_approver_when_submission_is_queued(h, monkeypatch):
+    before = freeze_clock(monkeypatch)
+    identity(h, 'staff_two', ['staff'], h.seed['people'][1])
+    row = request_row(h)
+    approved = h.command('approver', 'request.decide', {'decision': 'approve', 'reason': 'Confirm leave'},
+                         row['id'], row['revision'])['record']
+    submission = f"request:{row['id']}"
+    assert events(h, submission)[0][1] == 'queued'
+
+    withdrawn = h.command('staff', 'request.decide', {'decision': 'withdraw', 'reason': 'Plans changed'},
+                          approved['id'], approved['revision'])['record']
+    withdrawal = f"request-decision:{row['id']}:{withdrawn['revision']}"
+    assert events(h, submission)[0][1] == 'superseded'
+    assert events(h, withdrawal)[0][1] == 'queued'
+
+    freeze_clock(monkeypatch, before + timedelta(seconds=common.UNDO_GRACE_SECONDS))
+    assert retry_write(h.app.state.engine, worker.dispatch_batch) == {h.seed['department_id']}
+    assert events(h, withdrawal)[0][1] == 'available_in_app'
+    notices = h.get('approver', '/api/notifications')['notifications']
+    assert sum(note['title'].endswith('leave request was withdrawn') for note in notices) == 1
+    assert h.get('staff_two', '/api/notifications')['notifications'] == []
 
 
 def test_feedback_undo_supersedes_the_exact_status_notice(h):
