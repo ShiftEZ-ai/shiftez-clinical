@@ -152,6 +152,7 @@ def test_home_counts_only_decisions_this_person_may_take(h):
     assert counts(h.get('coordinator', '/api/home'))['patterns'] == 1
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 def test_a_rota_months_ahead_waits_on_home_for_whoever_may_review_it(h):
     """A submitted rota three months ahead is outside Home's near-dates window, yet the Schedule offers it for review:
     Home offers it too, to the approver only, and offers it to publish once approved."""
@@ -172,9 +173,14 @@ def test_a_rota_months_ahead_waits_on_home_for_whoever_may_review_it(h):
     assert not progress['can_decide'] and progress['decision_reason'] == 'SELF_APPROVAL'
     # Submitted last, so a later submission does not leave it out of date (that would be Rota to resubmit).
     far = submitted('Far review rota', 'coordinator', start)
+    # A revision change alone leaves the semantic review fingerprint equal. Home
+    # must reconsider even a far rota once its detail read confirms that.
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Organisation, h.seed['organisation_id']).input_revision += 1
+    assert 'reviews' not in keys(h.get('approver', '/api/home'))
     assert h.get('approver', '/api/workspaces/' + far['id'])['review_progress']['can_decide']
     review = next(i for i in h.get('approver', '/api/home')['attention'] if i['key'] == 'reviews')
-    assert review['rota_id'] == far['id'] and review['rota_name'] == 'Far review rota'
+    assert review['rota_id'] == far['id'] and review['rota_ids'] == [far['id']] and review['rota_name'] == 'Far review rota'
     for role in ('coordinator', 'programme', 'staff'):
         assert 'reviews' not in keys(h.get(role, '/api/home')), role
     attention = h.get('planner-approver', '/api/home')['attention']

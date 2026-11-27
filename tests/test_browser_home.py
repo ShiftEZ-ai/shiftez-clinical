@@ -35,6 +35,41 @@ def month_start(day, n=0):
     return date(k // 12, k % 12 + 1, 1)
 
 
+def test_approver_home_uses_one_actionable_review_count(browser, live_server, h):
+    route(h, [{'key': 'clinical', 'label': 'Clinical review', 'approvals_required': 2}])
+    month = month_start(local_today(), 1)
+
+    def submit(name, start):
+        start_at = f'{start.isoformat()}T08:00:00+03:00'
+        end_at = f'{start.isoformat()}T12:00:00+03:00'
+        w = h.workspace(name, start.isoformat(), (start + timedelta(days=7)).isoformat())
+        return h.lifecycle(h.shift(w, start_at, end_at)['workspace'], 'submit')['workspace']
+
+    earlier = h.lifecycle(submit('Reviewed by you', month), 'approve', 'approver')['workspace']
+    later = submit('Ready for your review', month + timedelta(days=8))
+    assert earlier['status'] == later['status'] == 'submitted'
+    progress = h.get('approver', f"/api/workspaces/{earlier['id']}")['review_progress']
+    assert not progress['can_decide'] and not progress['stale_inputs']
+    assert h.get('approver', f"/api/workspaces/{later['id']}")['review_progress']['can_decide']
+
+    context, page = sign_in(browser, live_server, 'approver', viewport=DESKTOP)
+    try:
+        needs = page.locator('.home-needs')
+        review = needs.locator('li[data-need=reviews]')
+        expect(needs.locator('.home-clear')).to_have_count(0)
+        expect(review.locator('.home-count')).to_have_text('1')
+        expect(review).to_contain_text('Ready for your review')
+        cell = page.locator(f'.home-month[data-month="{month:%Y-%m}"]')
+        expect(cell.locator('.badge.warn')).to_have_text('Waiting for approval')
+        expect(cell).not_to_contain_text('draft')
+        expect(page.locator('#department-nav [data-route=schedule]')).to_have_accessible_description(
+            '1 rota waiting for review')
+        cell.get_by_role('button', name='Review Ready for your review', exact=True).click()
+        expect(page).to_have_url(re.compile(rf"approve={later['id']}$"))
+    finally:
+        context.close()
+
+
 def populated(h):
     """A published rota from last month (today: a morning the staff member leads with a colleague, an afternoon on
     overtime, an evening; their next duties tomorrow and in three days), a draft after it with an open place, a leave

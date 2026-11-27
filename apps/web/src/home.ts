@@ -45,13 +45,15 @@ export interface HomeHooks {
   phone:boolean;
   /** A draft's Fix list: the Planner's panel on a desktop, the page on a phone (FIXLIST-UX). */
   fixList?:(rota:string)=>void;
+  reviewCount:(count:number)=>void;
 }
 
-interface Item {key:string;count:number;classification?:string;rota_id?:string;rota_name?:string;rotas?:number;checked_at?:string;
+interface Item {key:string;count:number;classification?:string;rota_id?:string;rota_ids?:string[];rota_name?:string;rotas?:number;checked_at?:string;
   /** A draft row (home.py): false while its check is out of date or running; its fix_list is then the last check's. */checked?:boolean;sample?:Row[];link_target?:string;fix_list?:{summary?:unknown};action?:PublishedOperationalAction|null;
   /** ME-28: the first rota to review amends a published one: its changes and their reasons (Sick, Leave…). */
   amendment?:{changes:number;reasons:string[]}}
-interface HomeData {attention:Item[];rotas:number|null;my_requests:Row[];recent_changes:Row[];review_refresh_in_ms?:number}
+export interface HomeData {attention:Item[];rotas:number|null;my_requests:Row[];recent_changes:Row[];review_refresh_in_ms?:number}
+export const reviewAttention=(data:HomeData)=>data.attention.find(i=>i.key==='reviews');
 /** One row of Needs you: a count pill (tone and number), a title, one muted line of context and one action. */
 type Need={tone:BadgeTone;count:number;title:string;context:string;action:string;go:()=>void;to?:string;/** Shown on a phone too (a person's own published duty, a draft's blocking tasks and open places). */phone?:boolean;/** The server's key (a test and agent hook: data-need) */key?:string;
   /** G-02: several duties under one title, each line with its own action (then the row has none of its own). */items?:NeedItem[]};
@@ -103,7 +105,8 @@ export async function homePage(ctx:Context,target:HTMLElement,hooks:HomeHooks){
   if(duties?.hero)main.append(duties.hero);
   // Whoever watches the service keeps its health one click away, healthy or not.
   const needs=needsCard(ctx,hooks,phone,reading,!phone&&grants(me.roles,'system.operations')?link('Service health',()=>ctx.navigate('system/operations')):null,
-    text=>{if(!said)status.replaceChildren(el('span',{class:'truncate',title:text},text));});
+    text=>{if(!said)status.replaceChildren(el('span',{class:'truncate',title:text},text));},review=>{
+      hooks.reviewCount(review?.count??0);rota?.showReviews(review?.rota_ids??[]);});
   main.append(needs.node);
   // A staff sign-in without a staff profile: say why no duties or requests show, and who links it (SCA-02); after Needs
   // you, never the page's first element (maintenance).
@@ -113,7 +116,8 @@ export async function homePage(ctx:Context,target:HTMLElement,hooks:HomeHooks){
     // Setup counts read deferred lists (rules, opening hours): the card waits for them, never showing false gaps.
     if(!phone&&can(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))void setupCounts(ctx).then(counts=>{if(!counts)return;const card=setupCard(ctx,counts,data.rotas,can(CAPABILITY.ADMIN),can(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER),can(CAPABILITY.COORDINATOR),new Set(data.attention.map(i=>i.key)));if(!card)return;if(head.parentNode===target)head.after(card);else target.prepend(card);},()=>{});
   });
-  if(planner)main.append(rotaStrip(ctx,today,say));
+  const rota=planner?rotaStrip(ctx,today,say):null;
+  if(rota)main.append(rota.node);
   if(showToday)main.append(todayTable(ctx,today,phone));
   // One useful card for the roles whose Home was nearly empty (UX review H-04).
   if(!phone&&can(CAPABILITY.CREDENTIALER))main.append(expiringCard(ctx,today));
@@ -355,7 +359,8 @@ export const onPhone=(n:Need)=>n.to==='requests'||!!n.phone;
 /** Needs you: the server's items (/api/home) and the notices waiting for this reader's acknowledgement (H-18), never
  *  "All clear" while one waits. Its Retry reads /api/home again, nothing else (H-13). No count in the head or the footer: the
  *  rows are there (D-021). */
-function needsCard(ctx:Context,hooks:HomeHooks,phone:boolean,reading:Promise<HomeData|Error>,extra:HTMLElement|null,status:(text:string)=>void){
+function needsCard(ctx:Context,hooks:HomeHooks,phone:boolean,reading:Promise<HomeData|Error>,extra:HTMLElement|null,status:(text:string)=>void,
+  showReviews:(item:Item|undefined)=>void){
   const heading=el('h2',{id:'home-needs-title',tabindex:-1},'Needs you'),body=el('div',{class:'home-body'});
   const node=el('section',{class:'panel home-card home-needs','aria-labelledby':'home-needs-title'},el('div',{class:'home-head'},heading,el('span',{class:'home-aside home-links'},extra||'')),body);
   // away: items a phone leaves to a desktop; they still count, so a phone never says All clear while one waits.
@@ -385,7 +390,8 @@ function needsCard(ctx:Context,hooks:HomeHooks,phone:boolean,reading:Promise<Hom
       const again=()=>read(true);
       const failed=loadFailed('what needs you',data,again,'needs');
       void put(body,[failed]);if(retried)failed.querySelector('button')?.focus();return;}
-    recovered('needs');const every=needsOf(ctx,hooks,data);rows=every.filter(n=>!phone||onPhone(n));away=every.filter(n=>phone&&!onPhone(n));draw();if(retried)heading.focus();
+    recovered('needs');const every=needsOf(ctx,hooks,data);rows=every.filter(n=>!phone||onPhone(n));away=every.filter(n=>phone&&!onPhone(n));draw();
+    showReviews(reviewAttention(data));if(retried)heading.focus();
     if(typeof data.review_refresh_in_ms==='number'){
       const delay=Math.min(Math.max(1,data.review_refresh_in_ms),2**31-1);
       reviewTimer=window.setTimeout(()=>{if(node.isConnected&&!lifetime.aborted)read(false,true);},delay);
@@ -412,11 +418,15 @@ const monthStart=(day:string,n:number)=>{const d=new Date(day.slice(0,7)+'-01T12
  *  live and published rotas of those months (one bounded read). */
 function rotaStrip(ctx:Context,today:string,say:(text:string)=>void){
   const coordinator=ctx.permits(CAPABILITY.COORDINATOR);
-  return card('rota','Rota',async()=>{
+  let rotas:Row[]|null=null,reviewIds=new Set<string>(),drawnReviews=reviewIds;
+  const node=card('rota','Rota',async()=>{
     const first=monthStart(today,-1),after=monthStart(today,3);
+    rotas=(await get<{workspaces:Row[]}>('/api/home/rotas?'+new URLSearchParams({start:first,end:after,limit:'100'}))).workspaces;
+    return draw(rotas);
+  },'',body=>{if(rotas&&drawnReviews!==reviewIds)body.replaceChildren(...draw(rotas));});
+  function draw(rotas:Row[]){
+    drawnReviews=reviewIds;
     const gap=coordinator?missingSetupWords(ctx):'';
-    // The Home timeline read (home.py rota_strip): dates, health and, for a coordinator, a draft's waiting proposal.
-    const rotas:Row[]=(await get<{workspaces:Row[]}>('/api/home/rotas?'+new URLSearchParams({start:first,end:after,limit:'100'}))).workspaces;
     const published=rotas.filter(w=>w.status==='published'),live=rotas.filter(w=>w.status!=='published').sort((a,b)=>a.starts_on.localeCompare(b.starts_on));
     const covers=(day:string)=>published.find(w=>w.starts_on<=day&&day<w.ends_on);
     // Places filled of places needed (the rota summary's units), from a check that is still current.
@@ -438,51 +448,62 @@ function rotaStrip(ctx:Context,today:string,say:(text:string)=>void){
       const ranges:[string,string][]=[];
       for(let d=start;d<end;d=addDays(d,1))if(covers(d)){const r=ranges.at(-1);if(r&&r[1]===addDays(d,-1))r[1]=d;else ranges.push([d,d]);}
       const shown=ranges.reduce((n,[a,b])=>n+(Date.parse(b)-Date.parse(a))/864e5+1,0);
-      // Several drafts over one month: the first is named with how many others (H-03); Open leads to the draft picker.
-      // D-162: only a rota this reader acts on shows its fill, check and Open; another reader sees only that one is in work.
-      const inWork=live.filter(w=>w.starts_on<end&&w.ends_on>start),drafts=inWork.filter(w=>actsOn(w.status,ctx.me.roles)),draft=drafts[0],pct=draft?filled(draft):null;
+      const inWork=live.filter(w=>w.starts_on<end&&w.ends_on>start);
+      const reviews=inWork.filter(w=>reviewIds.has(w.id));
+      const otherActions=inWork.filter(w=>w.status!=='submitted'&&actsOn(w.status,ctx.me.roles));
+      const selected=reviews[0]||otherActions[0],pct=selected?filled(selected):null;
       const at=(day:string)=>`${(Date.parse(day)-Date.parse(start))/864e5/length*100}%`;
       const fill=(from:string,width:string,cls:string)=>{const f=el('span',{class:'fill '+cls});f.style.setProperty('--from',from);f.style.setProperty('--fill',width);return f;};
       // A month already published shows its published days (a draft over it, e.g. an amendment, is named beside them).
       // A draft whose share filled is unknown is a hatched gold bar, never the empty bar of "Not started" (H-03).
-      const bar=el('span',{class:'home-bar','aria-hidden':'true'},...(draft&&!shown?[pct===null?fill('0%','100%','draft unknown'):fill('0%',`${pct}%`,'draft')]
+      const bar=el('span',{class:'home-bar','aria-hidden':'true'},...(selected&&!shown?[pct===null?fill('0%','100%','draft unknown'):fill('0%',`${pct}%`,'draft')]
         :ranges.map(([a,b])=>fill(at(a),`${((Date.parse(b)-Date.parse(a))/864e5+1)/length*100}%`,'published'))));
       if(start<=today&&today<end){const mark=el('span',{class:'home-now',title:'Today, '+shortDay(today)});mark.style.setProperty('--at',`${((Date.parse(today)-Date.parse(start))/864e5+.5)/length*100}%`);bar.append(mark);}
       let word:string,action:HTMLElement|string='',state:HTMLElement|string='';
       const pubWord=shown===length?'Published':shown?'Published '+ranges.map(([a,b])=>leaveDates({type:'',starts_on:a,ends_on:b})).join(', '):'';
-      const stateWord=(w:Row)=>w.status==='draft'?(pubWord?'draft':'Draft'):rotaOutdated(w)?statusLabel('outdated'):w.status==='submitted'?'In review':'Approved';  // the list's server verdict
-      if(draft){
-        word=[pubWord,stateWord(draft),String(draft.name||'')+(drafts.length>1?` +${plural(drafts.length-1,'draft')}`:''),
-          pct!==null?`${pct}% filled`:coordinator&&!(draft.health?.fresh&&draft.health.summary)?'':noPercent(draft)].filter(Boolean).join(' · ');
+      const stateWord=(w:Row)=>w.status==='draft'?(pubWord?'draft':'Draft'):statusLabel(rotaOutdated(w)?'outdated':w.status);
+      if(selected){
+        const otherDrafts=selected.status==='draft'?otherActions.filter(w=>w.status==='draft').length-1:0;
+        const more=reviews.length>1?` · +${plural(reviews.length-1,'rota')} to review`:otherDrafts?` +${plural(otherDrafts,'draft')}`:'';
+        word=[pubWord,selected.status==='submitted'?'':stateWord(selected),String(selected.name||'')+more,
+          pct!==null?`${pct}% filled`:coordinator&&!(selected.health?.fresh&&selected.health.summary)?'':noPercent(selected)].filter(Boolean).join(' · ');
         // Open lands on this month with its named draft in edit (the Schedule's draft switcher holds the others), never on
         // whichever month the Schedule showed last (review maintenance item 11).
         // A waiting auto-schedule proposal (the server's: current, not applied or discarded) is said here and Review opens
         // it on that draft (Auto-schedule › Review); the run stays the server's to check again.
         // A proposal a newer run replaced is not ready: its state (the shared badge) and Review opens the latest run.
-        const replaced=draft.status==='draft'&&draft.proposal?.currency==='superseded',ready=draft.status==='draft'&&!!draft.proposal&&!replaced;
-        const open=()=>{ctx.setWorkspace(draft.id);ctx.navigate(`schedule/month/${start}?edit=${encodeURIComponent(draft.id)}${ready||replaced?'&review=proposal':''}`);};
+        const replaced=selected.status==='draft'&&selected.proposal?.currency==='superseded',ready=selected.status==='draft'&&!!selected.proposal&&!replaced;
+        const open=()=>{ctx.setWorkspace(selected.id);ctx.navigate(`schedule/month/${start}?edit=${encodeURIComponent(selected.id)}${ready||replaced?'&review=proposal':''}`);};
         if(ready)word+=' · proposal ready';
         if(replaced)state=badge(SUPERSEDED.state);
-        action=link(replaced?SUPERSEDED.next:ready?'Review':'Open',open,{'aria-label':replaced?`${SUPERSEDED.next} for ${draft.name}`:ready?`Review the auto-schedule proposal for ${draft.name}`:drafts.length>1?`Open the ${monthName(start,'long')} drafts`:`Open ${draft.name}`});
+        action=selected.status==='submitted'?link('Review',()=>{ctx.setWorkspace(selected.id);ctx.navigate('schedule?approve='+encodeURIComponent(selected.id));},
+          {'aria-label':`Review ${selected.name}`}):link(replaced?SUPERSEDED.next:ready?'Review':'Open',open,{'aria-label':replaced?`${SUPERSEDED.next} for ${selected.name}`:ready?`Review the auto-schedule proposal for ${selected.name}`:otherDrafts?`Open the ${monthName(start,'long')} drafts`:`Open ${selected.name}`});
         // The footer speaks of this month's rota or the next one, never a past month's draft.
         // F-03: the rota being planned, not an amendment of a published month (said only when nothing else is planned).
         // D-161: the footer keeps the rota's status; only "no staffing minimum set" is said once, in Needs you.
-        const np=pct===null?noPercent(draft):'',tail=pct!==null?pct+'%':np&&np!==NO_MINIMUM?'· '+np:'';
-        const words=[monthName(start,'long'),draft.status==='draft'?'draft':'rota',tail].filter(Boolean).join(' ');
-        if(end>today){if(draft.base_publication_id)amendment||=words;else footerDraft||=words;}
-      }else if(inWork.length)word=[pubWord,stateWord(inWork[0])].filter(Boolean).join(' · ');
+        const np=pct===null?noPercent(selected):'',tail=pct!==null?pct+'%':np&&np!==NO_MINIMUM?'· '+np:'';
+        const words=[monthName(start,'long'),selected.status==='draft'?'draft':'rota',tail].filter(Boolean).join(' ');
+        if(end>today){if(selected.base_publication_id)amendment||=words;else footerDraft||=words;}
+      }else if(inWork.length)word=[pubWord,inWork[0].status==='submitted'?'':stateWord(inWork[0])].filter(Boolean).join(' · ');
       else if(shown)word=pubWord;
       // A past month says "Not published" only when a later month was published (else nothing was ever published: H-25).
       else{word=end<=today?(published.some(w=>w.ends_on>end)?'Not published':'No rota'):'Not started';
         if(coordinator&&end>today&&!gap)action=link('Start',()=>workspaceForm(ctx,undefined,{name:`${monthName(start,'long')} rota`,starts_on:start,ends_on:end}),
           {'aria-label':`Start the ${monthName(start,'long')} rota`});}
+      const shownRota=selected||inWork[0];
+      if(shownRota?.status==='submitted')state=statusBadge(rotaOutdated(shownRota)?'outdated':'submitted');
       return el('div',{class:'home-month','data-month':start.slice(0,7)},el('div',{class:'home-month-head'},el('strong',{},monthName(start)),el('span',{class:'muted home-month-state'},...word.split(' · ').flatMap((v,i)=>[i?' · ':'',el('span',{},v)])),action),state,bar);
     });
     // Only whoever plans the draft hears its status (D-099); the others read the months above. No dates in the footer
     // reviewed: the months show them.
     if(coordinator)say(footerDraft||amendment);
     return [el('div',{class:'home-months'},...months)];
-  });
+  }
+  return {node,showReviews(ids:string[]){
+    if(ids.length===reviewIds.size&&ids.every(id=>reviewIds.has(id)))return;
+    reviewIds=new Set(ids);
+    if(rotas&&node.querySelector('.home-months'))node.querySelector('.home-body')?.replaceChildren(...draw(rotas));
+  }};
 }
 
 // ---- Today by clinic ----
