@@ -555,6 +555,11 @@ def _leave_has_started(row):
     return aware(row.start) <= m.now()
 
 
+def _require_leave_has_not_started(row):
+    require(not _leave_has_started(row), "LEAVE_ALREADY_STARTED",
+            "Ask an approver to correct leave that has already started", 409)
+
+
 def require_request_decision(db, actor, row, decision, *, approval_context=None):
     if decision == "withdraw":
         require(owns_request(actor, row),
@@ -628,8 +633,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             inputs_changed = bool(retired)
         if row.kind == "leave" and withdraw_approved:
             from .leave_balances import BALANCE_LEAVE_KINDS
-            require(not _leave_has_started(row), "LEAVE_ALREADY_STARTED",
-                    "Ask an approver to correct leave that has already started", 409)
+            _require_leave_has_not_started(row)
             require(row.workspace_id is None, "REQUEST_UNDO_LINKED",
                     "Remove the linked rota before withdrawing approved leave", 409)
             absences = list(db.scalars(select(m.Availability).where(
@@ -798,6 +802,7 @@ def undo_decision(db, actor, command, *, batch=False):
                 bump_inputs(db, actor, availability=True)
     withdrawn_approval = (row.details or {}).get("withdrawn_approval") if row.kind == "leave" and row.status == "withdrawn" else None
     if withdrawn_approval is not None:
+        _require_leave_has_not_started(row)
         from .leave_balances import require_undo_balance
         for ref in withdrawn_approval["absences"]:
             absence = scoped(db, m.Availability, ref["id"], actor)
