@@ -315,9 +315,8 @@ def test_earliest_red_with_in_job_recovery_counts_once(plan, rerun):
 
 
 def test_ci_downloads_checks_artifacts_and_selects_reports_before_verdict():
-    workflows = ROOT / ".github/workflows"
-    ci = yaml.load((workflows / "ci.yml").read_bytes(), Loader=yaml.BaseLoader)["jobs"]
-    reusable = yaml.load((workflows / "ci-tests.yml").read_bytes(), Loader=yaml.BaseLoader)
+    ci = yaml.load((ROOT / ".github/workflows/ci.yml").read_bytes(), Loader=yaml.BaseLoader)["jobs"]
+    reusable = yaml.load((ROOT / ".github/workflows/ci-tests.yml").read_bytes(), Loader=yaml.BaseLoader)
     assert ci["checks"]["outputs"]["artifact_attempt"] == "${{ github.run_attempt }}"
     source = "${{ needs.checks.outputs.artifact_attempt }}"
     for job in ("unit", "browser"):
