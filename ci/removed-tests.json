@@ -278,6 +278,111 @@
       "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
     },
     {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-bgbknhpianonfooigomjiblipkapffdambcpjmjcileaeamgeidemjhaapabkdfi]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[changed-control-files] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-jeajafefpahdglkpegnpgibbieipdhkfodmebdlplhkeigjiekchpcpaihmchnbo]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[missing-run] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-lcbhijmcdinonmbcmeihdldnejnkanagbbobcaomijgacaifaahcjefgpiconejf]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[replaced-artifact] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-lnamchkmngiadoaahgpoflipcmkaabfpgbfaefabpblbgppcdmdckojbnagmfbhe]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[merge-group-lookup-timeout] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-ngimdonkomhdnddblcolibddekgbjjeakpepghppjamphlkdndgjcpjkdkjhhoia]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[missing-proof] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-agomeabjehmekafikneddecoaebgnbmehfndhmkcmeabcffjemhecnnglleoigad]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-gate-attempt] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-bbkhlaeabehdlbhhjonmlgmfnmkhodfdkdofggokegpcgamobgogmagekedpolgo]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-plan-base] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-bhanmamnennfbifjikioclgkignmhkjhlkfbjemnghmiibgflnpochgdgeakfhdd]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-inventory-seal] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-bnagaakopkljfhkpjbklbhlhnkamooochgebjfaipihchlionhdpigibffgmahfg]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[partial-plan-selection] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ccppjbbbcggbkdmiddngnioandeeonbhhhokmdpjlfjeohhpbcdhkegifkdddcog]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[missing-suite-files] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ckaeephebfiikjglklnopgdpjcdgbikhbjdocpihclejiidgpdibadfdfblinjio]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-plan-seal] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ecofbcnkpjnafghimomfeilaimgidhjhkpdhokbogmijgiineoogpacjfekankhg]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-workflow] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-fngdpfciohiaaknblbmgegieopijicjgbbcdliodgglpboognblmmhacfmefjaeg]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[stale-gate] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ggggbmabkogakmemebnflapgdongagkbbhndfingpcglpbhoaoccmcneghnledco]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[cancelled-gate] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-hmmagdikjkighlfoiclaenklockfmicfmcnbnoipnhoadcoadefgdlijpmbblhlb]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[skipped-gate] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-jlginnphdociokfmkicjmmlmdnpmclnkjldlhfipjhjkiffloanjcegiodmdgncc]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-proof-tree] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-kklfnpmecjddinibcofknnlhlidfbfjobklkbdmfplpcfingemeendnkklfmmekb]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-run-head] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-mofbicmemjphejlhjhhoapkagbmceabgoejmpndekalndjfkcmbjlkimcgceidjk]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[failed-merge-group-run] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-obgdgimdpimockaomkkhaldnfcdmfdddfmhajlaliphdbocgjoikicclpfkpndpi]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[nonpassing-verdict] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ohclkolkjoclemkceiicmjjakpmficaejmamgbpncbeofjiccoddopknbihfnfkk]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-plan-tree] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-pplijfckihaebnnheplekcgelokbiobnekaibpicifjadiellhcmcpgcdaehoapj]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-queue-branch] replaces this generated ID and retains its assertions."
+    },
+    {
       "node": "tests/test_quota_working_day_proration.py::test_leave_does_not_reduce_partial_window_commitment",
       "owner": "maintainer",
       "reason": "Merged into test_validator_away_kinds_prorate_partial_window_minimum_and_finding[approved_leave], which keeps the exact amount and proration metadata assertions with three working days and an amount of four under leave-aware proration."

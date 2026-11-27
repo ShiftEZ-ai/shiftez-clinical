@@ -4,6 +4,8 @@ from io import BytesIO
 import json
 import os
 from pathlib import Path
+import re
+import shlex
 import subprocess
 import sys
 from zipfile import BadZipFile, ZipFile
@@ -25,6 +27,37 @@ CONTROLS = (evidence.WORKFLOW, ".github/workflows/ci-tests.yml", ".github/action
 PROOF = "queue-proof.json"
 READ_ERRORS = (BadZipFile, ZipDataError, KeyError, OSError, RuntimeError, TypeError, ValueError,
                AttributeError, subprocess.SubprocessError)
+
+
+def log_text(text):
+    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text)
+    for key in ("GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "ACTIONS_RUNTIME_TOKEN"):
+        if token := os.getenv(key):
+            text = text.replace(token, "[redacted]")
+    text = re.sub(r"(?i)https?://\S+|\b(?:gh[pousr]_|github_pat_)[a-z0-9_]+", "[redacted]", text)
+    text = re.sub(r"(?i)\b((?:bearer|basic)\s+|[a-z_]*token\s*[:=]\s*)\S+", r"\1[redacted]", text)
+    return " ".join("".join(char if char.isprintable() else " " for char in text).split())
+
+
+def refusal(error):
+    if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)):
+        command = error.cmd
+        if isinstance(command, (list, tuple)):
+            if tuple(command[:2]) == ("git", "-C"):
+                command = ["git", "-C", "<trusted checkout>", *command[3:]]
+            command = shlex.join(command)
+        if isinstance(error, subprocess.CalledProcessError):
+            status = f"exit {error.returncode}"
+        else:
+            status = f"timed out after {error.timeout}s"
+        stderr = error.stderr or ""
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        detail = log_text(stderr)[:240] or "empty"
+        return f"{log_text(command)} ({status}, stderr: {detail})"
+    if type(error) is ValueError:
+        return log_text(str(error))
+    return f"{type(error).__name__}: {log_text(str(error))[:240]}"
 
 
 def git(*args):
@@ -67,7 +100,10 @@ def record(plan, reports, plan_attempt):
 
 def check_controls(base, *revisions):
     for sha in dict.fromkeys(revisions):
-        git("diff", "--quiet", "--no-ext-diff", "--no-textconv", base, sha, "--", *CONTROLS)
+        changed = git("diff", "--name-only", "-z", "--no-ext-diff", "--no-textconv", "--no-renames",
+                      base, sha, "--", *CONTROLS)
+        if changed:
+            raise ValueError("control files changed: " + ", ".join(os.fsdecode(path) for path in policy.paths(changed)))
 
 
 def qualified_run(run, sha):
@@ -116,7 +152,8 @@ def verified_reports(push_plan, required_run=None):
     gate_id = gates[0]["id"]
     if type(gate_id) is not int or gate_id < 1:
         raise ValueError("Invalid queue gate job id")
-    log = evidence.github_get(repository, f"jobs/{gate_id}/logs")
+    # Capture the raw log in memory. Only the exact qualification marker is used.
+    log = evidence.github_get(repository, f"jobs/{gate_id}/logs", raw=True)
     recorded_ids = policy.re.findall(rb"^\S+Z Queue qualification artifact id ([1-9][0-9]*)\r?$", log, policy.re.M)
     artifacts = list(evidence.run_artifacts(repository, run))
     qualification = [a for a in artifacts if a["name"] == f"known-failures-candidate-{attempt}"]
@@ -169,20 +206,21 @@ def main():
     parser.add_argument("--record-attempt")
     parser.add_argument("--require-run")
     args = parser.parse_args()
-    plan = policy.decode(args.plan.read_bytes())
-    if args.record_attempt:
-        try:
-            record(plan, args.reports, args.record_attempt)
-        except READ_ERRORS as error:
-            print("::notice::Queue reuse proof could not be recorded (" + type(error).__name__ + ")")
-        return
     try:
+        plan = policy.decode(args.plan.read_bytes())
+        if args.record_attempt:
+            record(plan, args.reports, args.record_attempt)
+            return
         found = verified_reports(plan, args.require_run)
     except READ_ERRORS as error:
-        reason = str(error) if type(error) is ValueError else type(error).__name__
-        if args.require_run is not None:
+        reason = refusal(error)
+        if args.record_attempt:
+            message = f"Queue reuse proof could not be recorded ({reason})"
+        elif args.require_run is not None:
             raise SystemExit("Queue reuse verification failed: " + reason) from None
-        print("::notice::Queue proof unavailable (" + reason + "); running the full suites")
+        else:
+            message = f"Queue proof unavailable ({reason}); running the full suites"
+        print("::notice::" + message.replace("%", "%25"))
         return
     if args.require_run is not None:
         if found is None:

@@ -21,7 +21,6 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from packages.domain.rule_lines import SCORING_DEFAULT_SOURCE
 from scripts.golden_scenarios import PACK, command_key, compile_scenario
 
 
@@ -349,27 +348,7 @@ def seed_department(spec, command, read, committed):
     first_rota = 'history-1' if spec['history_months'] else 'rota'
     if rotas and committed('coordinator', command_key(spec, first_rota)) is None:
         raise ValueError('The golden department requires a dedicated department without rotas')
-    # The stock department starts with one workload fairness line. Bind its
-    # public revision and preserve it when appending the fixture's night goal.
-    previous = committed('coordinator', command_key(spec, 'fair_share'))
-    history = read('coordinator', '/api/rules/catalogue/fair_share/history?version=2')['policies']
-    merged = previous['record']['definition']['merged_ids'] if previous else []
-    current = [row for row in history if row['id'] in merged or
-               (previous is None and row['status'] == 'active')]
-    if any(row['source'] != SCORING_DEFAULT_SOURCE for row in current):
-        raise ValueError('The synthetic department has a custom fairness rule')
-
-    def append_to_defaults(role, kind, payload, **kwargs):
-        if kind == 'rule.propose' and payload['catalogue_id'] == 'fair_share' and current:
-            [default] = current
-            lines = default['definition']['rule']['lines']
-            payload = {**payload, 'expected_policy_id': default['id'],
-                       'expected_revision': default['revision'] - int(default['status'] == 'retired'),
-                       'expected_line_ids': [line['id'] for line in lines],
-                       'lines': [*lines, *payload['lines']]}
-        return command(role, kind, payload, **kwargs)
-
-    return compile_scenario(append_to_defaults, spec, read=read, committed=committed)
+    return compile_scenario(command, spec, read=read, committed=committed)
 
 
 def main():

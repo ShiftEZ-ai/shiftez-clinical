@@ -11,6 +11,7 @@ import time
 import uuid
 
 from packages.contracts.schemas import GenerationOptions
+from packages.domain.rule_lines import SCORING_DEFAULT_SOURCE
 
 PACK = Path(__file__).resolve().parents[1] / 'tests/scenarios/golden/v1'
 
@@ -45,6 +46,22 @@ def command_key(spec, key):
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"fmuc:golden:v1:{spec['id']}:{spec['revision']}:{key}"))
 
 
+def _fair_share_default(spec, row, read, committed):
+    # Replays must use the same seed baseline even after approval retires it.
+    role = row['role']
+    prior = committed(role, command_key(spec, row['key']))
+    history = read(role, '/api/rules/catalogue/fair_share/history?version=2')['policies']
+    merged = prior['record']['definition']['merged_ids'] if prior else []
+    current = [policy for policy in history if policy['id'] in merged or
+               (prior is None and policy['status'] == 'active')]
+    if current:
+        [default] = current
+        if default['source'] != SCORING_DEFAULT_SOURCE:
+            raise ValueError('The synthetic department has a custom fairness rule')
+        return default
+    return None
+
+
 def compile_scenario(command, spec, *, read, committed, work=None):
     """POST commands and GET checks using authenticated API transports.
 
@@ -53,6 +70,10 @@ def compile_scenario(command, spec, *, read, committed, work=None):
     receipt by key, or returns None when absent. Neither path bypasses policy review receipts.
     """
     records, ids, workspace = {}, {}, None
+    fair_share = next((row for row in spec['commands'] if row['kind'] == 'rule.propose'
+                       and row['payload']['catalogue_id'] == 'fair_share'
+                       and 'expected_policy_id' not in row['payload']), None)
+    default = _fair_share_default(spec, fair_share, read, committed) if fair_share else None
 
     def resolve(value):
         if isinstance(value, str) and value.startswith('$'):
@@ -67,6 +88,12 @@ def compile_scenario(command, spec, *, read, committed, work=None):
 
     for row in spec['commands']:
         payload, target, revision = resolve(row.get('payload', {})), resolve(row.get('target')), resolve(row.get('revision'))
+        if row is fair_share and default is not None:
+            lines = default['definition']['rule']['lines']
+            payload = {**payload, 'expected_policy_id': default['id'],
+                       'expected_revision': default['revision'] - int(default['status'] == 'retired'),
+                       'expected_line_ids': [line['id'] for line in lines],
+                       'lines': [*lines, *payload['lines']]}
         if row['kind'] == 'policy.activate':
             # A committed activation already owns its exact checked context set.
             # Replay that immutable result before today's effect list can grow.

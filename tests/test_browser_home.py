@@ -13,7 +13,9 @@ from playwright.sync_api import expect
 
 from apps.api import models as m
 from apps.api.db import transaction
-from .governance_support import identity
+from .clock_support import freeze_clock
+from .governance_support import identity, route
+from .test_review_routes import submitted
 from .test_browser import route_fetch, browser, live_server, sign_in, navigate, expect_loaded  # noqa: F401
 from .test_home import agreed_home_swap, big_department
 
@@ -918,6 +920,53 @@ def test_self_approved_row_opens_your_own_decisions(browser, live_server, h, who
         expect(row).to_contain_text(name)
         expect(row.locator('.audit-self')).to_contain_text('Self-approved')
         assert refused == []
+    finally:
+        context.close()
+
+
+@pytest.fixture
+def delegation_test_server(request, monkeypatch, tmp_path):
+    clock = tmp_path / 'clock.txt'
+    change = tmp_path / 'clock-next.txt'
+
+    def set_clock(moment):
+        change.write_text(moment.isoformat(), encoding='utf-8')
+        change.replace(clock)
+
+    set_clock(clock_now())
+    freeze_clock(monkeypatch, lambda: datetime.fromisoformat(clock.read_text(encoding='utf-8')))
+    return request.getfixturevalue('live_server'), set_clock
+
+
+def test_open_home_updates_when_a_review_delegation_starts_and_expires(browser, h, delegation_test_server):
+    live_server, set_clock = delegation_test_server
+    clock = m.now()
+    identity(h, 'programme', ['programme_lead'])
+    review = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'}])
+    rota = submitted(h)
+    starts = clock + timedelta(minutes=2)
+    expires = starts + timedelta(minutes=2)
+    h.command('programme', 'review_delegation.create', {
+        'route_id': review['id'], 'step_key': 'programme', 'delegate_id': h.seed['identities']['approver'],
+        'starts_at': starts.isoformat(), 'expires_at': expires.isoformat(), 'reason': 'Bounded independent delegation',
+    })
+    assert h.detail(rota)['review_progress']['stale_inputs'] is False
+    context, page = sign_in(browser, live_server, 'approver', DESKTOP)
+    try:
+        navigate(page, 'home')
+        card = page.locator('.home-needs')
+        expect(card).to_be_visible()
+        expect(card.locator('[aria-busy="true"]')).to_have_count(0)
+        row = card.locator('[data-need="reviews"]')
+        expect(row).to_have_count(0)
+
+        set_clock(starts)
+        page.clock.fast_forward(120_050)
+        expect(row).to_contain_text(rota['name'])
+
+        set_clock(expires)
+        page.clock.fast_forward(120_050)
+        expect(row).to_have_count(0)
     finally:
         context.close()
 

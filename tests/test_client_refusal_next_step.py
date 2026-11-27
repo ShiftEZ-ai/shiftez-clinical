@@ -34,9 +34,25 @@ def test_a_specific_server_prefix_is_kept(client_modules):
 
 
 def test_unknown_or_missing_codes_keep_the_server_message_unchanged(client_modules):
-    assert said(client_modules, REFUSAL, found('TIME_OVERLAP')) == REFUSAL
+    assert said(client_modules, REFUSAL, found('NO_SUCH_CODE')) == REFUSAL
     assert said(client_modules, REFUSAL, None) == REFUSAL
     assert said(client_modules, REFUSAL, [{'field': 'x', 'message': 'y'}]) == REFUSAL
+    # Only a mandatory finding names the problem.
+    assert said(client_modules, REFUSAL, {'findings': [{'code': 'TIME_OVERLAP', 'severity': 'warning'}]}) == REFUSAL
+
+
+def test_a_generic_sentence_names_what_was_not_done_and_what_is_wrong(client_modules):
+    overlap = 'Already working another duty at this time.'
+    assert said(client_modules, REFUSAL, found('TIME_OVERLAP')) == f'Not saved. {overlap}'
+    assert said(client_modules, 'The complete swap failed validation; neither side was saved',
+                found('TIME_OVERLAP', 'UNAVAILABLE')) == f'Not exchanged. {overlap}'
+    transfer = {'findings': [{'code': 'MIN_REST', 'severity': 'error', 'message': 'Rest between duties is too short'}]}
+    assert said(client_modules, 'The complete duty transfer failed validation; no change was saved', transfer) == (
+        'Not transferred. Rest between duties is too short.')
+    assert said(client_modules, f'This person cannot be assigned to this duty. {REFUSAL}', found('TIME_OVERLAP')) == (
+        f'This person cannot be assigned to this duty. Not saved. {overlap}')
+    # A message that is not a generic sentence already names its problem.
+    assert said(client_modules, 'Alex Morgan is on another duty then', found('TIME_OVERLAP')) == 'Alex Morgan is on another duty then'
 
 
 def test_a_new_lead_or_supervision_gap_says_the_way_through(client_modules):

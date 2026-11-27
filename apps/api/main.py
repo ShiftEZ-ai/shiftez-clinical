@@ -60,7 +60,7 @@ from .snapshots import (domain_snapshot,
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
-from .services.planning import health, redo_available, allowed_actions
+from .services.planning import health, edit_availability, allowed_actions
 from .services import schedule
 from .services.policies import policy_impact, check_policy, duplicate_groups, policy_reach, rules_for_person
 from packages.domain.solver_rules import capability_catalogue, generation_manifest
@@ -2611,7 +2611,9 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.workspace_access import access_record
             from .services.rota_summary import workspace_validation, current_check
             from .workspace_baselines import attach as attach_baseline
+            can_undo, can_redo = edit_availability(db, actor, workspace) if actor.permits("coordinator") else (False, False)
             data = {"workspace": {**attach_baseline(db, workspace, record(workspace)),
+                                  "can_undo": can_undo,
                                   "name": visible_rota_name(db, actor, workspace.id, workspace.name),
                                   "publication_id": publication_id,
                                   "allowed_actions": allowed_actions(db, actor, workspace, historical=historical,
@@ -2624,7 +2626,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     # SW3-A-10: on the period's integrated rota only its Rota Coordinator adds or removes a fixed assignment.
                     "can_change_fixed": actor.permits("coordinator") and unrestricted(db, actor, access_record(db, workspace)),
                     # SW3-A-06: the viewer's own Undo can be redone (the planner then offers Redo beside Undo).
-                    "can_redo": actor.permits("coordinator") and redo_available(db, actor, workspace),
+                    "can_redo": can_redo,
                     "swap_id": db.scalar(select(m.SwapRequest.id).where(m.SwapRequest.workspace_id == workspace.id)),
                     "approvals": [record(a) for a in db.scalars(select(m.Approval).where(m.Approval.workspace_id == workspace.id))]}
             from .services.people import with_adjustment_names

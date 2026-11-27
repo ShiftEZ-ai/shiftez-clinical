@@ -110,7 +110,7 @@ import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAft
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
 import {planningOf,groupRow,type PlanningContext,type GroupState} from './groups_view.js';
 import {DRAFT_GROUPS,draftGroup,draftGlyph,draftHint,editableDraft,sandboxPill,rotaFor,newPrivateDraft,shareDraft,designateDraft,rotaCoordinators,mergePanel} from './drafts.js';
-import {lifecycleItem,archivedRotas} from './rota_lifecycle.js';
+import {lifecycleItem,lifecycleOf,archivedRotas,restoreRota} from './rota_lifecycle.js';
 import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effectOf,createLabel,addressOf,kindAt,isSettings} from './config_kinds.js';
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
@@ -2472,7 +2472,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const reading=partial(draftData),hold=<T extends HTMLElement>(n:T):T=>reading?notYet(n,WHOLE_LOADING):n;
   let wholeBusy:HTMLElement|null=null;  // the footer's busy pill while reading: gone if the whole read fails
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
-  const draft=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),fresh=!!draftData&&w!.validation_current===true;
+  const draftAccess=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id);
+  const draft=draftAccess&&!w!.archived_at,fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
   // The server says a check job exists (a provisional check): join it, so the status shown is that job's own.
   if(draft&&whole&&(!fresh||serverChecking(w!.validation)))autoCheck(whole);
@@ -2591,19 +2592,21 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       void run.then(()=>{if(!b.isConnected)return;const why=b.getAttribute('aria-describedby');b.replaceWith(approveButton());if(why)document.getElementById(why)?.remove();});return b;};
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
+      if(w.status==='submitted'&&!w.archived_at&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
-    if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
+    if(w.status==='submitted'&&!w.archived_at&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
       else if(data&&decidesStep(data))workflow.append(approveButton());}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
-    if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
+    if(w.status==='submitted'&&!w.archived_at&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
     // Named after the step that happens next: a draft is submitted for review; an approved rota is published.
     const step=w.status==='draft'?'Submit for review…':'Publish…',sandbox=w.purpose==='sandbox',rota=sandbox?rotaFor(w,work):null;
     // maintenance: your own draft merges into the period's rota instead of being submitted (a sandbox is never submitted).
-    if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
+    if(w.archived_at){
+      if(lifecycleOf(w)==='workspace.restore')workflow.append(button('Restore',()=>restoreRota(w,restoredRota).catch(reportError),'secondary'));
+    }else if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
       ring:ids=>{for(const n of document.querySelectorAll('.cause-ring'))n.classList.remove('cause-ring');for(const id of ids)for(const n of document.querySelectorAll(`[data-session~="${CSS.escape(id)}"]`))n.classList.add('cause-ring');},
       done:id=>chooseDraft(id),person:id=>name('people',id),before:(f=>f?{must:f.must,places_open:f.places_open}:null)(fixSummaryOf(rota.health?.summary))}),'secondary',{'aria-label':'Merge into rota…'}),'fork'));
     // SW3-A-11 (D41): no rota for the period to merge into is said where Merge is, with who can fix it (never a missing
@@ -2613,15 +2616,15 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
     // One predicate for Reopen: the note below shows exactly when the button does not.
-    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    const mayReopen=!w.archived_at&&['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
     if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
     // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
-    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
+    if(!w.archived_at&&outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
     for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
-    statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
+    statusPill=(!w.archived_at&&sandboxPill(w,me!.identity_id))||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
     // SW3-A-11: a private draft with no rota says whether Rota Coordinators exist; a list that changes redraws it.
     if(permits(CAPABILITY.COORDINATOR))void rotaCoordinators().then(ids=>{const changed=ids.join()!==rotaCoordinatorIds.join();rotaCoordinatorIds=ids;if(changed&&sandbox&&!rota)void redraw();},()=>{});
@@ -2635,13 +2638,13 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // is the footer's too; the rota list's summary only until one is held.
     const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
     const resolveNow=()=>{const first=resolveQueue(draftData!)[0];startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;if(first)toCalendar(first.shift);renderPage();};
-    // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
+    // Archived drafts can show saved runs. Only a live draft can capture a baseline or run.
     const missingBaseline=draft&&!w.baseline;
-    auto=permits(CAPABILITY.COORDINATOR)&&draft?(missingBaseline
+    auto=draftAccess?(missingBaseline
       ?hold(button('Capture baseline',()=>void captureDraftBaseline(w,refresh).catch(reportError),'secondary',{'aria-label':'Capture baseline','data-tip':'Capture this draft\'s immutable inputs before auto-schedule'}))
       :el('button',{type:'button',class:'button secondary auto-button'+(whole&&proposalShown(whole)?' has-proposal':''),
         // D59: whole-rota work waits for the whole rota: held in place, focusable, saying why (notYet).
-        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':'Auto-schedule · fill open places using your rules'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
+        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':draft?'Auto-schedule · fill open places using your rules':'Auto-schedule · view saved runs'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
     if(auto&&!whole)notYet(auto,WHOLE_LOADING);
     side.hidden=!autoOpen;
     // Help reads the views that draw sessions; Year and Month (day health) have their own key.
@@ -2677,7 +2680,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished||cancelled,whole:!!data,draft});
     const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
-    rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
+    rotaHealth=w.archived_at||outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
       :kind==='checking'?(fixSum?(p=>(p.append(longCheck()),p))(fixHealth(w.id,{...fixSum,checking:true},data,w)):longCheck())
       :kind==='provisional'?withWords(checkingWords(provisional!.status)):kind==='waiting'?withWords(waitingWord('queued'))
       :kind==='not-checked'?el('span',{class:'health-pill neutral'},icon('clock'),TERMS.notChecked):kind==='counts'?fixHealth(w.id,fixSum!,data,w)
@@ -2713,16 +2716,19 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
           ...(absenceIds.length&&absenceIds.length<=100?[item('Prepare cover for recorded absences','people',withDraft(d=>bulkImpactDialog(ctx(),d,absenceIds,'release_unavailable',()=>{})))]:[]),
           item('Exchange two assignments','swap',withDraft(d=>swapDialog(d)))]:[]),...(permits(CAPABILITY.COORDINATOR)?[item('Change a published rota…','edit',()=>void changePublished())]:[])),
         ...section('Share',...(draft&&w.visibility==='private'?[item('Share with schedulers…','eye',()=>shareDraft(w,refresh))]:[]),
-          ...(w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
+          ...(!w.archived_at&&w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
           ...publishedTools(free,false)),
         // Archive or Delete draft comes last on its own: the rota's own read (whole or compact) names it in
         // allowed_actions, so a rota past the list's first page has it too (rota_lifecycle.ts).
-        ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
+        ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(w.archived_at?null:lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
     },{label:'Rota tools',placement:'below-end',key:'rota-tools:'+w.id}),{class:'bare','aria-haspopup':'menu'});
     // A live update or check redraws the page: an open Rota tools menu stays open on the new button.
     queueMicrotask(()=>adoptPopover('rota-tools:'+w.id,tools!));
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
-    if(draft)undoButton=hold(iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'}));
+    if(draft&&!w.archived_at){
+      const b=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
+      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Open the rota to check Undo availability.');
+    }
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).
     if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=hold(redoBarButton());
@@ -2753,8 +2759,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // ---- Body: the view, the auto-schedule panel beside it, rules in context ----
   const bodyWrap=el('div',{class:'planner-body'+(autoChecking&&draft&&!fresh?' is-working':'')});const mainCol=el('div',{class:'planner-main'});bodyWrap.append(mainCol,side);
   let reloadScheduling:(()=>Promise<void>)|undefined;
-  if(auto&&w?.baseline&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
-  else if(auto&&w?.baseline)auto.addEventListener('click',()=>unpin(()=>{
+  if(auto?.classList.contains('auto-button')&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
+  else if(auto?.classList.contains('auto-button'))auto.addEventListener('click',()=>unpin(()=>{
     // A superseded bar hands the press to the current one; the current bar while its redraw is still being attached
     // (bar swapped in first, body after) toggles its own panel, which then attaches open or closed.
     if(!side.isConnected&&currentAuto()!==auto){currentAuto()?.click();return;}schedulingSettings.open=side.hidden;side.hidden=!schedulingSettings.open;auto!.setAttribute('aria-expanded',String(schedulingSettings.open));if(schedulingSettings.open){closeWeekPanel();side.querySelector<HTMLElement>('summary,button')?.focus({preventScroll:true});
@@ -3559,6 +3565,7 @@ function rotaReviewSummary(form:HTMLElement,data:WorkspaceData,{o,fix}:Awaited<R
 }
 async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
   let w=data.workspace;
+  if(w.archived_at)throw new Error('Restore the archived rota before submitting it for review.');
   // The dialog belongs to the page and rota it was asked from: leaving either cancels it (LIVE-01).
   // SW3-B-02: the page, not the whole address: a redraw that rewrites the week or a query parameter meanwhile is not
   // leaving, and returning then left Submit doing nothing at all.
@@ -4145,8 +4152,9 @@ function rotaStatusPill(w:Row,outdated=false){
   const stages=['draft','submitted','approved','published'];
   // L11: one status per rota, from the one palette. A review the server holds out of date (stale_inputs) is "Needs
   // resubmitting", never also "Waiting for approval".
-  const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
+  const state=w.archived_at?'archived':outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(state==='outdated'?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
+  if(w.archived_at)return pill;
   pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
     +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
@@ -7456,7 +7464,7 @@ function proposalPill(data:WorkspaceData){
   const b=el('button',{type:'button',class:'health-pill info proposal-pill','aria-label':'Auto-schedule proposal ready · review it','data-ctip':'Proposal ready · review it'},icon('sparkle'),el('span',{class:'label'},' Proposal ready'));
   footerAct(b,'proposal',()=>reviewProposal(data));return b;
 }
-const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
+const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&!data.workspace.archived_at&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
 /** After the jobs are read: the button's mark and the footer pill follow them (the bar was drawn before the read). */
 function markProposal(data:WorkspaceData){
   const waiting=proposalShown(data),b=document.querySelector<HTMLButtonElement>('.auto-button'),pills=document.querySelector('.app-footer .health-pills');
@@ -8680,6 +8688,7 @@ window.addEventListener('online',()=>{if(me)void onPulse();});
 window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
 // Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
+const NO_UNDO='Nothing left to undo';
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
 async function undoLast(){
   const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
@@ -8714,7 +8723,8 @@ window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).
   // Any other change to the rota on screen (a Redo too) takes Redo off at once.
   if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
   redoAfter={id:String(w.id),revision:Number(w.revision)};
-  const undo=plannerRota?.id===w.id?document.querySelector('.planner-bar button[aria-label="Undo last edit"]'):null;
+  const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar button[aria-label="Undo last edit"]'):null;
+  if(undo&&w.can_undo===false)notYet(undo,NO_UNDO);
   if(undo&&!undo.parentElement!.querySelector('[data-shortcut="redo"]'))undo.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
 // The page's own edit (not a run: job.* commands drop the jobs read) keeps the last jobs read current, so the redraw

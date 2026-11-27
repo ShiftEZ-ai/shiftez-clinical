@@ -1,0 +1,157 @@
+{
+  "id": "A-SPREAD-01",
+  "revision": 1,
+  "title": "Spread trainee pairings across session supervisors",
+  "intent": "Opposite imbalances in consecutive sessions do not cancel each other.",
+  "pressure": "Three trainees with two fully eligible supervisors must split two to one in each session.",
+  "covers": {
+    "kind.spread_evenly": [
+      "session_loads",
+      "permitted_gap",
+      "seed_robustness"
+    ],
+    "kind.spread_evenly.holder": [
+      "session_loads",
+      "permitted_gap",
+      "seed_robustness"
+    ],
+    "kind.spread_evenly.within": [
+      "session_loads",
+      "permitted_gap",
+      "seed_robustness"
+    ],
+    "kind.spread_evenly.mode": [
+      "session_loads",
+      "permitted_gap",
+      "seed_robustness"
+    ],
+    "kind.spread_evenly.maximum_gap": [
+      "session_loads",
+      "permitted_gap",
+      "seed_robustness"
+    ]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "A-SPREAD-01 staff rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "A-SPREAD-01 clinic", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "A-SPREAD-01 room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "A-SPREAD-01 room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 8}, "reason": "Synthetic scenario"}},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "الرملي كيذشقيثه"}, "reason": "Synthetic scenario"}},
+    {"key": "p0_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p0_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "نيلوفر سنبلة"}, "reason": "Synthetic scenario"}},
+    {"key": "p1_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p1_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p2", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "الجبلي خزامى"}, "reason": "Synthetic scenario"}},
+    {"key": "p2_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p2", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p2_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p2", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p3", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "نيلوفرالجبلي النخلي"}, "reason": "Synthetic scenario"}},
+    {"key": "p3_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p3", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p3_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p3", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p4", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "السنبلي قرنفل"}, "reason": "Synthetic scenario"}},
+    {"key": "p4_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p4", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "p4_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p4", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "A-SPREAD-01", "starts_on": "2027-01-01", "ends_on": "2027-01-10"}},
+    {"key": "trainee_rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "A-SPREAD-01 trainee rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "skill", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "capabilities", "value": {"name": "A-SPREAD-01 supervision qualification", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "grant0", "role": "credentialer", "kind": "grant.create",
+     "payload": {"person_id": "$p0", "capability_id": "$skill", "starts_on": "2027-01-01", "evidence": "Synthetic qualification"}},
+    {"key": "grant1", "role": "credentialer", "kind": "grant.create",
+     "payload": {"person_id": "$p1", "capability_id": "$skill", "starts_on": "2027-01-01", "evidence": "Synthetic qualification"}},
+    {"key": "member2", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p2", "category_id": "$trainee_rank", "starts_on": "2027-01-01"}},
+    {"key": "member3", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p3", "category_id": "$trainee_rank", "starts_on": "2027-01-01"}},
+    {"key": "member4", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p4", "category_id": "$trainee_rank", "starts_on": "2027-01-01"}},
+    {"key": "duty_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "A-SPREAD-01 supervised duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 5, "maximum": 5}], "supervision": {"trainee_category_ids": ["$trainee_rank"], "trainees_per_supervisor": 3, "require_pairing": true, "capability_id": "$skill"}}}, "reason": "Synthetic scenario"}},
+    {"key": "spread", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-SPREAD-01 session pairing", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "spread_evenly", "holder": "supervisors", "within": "session", "mode": "levelled", "maximum_gap": 1}, "scope": {"assignment_type_id": "$duty_type"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "spread_active", "role": "approver", "kind": "policy.activate", "target": "$spread", "revision": "$spread.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "one", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
+    {"key": "two", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}}
+  ],
+  "expect": {
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1
+    },
+    "binding_rules": [
+      "spread"
+    ],
+    "permitted_gap": 3,
+    "session_loads": {
+      "holder": "supervisors",
+      "within": "session",
+      "mode": "levelled",
+      "maximum_gap": 1,
+      "supervisors": [
+        "p0",
+        "p1"
+      ],
+      "trainees": [
+        "p2",
+        "p3",
+        "p4"
+      ],
+      "duties": [
+        "one",
+        "two"
+      ],
+      "levelled": [
+        1,
+        2
+      ],
+      "skewed": [
+        0,
+        3
+      ],
+      "code": "SUPERVISION_LEVEL"
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 0,
+          "fairness": 0,
+          "preferences": 0,
+          "stability": 1
+        }
+      }
+    }
+  }
+}
