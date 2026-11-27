@@ -351,7 +351,7 @@ def finish_flow(db, settings, claims, *, user_agent=None, peer=None, correlation
             identity = accounts.bind_first_sign_in(db, settings, claims["sub"], username)
         elif identity is not None:
             accounts.adopt(db, settings, identity, username)
-    require(identity is not None, "UNPROVISIONED_IDENTITY", "Ask your admin to add your hospital sign-in and give you an access role", 403)
+    require(identity is not None, "UNPROVISIONED_IDENTITY", "Ask your admin to add your institutional sign-in and give you an access role", 403)
     allowed = allowed_departments(db, identity)
     if flow is not None:
         flow.verified_identity_id = identity.id

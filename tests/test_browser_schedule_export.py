@@ -42,8 +42,8 @@ def test_export_pages_the_view_and_saves_pdf_and_png(browser, live_server, h, tm
         assert preview.locator('.export-page').first.evaluate('n => getComputedStyle(n).backgroundColor') == 'rgb(255, 255, 255)'
         expect(preview.locator('.dt-resize')).to_have_count(0)
         expect(preview.locator('.view-legend .code-chip')).to_have_count(0)
-        expect(preview).to_contain_text('Alex Morgan')
-        expect(preview.locator('.view-legend')).not_to_contain_text('Alex Morgan')
+        expect(preview).to_contain_text('Staff 01(test)')
+        expect(preview.locator('.view-legend')).not_to_contain_text('Staff 01(test)')
         pages = preview.locator('.export-page')
         expect(pages.last.locator('.export-foot')).to_contain_text(re.compile(r'Page \d+ of \d+'))
         expect(dialog.get_by_role('status')).to_contain_text(re.compile(r'^\d+ pages? · A4 landscape'))
@@ -68,7 +68,7 @@ def test_export_pages_the_view_and_saves_pdf_and_png(browser, live_server, h, tm
             assert len(document) == page.evaluate('window.__printed')
             # Paper wraps a name between whole words (c879b084c): the PDF's text breaks the line there, never the word.
             text = ' '.join(''.join(document[i].get_textpage().get_text_range() for i in range(len(document))).split())
-            assert 'Alex Morgan' in text and 'Jordan Lee' in text
+            assert 'Staff 01(test)' in text and 'Staff 02(test)' in text
             width, height = document.get_page_size(0)
             assert abs(width - 297 * 72 / 25.4) < 1 and abs(height - 420 * 72 / 25.4) < 1
         page.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
@@ -190,6 +190,6 @@ def test_range_page_breaks_and_csv(browser, live_server, h):
         text = open(download.value.path(), encoding='utf-8-sig').read()
         head = text.splitlines()[0]
         assert head.startswith('When,') and 'Actions' not in head
-        assert 'Alex Morgan' in text and 'Jordan Lee' in text
+        assert 'Staff 01(test)' in text and 'Staff 02(test)' in text
     finally:
         context.close()

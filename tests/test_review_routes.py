@@ -1,5 +1,5 @@
 from .clock_support import freeze_clock
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 import copy
 import uuid
 import pytest
@@ -101,6 +101,53 @@ def delegation(h, row, delegate="approver", delegator="programme", step="program
     return h.command(delegator, "review_delegation.create", {"route_id": row["id"], "step_key": step,
         "delegate_id": h.seed["identities"][delegate], "starts_at": (m.now() - timedelta(minutes=1)).isoformat(),
         "expires_at": (m.now() + timedelta(days=1)).isoformat(), "reason": "Bounded independent delegation"})["delegation"]
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_home_review_card_follows_delegation_start_and_expiry(h, monkeypatch):
+    clock = datetime(2026, 10, 4, 8, tzinfo=UTC)
+    freeze_clock(monkeypatch, lambda: clock)
+    identity(h, 'programme', ['programme_lead'])
+    r = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'}])
+    w = submitted(h)
+    start, expiry = clock + timedelta(minutes=10), clock + timedelta(minutes=20)
+    h.command('programme', 'review_delegation.create', {
+        'route_id': r['id'], 'step_key': 'programme', 'delegate_id': h.seed['identities']['approver'],
+        'starts_at': start.isoformat(), 'expires_at': expiry.isoformat(), 'reason': 'Bounded independent delegation',
+    })
+    # A delegation write changes the catalogue stamp. Confirm scheduling currency before testing time alone.
+    assert h.detail(w)['review_progress']['stale_inputs'] is False
+
+    def home_review():
+        home = h.get('approver', '/api/home')
+        return [item['rota_id'] for item in home['attention'] if item['key'] == 'reviews'], home.get('review_refresh_in_ms')
+
+    assert home_review() == ([], 600_000)
+    clock += timedelta(seconds=1)
+    assert home_review() == ([], 599_000)
+    clock = start
+    assert home_review() == ([w['id']], 600_000)
+    clock = expiry
+    assert home_review() == ([], None)
+
+
+def test_home_refresh_uses_another_delegation_only_for_an_actionable_review(h):
+    identity(h, 'programme', ['programme_lead'])
+    identity(h, 'next_approver', ['approver'])
+    identity(h, 'other_programme', ['programme_lead'])
+    review = route(h, [{'key': 'programme', 'label': 'Programme review', 'role': 'programme_lead'},
+                       {'key': 'clinical', 'label': 'Clinical review', 'role': 'approver'}])
+    grant = delegation(h, review)
+    rota = submitted(h)
+    h.command('approver', 'workspace.approve', {'reason': 'Delegated review', 'delegation_id': grant['id']},
+              rota['id'], rota['revision'])
+
+    actionable = h.get('next_approver', '/api/home')
+    assert any(item['key'] == 'reviews' and item['rota_id'] == rota['id'] for item in actionable['attention'])
+    assert actionable['review_refresh_in_ms'] > 0
+    unrelated = h.get('other_programme', '/api/home')
+    assert not any(item['key'] == 'reviews' for item in unrelated['attention'])
+    assert 'review_refresh_in_ms' not in unrelated
 
 
 def test_scoped_delegation_is_real_authority_and_remains_revocable(h):

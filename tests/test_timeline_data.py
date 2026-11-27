@@ -265,17 +265,24 @@ def test_timeline_programme_lead_clips_personal_facts_to_their_membership_author
                ("2026-10-01", "2026-11-01") for item in facts)
 
 
-def test_timeline_filters_do_not_recheck_stale_department_balance_findings(h):
+def test_timeline_filters_do_not_recheck_stale_department_balance_findings(h, monkeypatch):
+    from apps.api.services import timeline
+
     a, b, _ = h.seed["people"]
-    h.policy({"kind": "balance_goal", "metric": "duties", "aim": "equal_share", "period": "rota"}, severity="advisory")
+    goal = h.policy({"kind": "balance_goal", "metric": "duties", "aim": "equal_share", "period": "rota"}, severity="advisory")
     workspace = h.workspace()
     for day, person in ((4, a), (5, a), (6, a), (7, a), (8, b)):
         workspace = h.shift(workspace, start=f"2026-10-{day:02d}T08:00:00+03:00",
                             end=f"2026-10-{day:02d}T12:00:00+03:00", people=[person])["workspace"]
     h.publish(workspace)
+    monkeypatch.setattr(timeline, "evaluate", lambda *a, **kw: pytest.fail("timeline ran validation"))
+    current = read(h, person_ids=[a])["people"][0]["conflicts"]
+    assert any(finding["rule_id"] == goal["id"] and finding["code"] == "BALANCE_GOAL" for finding in current)
+
+    h.command("approver", "policy.retire", {"reason": "Retire the old balance goal"}, goal["id"], goal["revision"])
     full = next(person for person in read(h)["people"] if person["id"] == a)["conflicts"]
     filtered = read(h, person_ids=[a])["people"][0]["conflicts"]
-    assert full == filtered == []  # Publication advances inputs; its issued check is historical evidence.
+    assert full == filtered == []
 
 
 def test_timeline_staff_fact_projection_hides_source_evidence_and_peer_amounts(h):

@@ -15,15 +15,15 @@ def test_a_person_name_goes_to_the_profiles_address(client_modules):
     script = FAKE_DOM + f"""
 for(const k of ['HTMLInputElement','HTMLSelectElement','HTMLTextAreaElement','HTMLFormElement','HTMLFieldSetElement'])globalThis[k]??=class{{checkValidity(){{return true;}}}};
 const m=await import({json.dumps((client_modules / 'person_label.js').as_uri())});
-const went=[];const b=m.personLink('p 1','Alex Morgan',path=>went.push(path),'Alex Morgan');b.click();
-const opened=[];m.onPersonOpen((id,label)=>opened.push([id,label]));m.personLink('p2','Alex Morgan',path=>went.push(path),'Alex Morgan').click();
+const went=[];const b=m.personLink('p 1','Staff 01(test)',path=>went.push(path),'Staff 01(test)');b.click();
+const opened=[];m.onPersonOpen((id,label)=>opened.push([id,label]));m.personLink('p2','Staff 01(test)',path=>went.push(path),'Staff 01(test)').click();
 console.log(JSON.stringify({{went,opened}}));process.exit(0);
 """
     out = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     got = json.loads(out.stdout)
     assert got['went'] == ['people?open=p%201']  # the address, encoded
-    assert got['opened'] == [['p2', 'Alex Morgan']]  # a registered opener decides
+    assert got['opened'] == [['p2', 'Staff 01(test)']]  # a registered opener decides
 
 
 def test_the_registered_opener_navigates_to_the_address_when_people_can_show_them():

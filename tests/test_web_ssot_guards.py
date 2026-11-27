@@ -613,3 +613,21 @@ def test_status_indicators_are_not_tab_stops():
             if re.search(r"role:'status'|env-badge", attrs) and re.search(r"tabindex:\s*'?0", attrs):
                 offenders.append(f'{path.name}:{line_of(text, m.start())}')
     assert not offenders, offenders
+
+
+def test_one_collator_orders_every_list_and_choices_by_name():
+    """A list of people reads in name order wherever it is offered, the order a collection's sort by Name gives: one
+    collator (dom.ts `collator`) and one comparison of choices by name (`byLabel`). A second collator, or choices
+    sorted by their label another way, is a second order."""
+    every = [(p, p.read_text(encoding='utf-8')) for p in sorted(SRC.glob('*.ts')) if p.name != 'generated.ts']
+    assert [p.name for p, text in every for _ in range(text.count('Intl.Collator('))] == ['dom.ts']
+    other = [f'{p.name}:{line_of(text, m.start())}' for p, text in every for m in re.finditer(r'label[.]localeCompare', text)]
+    assert not other, other
+    forms = (SRC / 'forms.ts').read_text(encoding='utf-8')
+    # peopleChoices is the one place the order of people is set: by name, each with its rank and that rank's place in
+    # the department's rank order (the categories catalogue as served). The one picker draws a single choice flat and a
+    # multiple choice in rank sections (picker.ts), so no caller sorts the list again.
+    people = _body(forms, 'export function peopleChoices(')
+    assert '}).sort(byLabel);' in people and "ranks=all(ctx,'categories')" in people and 'groupOrder:at' in people
+    again = [f'{p.name}:{line_of(text, m.start())}' for p, text in every for m in re.finditer(r'peopleChoices\([^)]*\)\)?[.]sort', text)]
+    assert not again, again

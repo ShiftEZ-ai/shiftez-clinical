@@ -1,0 +1,208 @@
+{
+  "id": "A-CAPACITY-01",
+  "revision": 1,
+  "title": "Participant capacity across overlapping duties",
+  "intent": "One service shares ordinary places and rank-specific overflow across concurrent duties.",
+  "pressure": "An ordinary participant is preferred for the second duty, but only the extra rank can use the extra place.",
+  "covers": {
+    "kind.maximum_participants": [
+      "boundary",
+      "validator",
+      "counterfactual",
+      "seed_robustness",
+      "safety"
+    ],
+    "kind.maximum_participants.aggregation": [
+      "validator",
+      "safety"
+    ],
+    "kind.maximum_participants.maximum": [
+      "boundary",
+      "validator",
+      "safety"
+    ],
+    "kind.maximum_participants.overflow_category_ids": [
+      "boundary",
+      "validator"
+    ],
+    "kind.maximum_participants.overflow_maximum": [
+      "boundary",
+      "safety"
+    ]
+  },
+  "commands": [
+    {"key": "ordinary", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "A-CAPACITY-01 standard rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "overflow", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "A-CAPACITY-01 extra rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "A-CAPACITY-01 service", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "A-CAPACITY-01 room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "A-CAPACITY-01 room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 10}, "reason": "Synthetic scenario"}},
+    {"key": "peer_room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "A-CAPACITY-01 peer_room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 10}, "reason": "Synthetic scenario"}},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Capacity staff 001 (test)", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p0_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p0", "category_id": "$ordinary", "starts_on": "2027-01-01"}},
+    {"key": "p0_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Capacity staff 002 (test)", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p1_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p1", "category_id": "$overflow", "starts_on": "2027-01-01"}},
+    {"key": "p1_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p2", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Capacity staff 003 (test)", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p2_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p2", "category_id": "$ordinary", "starts_on": "2027-01-01"}},
+    {"key": "p2_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p2", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "p3", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Capacity staff 004 (test)", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p3_rank", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p3", "category_id": "$overflow", "starts_on": "2027-01-01"}},
+    {"key": "p3_service", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p3", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "A-CAPACITY-01", "starts_on": "2027-01-01", "ends_on": "2027-01-12"}},
+    {"key": "first_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "A-CAPACITY-01 first_type", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
+    {"key": "peer_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "A-CAPACITY-01 peer_type", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 2}]}}, "reason": "Synthetic scenario"}},
+    {"key": "strict", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-CAPACITY-01 strict", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "maximum_participants", "aggregation": "service", "maximum": 1, "overflow_maximum": 1, "overflow_category_ids": ["$overflow"]}, "scope": {"service_id": "$service"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "strict_active", "role": "approver", "kind": "policy.activate", "target": "$strict", "revision": "$strict.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "preference", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-CAPACITY-01 preference", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "allocation_preference", "priority": 9}, "scope": {"person_ids": ["$p2"]}, "severity": "advisory", "workspace_id": "$workspace"}}},
+    {"key": "preference_active", "role": "approver", "kind": "policy.activate", "target": "$preference", "revision": "$preference.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "first", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$first_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": [{"person_id": "$p0", "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "fixed": true}]}},
+    {"key": "peer", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$peer_type", "location_id": "$peer_room", "service_ids": ["$service"], "start": "2027-01-04T10:00:00+03:00", "end": "2027-01-04T14:00:00+03:00", "participants": []}}
+  ],
+  "expect": {
+    "binding_rules": [
+      "strict"
+    ],
+    "boundary": {
+      "assignments": {
+        "peer": [
+          "$p1"
+        ]
+      }
+    },
+    "validator": {
+      "assignments": {
+        "peer": [
+          "$p2"
+        ]
+      },
+      "finding": {
+        "code": "SCOPED_PARTICIPANT_LIMIT",
+        "shift_id": "$peer",
+        "start": "2027-01-04T10:00:00+03:00",
+        "end": "2027-01-04T12:00:00+03:00",
+        "detail": {
+          "service_id": "$service",
+          "maximum": 1,
+          "scheduled": 2,
+          "permitted_extra": 0,
+          "permitted_maximum": 1
+        }
+      }
+    },
+    "counterfactual": {
+      "code": "SCOPED_PARTICIPANT_LIMIT",
+      "shift_id": "$peer",
+      "start": "2027-01-04T10:00:00+03:00",
+      "end": "2027-01-04T12:00:00+03:00",
+      "detail": {
+        "service_id": "$service",
+        "maximum": 1
+      }
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1
+    },
+    "safety": {
+      "contrasts": [
+        {
+          "rule": {
+            "aggregation": "assignment"
+          }
+        },
+        {
+          "rule": {
+            "maximum": 2
+          }
+        },
+        {
+          "assignments": {
+            "peer": [
+              "$p1",
+              "$p3"
+            ]
+          },
+          "finding": {
+            "code": "SCOPED_PARTICIPANT_LIMIT",
+            "shift_id": "$peer",
+            "start": "2027-01-04T10:00:00+03:00",
+            "end": "2027-01-04T12:00:00+03:00",
+            "detail": {
+              "service_id": "$service",
+              "maximum": 1,
+              "scheduled": 3,
+              "permitted_extra": 1,
+              "permitted_maximum": 2
+            }
+          }
+        },
+        {
+          "assignments": {
+            "peer": [
+              "$p1",
+              "$p3"
+            ]
+          },
+          "rule": {
+            "overflow_maximum": 2
+          }
+        }
+      ],
+      "narrower": {
+        "scope": {
+          "assignment_type_id": "$peer_type"
+        },
+        "rule": {
+          "maximum": 3
+        }
+      }
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 0,
+          "fairness": 0,
+          "preferences": 100,
+          "stability": 1
+        }
+      }
+    }
+  }
+}

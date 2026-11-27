@@ -25,6 +25,18 @@ LABELS = {'people': {v: k for k, v in PERSON.items()}, 'programmes': {v: k for k
 WEEK_START = 6  # Sunday, as the department's calendar
 
 
+def configure_baseline_rehearsal(monkeypatch, tool):
+    """Exercise CP-SAT with the real rota guard and the harness's seeded access."""
+    monkeypatch.setenv('ROTA_GENERATION_ENGINE', 'cp_sat')
+    baseline_refusals = tool.baseline_refusals
+    fixture_access = {'enabled sign-ins', 'roles', 'accounts', 'open invitations'}
+
+    def refusals(db):
+        return {reason: count for reason, count in baseline_refusals(db).items() if reason not in fixture_access}
+
+    monkeypatch.setattr(tool, 'baseline_refusals', refusals)
+
+
 def rule(name, kind_rule, scope=None, starts_on='2026-08-23', ends_on='2027-01-03', severity='mandatory', status='active', **definition):
     return {'id': next(ids), 'name': name, 'kind': kind_rule['kind'], 'status': status, 'active': status == 'active',
             'owner': 'Departmental review pending', 'source': 'Synthetic copy of a production family', 'department_id': 'd',

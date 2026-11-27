@@ -74,6 +74,7 @@ import {drawnBase} from './settings_base.js';
 import {mayDecide} from './independence.js';
 import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
+import {leaveAllowanceSettings} from './leave_balances.js';
 import {personProfilePanels,personSections,personTabs,profileSection,profileRow,type ProfileParts} from './person_profile.js';
 import {bulkImpactDialog,comparePanel,scheduleView} from './planner_tools.js';
 import {mountRules,selectTicked,openRotaRules,openRotaRulesFor,unpin,pin as pinRules,highlightRule,dayTitle,ROTA_TARGETS,loadRuleMap,type Target as RuleTarget,type RuleMap,type MapRule} from './planner_rules.js';
@@ -109,7 +110,7 @@ import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAft
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
 import {planningOf,groupRow,type PlanningContext,type GroupState} from './groups_view.js';
 import {DRAFT_GROUPS,draftGroup,draftGlyph,draftHint,editableDraft,sandboxPill,rotaFor,newPrivateDraft,shareDraft,designateDraft,rotaCoordinators,mergePanel} from './drafts.js';
-import {lifecycleItem,archivedRotas} from './rota_lifecycle.js';
+import {lifecycleItem,lifecycleOf,archivedRotas,restoreRota} from './rota_lifecycle.js';
 import {CONFIG_KINDS,CONFIG_GROUPS,kindLabel,singularOf,purposeOf,aboutOf,effectOf,createLabel,addressOf,kindAt,isSettings} from './config_kinds.js';
 import {TERMS,PARTICIPATION,onlyRotaCoordinator,unlinkedStaff} from './terms.js';
 import {LEVEL_WORDS} from './issue_marker.js';
@@ -131,6 +132,7 @@ import {rotationBoard} from './rotation_board.js';
 import {peopleTimeline,timelineAvailable} from './person_timeline.js';
 import {menu,menuSource,opens} from './dom.js';  // the shared menu (UX › controls S2b)
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {overflowMore,type MoreNoun} from './dom.js';  // the one "+N" (DESIGN D8)
 import {SAFETY_DECIDED,UNDECIDED,baselineSourceLabel,changeLabel,refreshPlan} from './draft_baseline.js';
 import {groupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
@@ -520,14 +522,15 @@ const ctx=():Context=>({get me(){return me!;},get catalogues(){return catalogues
   fill:(id,s,person)=>openFill(id,s,undefined,person)});
 /** A draft session's fill panel on the Schedule (for an issue, or with its search set to one person's name). */
 function openFill(id:string,s:Row,issue?:FillIssue,q?:string){workspaceId=id;draftNone=false;queueFill(id,String(s.id),undefined,issue,q);toCalendar(s);navigate(routeHash('schedule',[schedView,planDay],{edit:id}).slice(1));}
-const choices=(items:Row[])=>items.map(r=>({value:r.id,label:labelOf(r)}));
+// People are listed by name; other records keep the order the server gives them (ranks and leave types have their own).
+const choices=(items:Row[],people=false)=>{const list=items.map(r=>({value:r.id,label:labelOf(r)}));return people?list.sort(byLabel):list;};
 // What the bulk screens read from the app (bulk.ts): condition fields, a field's choices, record names, roles.
 // The catalogue a field picks from is its contract `ref`; a field named <thing>_id picks from <things> when it has none.
 const refOf=(key:string,ref?:string)=>ref||[key.replace(/_ids?$/,'s'),key.replace(/y_ids?$/,'ies'),key.replace(/_ids?$/,'')].find(k=>catalogues[k]);
 setBulkContext({
   conditionFields:keys=>[...ruleConditionFields(ctx()).filter(f=>keys.includes(f.key)&&!isTyped(f.key)),...typedFields(keys)],
   choices:(f,key,collection)=>{if(key==='weekdays')return weekdayOptions();if(key==='tags')return [...new Set(rows(collection).flatMap(r=>(r.tags||[]) as string[]))].sort().map(t=>({value:t,label:t}));
-    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false)):undefined;},
+    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false),kind==='people'):undefined;},
   permits:(...roles)=>permits(...roles),
   stagedCount:()=>Number((me as Row|null)?.bulk_staged_count||0),
   reviewCount:()=>Number((me as Row|null)?.bulk_review_count||0),identity:()=>me?.identity_id||'',
@@ -2469,7 +2472,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const reading=partial(draftData),hold=<T extends HTMLElement>(n:T):T=>reading?notYet(n,WHOLE_LOADING):n;
   let wholeBusy:HTMLElement|null=null;  // the footer's busy pill while reading: gone if the whole read fails
   // A shared sandbox someone else owns is view only (D18): copy it to change it.
-  const draft=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id),fresh=!!draftData&&w!.validation_current===true;
+  const draftAccess=!!w&&w.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&editableDraft(w,me!.identity_id);
+  const draft=draftAccess&&!w!.archived_at,fresh=!!draftData&&w!.validation_current===true;
   if(draft&&w)requestBaselineDrift(w);
   // The server says a check job exists (a provisional check): join it, so the status shown is that job's own.
   if(draft&&whole&&(!fresh||serverChecking(w!.validation)))autoCheck(whole);
@@ -2588,19 +2592,21 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       void run.then(()=>{if(!b.isConnected)return;const why=b.getAttribute('aria-describedby');b.replaceWith(approveButton());if(why)document.getElementById(why)?.remove();});return b;};
     // D25 (maintenance): Home's "Rota to review" (?approve=<rota>) opens the review at once, on a phone too; asked once.
     if(routeQuery.get('approve')===w.id){routeQuery.delete('approve');history.replaceState(null,'',routeHash(view,routeParts,routeQuery));routeSeen=location.hash;
-      if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
+      if(w.status==='submitted'&&!w.archived_at&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!ownWork)void openApproval();}
     // SX-01 (maintenance can_decide): Approve only for whoever decides the pending step (its role, escalation role or a
     // delegation, independent of the rota); everyone else sees none.
-    if(w.status==='submitted'&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
+    if(w.status==='submitted'&&!w.archived_at&&!outdated&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)){
       if(ownWork)workflow.append(el('span',{class:'health-pill neutral','data-tip':'You created or edited this rota, so another approver must review it.'},icon('lock'),'Waiting for another approver'));
       else if(data&&decidesStep(data))workflow.append(approveButton());}
     // Review can send it back: an approver returns a rota in review to the coordinator as a draft, with a reason.
-    if(w.status==='submitted'&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
+    if(w.status==='submitted'&&!w.archived_at&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD)&&!permits(CAPABILITY.COORDINATOR))workflow.append(button(TERMS.returnToCoordinator,()=>confirmAction(TERMS.returnToCoordinator,'The rota goes back to draft so the coordinator can change it, check it and submit it again. Say what needs to change: the coordinator is told, and the reason is kept in the audit log.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Returned to the coordinator.');await refresh();},TERMS.returnToCoordinator),outdated?'primary':'secondary'));  // out of date it is the approver's only action
     // Publish…: one entry point for the whole way to staff. It checks first, then submits a draft for review or publishes an approved rota.
     // Named after the step that happens next: a draft is submitted for review; an approved rota is published.
     const step=w.status==='draft'?'Submit for review…':'Publish…',sandbox=w.purpose==='sandbox',rota=sandbox?rotaFor(w,work):null;
     // maintenance: your own draft merges into the period's rota instead of being submitted (a sandbox is never submitted).
-    if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
+    if(w.archived_at){
+      if(lifecycleOf(w)==='workspace.restore')workflow.append(button('Restore',()=>restoreRota(w,restoredRota).catch(reportError),'secondary'));
+    }else if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
       ring:ids=>{for(const n of document.querySelectorAll('.cause-ring'))n.classList.remove('cause-ring');for(const id of ids)for(const n of document.querySelectorAll(`[data-session~="${CSS.escape(id)}"]`))n.classList.add('cause-ring');},
       done:id=>chooseDraft(id),person:id=>name('people',id),before:(f=>f?{must:f.must,places_open:f.places_open}:null)(fixSummaryOf(rota.health?.summary))}),'secondary',{'aria-label':'Merge into rota…'}),'fork'));
     // SW3-A-11 (D41): no rota for the period to merge into is said where Merge is, with who can fix it (never a missing
@@ -2610,15 +2616,15 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
     // One predicate for Reopen: the note below shows exactly when the button does not.
-    const mayReopen=['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
+    const mayReopen=!w.archived_at&&['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
     if(mayReopen)workflow.append(outdated
       // Outdated: the reason is known, so the note is optional.
       ?button('Reopen as draft',()=>confirmAction('Reopen as draft','Rules, people or availability changed since it was submitted. Reopen it, check it and submit it again. Published rotas are not changed.',async reason=>{await command('workspace.reopen',{reason:reason==='Routine update'?'Rules, people or availability changed since it was submitted':reason},w.id,w.revision);notify('Reopened as a draft. Check it, then submit it again.');await refresh();},'Reopen as draft',undefined,true),'primary')
       :button('Reopen as draft',()=>confirmAction('Reopen as draft','Reopening invalidates review and approval. Published history is not changed.',async reason=>{await command('workspace.reopen',{reason},w.id,w.revision);notify('Reopened as a draft.');await refresh();},'Reopen as draft'),'secondary'));
     // an approved rota out of date waits on its coordinator (only they reopen an approved rota): say so where the actions are.
-    if(outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
+    if(!w.archived_at&&outdated&&w.status==='approved'&&!mayReopen)workflow.append(el('span',{class:'health-pill info','data-tip':'Rules, people or availability changed after approval. The coordinator reopens it, checks it and submits it again.'},icon('clock'),'Waiting for the coordinator'));
     for(const b of [...workflow.children]){compact(b);if(b instanceof HTMLButtonElement)hold(b);}
-    statusPill=sandboxPill(w,me!.identity_id)||rotaStatusPill(w,outdated);
+    statusPill=(!w.archived_at&&sandboxPill(w,me!.identity_id))||rotaStatusPill(w,outdated);
     // Make this the rota… is a configured Rota Coordinator's (planning settings): read before Rota tools opens.
     // SW3-A-11: a private draft with no rota says whether Rota Coordinators exist; a list that changes redraws it.
     if(permits(CAPABILITY.COORDINATOR))void rotaCoordinators().then(ids=>{const changed=ids.join()!==rotaCoordinatorIds.join();rotaCoordinatorIds=ids;if(changed&&sandbox&&!rota)void redraw();},()=>{});
@@ -2632,13 +2638,13 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // is the footer's too; the rota list's summary only until one is held.
     const fixSum=heldFixSummary(w.id,scheduleCache.drafts.get(w.id)||null)||fixSummaryOf(work.find(r=>r.id===w.id)?.health?.summary);footerFrom.set(w.id,fixSum);
     const resolveNow=()=>{const first=resolveQueue(draftData!)[0];startResolve(w.id);schedulingSettings.open=schedulingSettings.editing=false;if(first)toCalendar(first.shift);renderPage();};
-    // SW3-A-24: only on a draft you can change (an amendment waiting for approval offered an enabled Run).
+    // Archived drafts can show saved runs. Only a live draft can capture a baseline or run.
     const missingBaseline=draft&&!w.baseline;
-    auto=permits(CAPABILITY.COORDINATOR)&&draft?(missingBaseline
+    auto=draftAccess?(missingBaseline
       ?hold(button('Capture baseline',()=>void captureDraftBaseline(w,refresh).catch(reportError),'secondary',{'aria-label':'Capture baseline','data-tip':'Capture this draft\'s immutable inputs before auto-schedule'}))
       :el('button',{type:'button',class:'button secondary auto-button'+(whole&&proposalShown(whole)?' has-proposal':''),
         // D59: whole-rota work waits for the whole rota: held in place, focusable, saying why (notYet).
-        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':'Auto-schedule · fill open places using your rules'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
+        'aria-label':!whole?'Auto-schedule · loading the whole rota…':proposalShown(whole)?'Auto-schedule · proposal ready':'Auto-schedule','aria-expanded':String(autoOpen),'aria-controls':'auto-panel','data-tip':draft?'Auto-schedule · fill open places using your rules':'Auto-schedule · view saved runs'},icon('sparkle'),el('span',{class:'label'},'Auto-schedule'))):null;
     if(auto&&!whole)notYet(auto,WHOLE_LOADING);
     side.hidden=!autoOpen;
     // Help reads the views that draw sessions; Year and Month (day health) have their own key.
@@ -2674,7 +2680,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       partial:unproven,jobsRead:lastJobs?.id===w.id,ended:!!unfinished||cancelled,whole:!!data,draft});
     const withWords=(words:string)=>fixSum?(p=>(p.append(el('span',{class:'muted fix-checking'},el('span',{class:'spinner','aria-hidden':'true'}),words)),p))(fixHealth(w.id,{...fixSum,checking:true},data,w))
       :el('span',{class:'health-pill neutral'},icon('clock'),words);
-    rotaHealth=outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
+    rotaHealth=w.archived_at||outdated||footerIsPublished(w)?null:reading?wholeBusy=el('span',{class:'health-pill neutral'},el('span',{class:'spinner','aria-hidden':'true'}),WHOLE_LOADING):kind==='stalled'?(fixSum?staleHealth(fixHealth(w.id,{...fixSum,stale:true} as FixSummary,data,w),validate):validate)
       :kind==='checking'?(fixSum?(p=>(p.append(longCheck()),p))(fixHealth(w.id,{...fixSum,checking:true},data,w)):longCheck())
       :kind==='provisional'?withWords(checkingWords(provisional!.status)):kind==='waiting'?withWords(waitingWord('queued'))
       :kind==='not-checked'?el('span',{class:'health-pill neutral'},icon('clock'),TERMS.notChecked):kind==='counts'?fixHealth(w.id,fixSum!,data,w)
@@ -2710,16 +2716,19 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
           ...(absenceIds.length&&absenceIds.length<=100?[item('Prepare cover for recorded absences','people',withDraft(d=>bulkImpactDialog(ctx(),d,absenceIds,'release_unavailable',()=>{})))]:[]),
           item('Exchange two assignments','swap',withDraft(d=>swapDialog(d)))]:[]),...(permits(CAPABILITY.COORDINATOR)?[item('Change a published rota…','edit',()=>void changePublished())]:[])),
         ...section('Share',...(draft&&w.visibility==='private'?[item('Share with schedulers…','eye',()=>shareDraft(w,refresh))]:[]),
-          ...(w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
+          ...(!w.archived_at&&w.status==='draft'&&w.visibility==='shared'&&w.purpose!=='integrated'&&rotaCoordinatorIds.includes(me!.identity_id)?[item('Make this the rota…','calendar',()=>designateDraft(w,refresh))]:[]),
           ...publishedTools(free,false)),
         // Archive or Delete draft comes last on its own: the rota's own read (whole or compact) names it in
         // allowed_actions, so a rota past the list's first page has it too (rota_lifecycle.ts).
-        ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
+        ...((life=>life?[el('hr',{class:'menu-sep'}),life]:[])(w.archived_at?null:lifecycleItem(w,item,()=>{workspaceId='';return refresh();})))));
     },{label:'Rota tools',placement:'below-end',key:'rota-tools:'+w.id}),{class:'bare','aria-haspopup':'menu'});
     // A live update or check redraws the page: an open Rota tools menu stays open on the new button.
     queueMicrotask(()=>adoptPopover('rota-tools:'+w.id,tools!));
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
-    if(draft)undoButton=hold(iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'}));
+    if(draft&&!w.archived_at){
+      const b=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
+      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Undo availability is unknown');
+    }
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).
     if(draft&&((draftData as {can_redo?:boolean}|null)?.can_redo||redoAfter?.id===w.id&&redoAfter.revision===w.revision))redoButton=hold(redoBarButton());
@@ -2750,8 +2759,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // ---- Body: the view, the auto-schedule panel beside it, rules in context ----
   const bodyWrap=el('div',{class:'planner-body'+(autoChecking&&draft&&!fresh?' is-working':'')});const mainCol=el('div',{class:'planner-main'});bodyWrap.append(mainCol,side);
   let reloadScheduling:(()=>Promise<void>)|undefined;
-  if(auto&&w?.baseline&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
-  else if(auto&&w?.baseline)auto.addEventListener('click',()=>unpin(()=>{
+  if(auto?.classList.contains('auto-button')&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
+  else if(auto?.classList.contains('auto-button'))auto.addEventListener('click',()=>unpin(()=>{
     // A superseded bar hands the press to the current one; the current bar while its redraw is still being attached
     // (bar swapped in first, body after) toggles its own panel, which then attaches open or closed.
     if(!side.isConnected&&currentAuto()!==auto){currentAuto()?.click();return;}schedulingSettings.open=side.hidden;side.hidden=!schedulingSettings.open;auto!.setAttribute('aria-expanded',String(schedulingSettings.open));if(schedulingSettings.open){closeWeekPanel();side.querySelector<HTMLElement>('summary,button')?.focus({preventScroll:true});
@@ -3381,8 +3390,8 @@ function printSheet(){
       try{
         const data=await read(selected.id,selected.current);if(!data||!body.isConnected||pub.input.value!==selected.id)return;
         // Names and allowed filters belong to this published version, including people and clinics since renamed or retired.
-        const people=choices(Object.values(data.snapshot.people)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
-        const clinics=choices(Object.values(data.snapshot.services)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
+        const people=choices(Object.values(data.snapshot.people),true);
+        const clinics=choices(Object.values(data.snapshot.services)).sort(byLabel);
         // S-23: the label is "Clinics"; what no tick means is said once beside it, not in the label.
         if(full&&clinics.length){service=multi('Clinics',clinics);service.wrap.append(el('small',{class:'hint'},'None ticked prints every clinic.'));}
         if(full&&people.length){person=select('Print person',people,'',false,'All people');person.wrap.classList.add('span-2');}
@@ -3556,6 +3565,7 @@ function rotaReviewSummary(form:HTMLElement,data:WorkspaceData,{o,fix}:Awaited<R
 }
 async function publishDialog(data:WorkspaceData,opt:{gaps?:boolean}={}){
   let w=data.workspace;
+  if(w.archived_at)throw new Error('Restore the archived rota before submitting it for review.');
   // The dialog belongs to the page and rota it was asked from: leaving either cancels it (LIVE-01).
   // SW3-B-02: the page, not the whole address: a redraw that rewrites the week or a query parameter meanwhile is not
   // leaving, and returning then left Submit doing nothing at all.
@@ -3889,7 +3899,7 @@ function scoreCheckHooks(){
   return {step,query:routeQuery,zone:zone(),canEdit:permits(CAPABILITY.COORDINATOR),canRead:permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR),canAddMissing:may('score_check.add_missing'),
     go:(to:ScoreStep,q:Record<string,string>)=>navigate(routeHash('schedule',['benchmark',to],q).slice(1)),leave:()=>navigate('schedule'),
     setLeave:(dirty:(()=>boolean|string)|null)=>{if(mine===renderSerial)leaveCheck=dirty;},
-    choices:(kind:string)=>choices(rows(kinds[kind]||'people')),
+    choices:(kind:string)=>choices(rows(kinds[kind]||'people'),(kinds[kind]||'people')==='people'),
     openIssues,openRules:(id:string)=>openRotaPanel(id),openScoring:()=>navigate('configuration/auto_schedule'),
     submit:(id:string)=>void rotaWhole(id).then(publishDialog).catch(reportError),
     // Rota's draft of the same sessions (score_check.auto), opened with Auto-schedule ready to run (the Planner's own flow).
@@ -4142,8 +4152,9 @@ function rotaStatusPill(w:Row,outdated=false){
   const stages=['draft','submitted','approved','published'];
   // L11: one status per rota, from the one palette. A review the server holds out of date (stale_inputs) is "Needs
   // resubmitting", never also "Waiting for approval".
-  const state=outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(outdated?statusLabel(state):stageName(state)));
+  const state=w.archived_at?'archived':outdated?'outdated':w.status,pill=statusBadge(state,(w.base_publication_id?'Amendment · ':'')+(state==='outdated'?statusLabel(state):stageName(state)));
   pill.classList.add('rota-status');pill.prepend(el('span',{class:'dot','aria-hidden':'true'}));
+  if(w.archived_at)return pill;
   pill.dataset.tip=stages.map(x=>(x===w.status?'● ':'')+stageName(x)).join(' → ')+(w.status==='draft'?' · not shared with staff until published':'')
     +(outdated?' · rules, people or availability changed since: the coordinator reopens it and submits it again':'');
   return pill;
@@ -5049,7 +5060,8 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   // keep theirs above a list (P findings, their lane), never twice above an empty state.
   // No tagline under a section's name (AGENTS §2): what a kind is for is contextual help beside it; what it changes in
   // scheduling (effectOf, e.g. calendar entries never create leave) stays visible. Empty states say both.
-  const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null);
+  const head=sectionHead(kindLabel(catalogueKind),items.length?effectOf(catalogueKind):'',creates&&items.length?button(create,()=>catalogueForm(ctx(),catalogueKind),'primary'):null,
+    catalogueKind==='leave_types'&&items.length&&permits(CAPABILITY.ADMIN)?button('Leave allowances',()=>leaveAllowanceSettings(ctx()),'secondary'):null);
   const about=aboutOf(catalogueKind);
   if(items.length&&about){
     const heading=head.querySelector('h2')!,title=el('div',{class:'page-title'});
@@ -5218,7 +5230,7 @@ function ruleStemFor(p:Row,people:Map<string,string>){
   const parts=n.replace(/\d{4}-\d{2}(-\d{2})?/g,'').split(/\s+[·\-–]\s+|^\s*[·\-–]\s*|\s*[·\-–]\s*$/).map(x=>x.trim()).filter(Boolean);
   const out=parts.join(' · ');return out?out[0].toUpperCase()+out.slice(1):String(p.name);}
 const ruleFamilyFor=(p:Row,people:Map<string,string>)=>`${p.definition.rule.kind}|${ruleStemFor(p,people).toLocaleLowerCase()}`;
-/** A hospital phone as a dial link; several office extensions stay separate links (never one long number). */
+/** A work phone as a dial link; several office extensions stay separate links (never one long number). */
 const dial=(value:unknown)=>{const v=String(value||'').trim();return v?el('a',{href:'tel:'+v.replace(/[^+\d]/g,'')},v):el('span',{class:'muted'},'—');};
 const extensions=(value:unknown)=>{const parts=String(value||'').split(/\s*[-,;/]\s*/).filter(Boolean);return parts.length?el('span',{},...parts.map((n,i)=>el('span',{},i?' / ':'',dial(n)))):dial('');};
 /** People = the department directory and, for those who manage them, ranks, eligibility and skills: one list whose
@@ -5310,7 +5322,7 @@ async function peoplePage(target:HTMLElement){
     // The recorded title only: the rank is its own column (P-02).
     {key:'title',label:'Title',text:p=>String(p.title??''),facet:p=>String(p.title??''),cell:p=>p.title||none()},
     {key:'section',label:'Section',field:'directory_section',text:sectionLabel,facet:sectionLabel,cell:p=>sectionLabel(p)||none()},
-    {key:'phone',label:'Hospital phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
+    {key:'phone',label:'Work phone',field:'work_phone',text:p=>String(p.work_phone||''),cell:p=>dial(p.work_phone)},
     {key:'ext',label:'Extension',field:'work_extension',text:p=>String(p.work_extension||''),cell:p=>extensions(p.work_extension)},
     ...extraContacts,
   ];
@@ -6777,7 +6789,7 @@ async function exportsPage(target:HTMLElement){
     // Not awaited: the page is shown, and every other download works, while the people load (I-13). A row from a page
     // since replaced is detached, so a late answer changes nothing; a changed session is the shell's to handle.
     if(full&&pending)void publicationCache(pub.id,pub.current).data
-      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{})).sort((a,b)=>a.label.localeCompare(b.label)))))
+      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{}),true))))
       .catch(e=>{if(!sessionChanged(e))pending.replaceWith(calendar(null,true));});
   }
   if(subscription&&full)target.append(subscription);
@@ -7452,7 +7464,7 @@ function proposalPill(data:WorkspaceData){
   const b=el('button',{type:'button',class:'health-pill info proposal-pill','aria-label':'Auto-schedule proposal ready · review it','data-ctip':'Proposal ready · review it'},icon('sparkle'),el('span',{class:'label'},' Proposal ready'));
   footerAct(b,'proposal',()=>reviewProposal(data));return b;
 }
-const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
+const proposalShown=(data:WorkspaceData)=>data.workspace.status==='draft'&&!data.workspace.archived_at&&permits(CAPABILITY.COORDINATOR)&&proposalWaiting(data);
 /** After the jobs are read: the button's mark and the footer pill follow them (the bar was drawn before the read). */
 function markProposal(data:WorkspaceData){
   const waiting=proposalShown(data),b=document.querySelector<HTMLButtonElement>('.auto-button'),pills=document.querySelector('.app-footer .health-pills');
@@ -7605,7 +7617,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   }
   const from=field('From','date',st().from,{required:true,min:first,max:last}),to=field('To','date',st().to,{required:true,min:first,max:last});
   from.input.addEventListener('change',()=>{st().from=from.input.value;keptSetup(st());syncRun();});to.input.addEventListener('change',()=>{st().to=to.input.value;keptSetup(st());syncRun();});
-  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort((a,b)=>a.label.localeCompare(b.label));
+  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort(byLabel);
   const clinics=el('div',{class:'field'},el('label',{'aria-hidden':'true'},'Clinics'),multiPick('Clinics',services,st().clinics=st().clinics.filter(c=>services.some(x=>x.value===c)),v=>{st().clinics=v;keptSetup(st());syncRun();},'All clinics').wrap);
   const scope=select('Assign into',[{value:'period',label:'All sessions in these dates'},{value:'open',label:'Open sessions only'},{value:'selected',label:'Selected sessions only'}],st().scope);
   scope.input.addEventListener('change',()=>{st().scope=scope.input.value;keptSetup(st());syncRun();});
@@ -8325,16 +8337,16 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
   const admin=permits(CAPABILITY.ADMIN),fullAccess=admin||may('access.system_roles');
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
   const onboard=admin&&access.accounts_enabled?button('Onboard staff',()=>onboardingPanel(rows('people'),new Set(identities.map(i=>i.person_id).filter(Boolean)),refresh),'secondary'):null;
-  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
-  /** A hospital sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
+  target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add institutional sign-in',()=>void institutionalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; institutional sign-in still works.'})));
+  /** An institutional sign-in is for the one provider this server is set up with (/api/admin/auth-config, the issuer
    *  identity.bind checks against): shown, not typed. Without one there is nothing to bind to: the settings say how. */
-  async function hospitalSignIn(){
+  async function institutionalSignIn(){
     const cfg=await get<AuthConfigStatus>('/api/admin/auth-config').catch(e=>{reportError(e);return null;});if(!cfg)return;
-    if(!cfg.issuer){showDialog('Hospital sign-in is not set up','',(body,close)=>body.append(note('This server has no hospital sign-in provider yet, so a hospital user cannot be added.','warning'),
+    if(!cfg.issuer){showDialog('Institutional sign-in is not set up','',(body,close)=>body.append(note('This server has no institutional sign-in provider yet, so no one can be added this way.','warning'),
       el('div',{class:'actions'},button('Open sign-in settings',()=>{close();navigate('configuration/sign_in');},'primary'))));return;}
-    formDialog('Add a hospital sign-in','Type the user ID exactly as your hospital’s identity team gives it. The sign-in has no access until it is given a role.',form=>{
-    const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('Hospital user ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
-    form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Hospital sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
+    formDialog('Add an institutional sign-in','Type the user ID exactly as your organisation’s identity service gives it. The sign-in has no access until it is given a role.',form=>{
+    const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('User ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
+    form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Institutional sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
   });}
   // Who gives or revokes a role comes from the server permission contract.
   const manages=(r:string)=>!grantRefusal(r,me!.roles);
@@ -8594,7 +8606,7 @@ async function auditPage(target:HTMLElement){
   const read=newest((path:string)=>get(path));
   // The people list (for the Person filter) is read once per visit; reloads skip it.
   const reload=async(first=true)=>{if(first)auditOffset=0;const next=await read(`/api/audit?offset=${auditOffset}&people=false&${auditQuery()}`);if(next){data=next;draw();}};
-  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'}))];
+  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'})).sort(byLabel)];
   const exportCsv=button('Export CSV',()=>download('/api/audit.csv?'+auditQuery()),'secondary small',{'data-tip':'Download every change matching these filters'});
   // Filters go to the server, so they span all history rather than one loaded page of 100.
   const bar=collectionToolbar({label:'Audit log',
@@ -8676,6 +8688,7 @@ window.addEventListener('online',()=>{if(me)void onPulse();});
 window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
 // Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
+const NO_UNDO='Nothing left to undo';
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
 async function undoLast(){
   const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
@@ -8710,7 +8723,8 @@ window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).
   // Any other change to the rota on screen (a Redo too) takes Redo off at once.
   if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
   redoAfter={id:String(w.id),revision:Number(w.revision)};
-  const undo=plannerRota?.id===w.id?document.querySelector('.planner-bar button[aria-label="Undo last edit"]'):null;
+  const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar button[aria-label="Undo last edit"]'):null;
+  if(undo&&w.can_undo===false)notYet(undo,NO_UNDO);
   if(undo&&!undo.parentElement!.querySelector('[data-shortcut="redo"]'))undo.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
 // The page's own edit (not a run: job.* commands drop the jobs read) keeps the last jobs read current, so the redraw

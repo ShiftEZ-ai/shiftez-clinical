@@ -1,4 +1,5 @@
 """Executed golden assertions, their binding counts, and the remaining atlas gaps."""
+from copy import deepcopy
 from importlib.util import module_from_spec, spec_from_file_location
 import json
 import os
@@ -134,6 +135,25 @@ def test_coverage_rejects_unexecuted_assertions_and_zero_bindings():
         coverage_report([spec], {'example': {**receipt, 'assertions': set()}})
     with pytest.raises(AssertionError, match='scenario not sensitive'):
         coverage_report([spec], {'example': {**receipt, 'bindings': {'rest': 0}}})
+
+
+def test_allocation_cover_rejects_a_counterfactual_with_no_effect(golden_case, monkeypatch):
+    from tests import golden_checks
+
+    check = golden_checks.check_allocation_cover
+
+    def without_pressure(data, ids, spec):
+        spec = deepcopy(spec)
+        spec['expect']['pressure']['overfilled_preference_score_is_higher'] = False
+        monkeypatch.setattr(golden_checks, 'place', lambda *_: None)
+        return spec, check(data, ids, spec)
+
+    monkeypatch.setattr(golden_checks, 'check_allocation_cover', without_pressure)
+    # Keep the altered witness out of the shared cache of canonical receipts.
+    spec, receipt = golden_case.__wrapped__('A-ALLOCATION-COVER-01')
+    assert receipt['bindings'] == {'balance': 0}
+    with pytest.raises(AssertionError, match='scenario not sensitive'):
+        coverage_report([spec], {spec['id']: receipt})
 
 
 @pytest.mark.parametrize('new_item', ['kind.new_rule', 'kind.min_rest.new_field'])

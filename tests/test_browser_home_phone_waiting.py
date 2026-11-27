@@ -66,7 +66,7 @@ def test_phone_coordinator_needs_you_and_today(browser, live_server, h, theme):
 
     def home(body):
         body['attention'] = [{'key': 'published_absence_conflicts', 'count': 1, 'sample': [absent], 'action': action},
-                             {'key': 'swaps_to_apply', 'count': 2, 'sample': [{'proposer': 'Alex Morgan', 'recipient': 'Sam Lee', 'start': f'{day}T05:00:00Z'}]},
+                             {'key': 'swaps_to_apply', 'count': 2, 'sample': [{'proposer': 'Staff 01(test)', 'recipient': 'Sam Lee', 'start': f'{day}T05:00:00Z'}]},
                              {'key': 'no_rank', 'count': 11}, {'key': 'unchecked', 'count': 3, 'rota_id': 'x', 'rota_name': 'Draft'}]
 
     def gap(body):
@@ -344,7 +344,7 @@ def test_a_stopped_check_names_its_cause_and_checks_again(browser, live_server, 
         if json.loads(route.request.post_data or '{}').get('kind') == 'workspace.validate' and refusals:
             refusals.pop()
             route.fulfill(status=409, json={'error': {'code': 'STALE_INPUTS', 'message': 'Inputs changed during the check',
-                'details': {'cause': {'kind': 'wish', 'person': 'Taylor Noor', 'date': '2026-12-17'}}}})
+                'details': {'cause': {'kind': 'wish', 'person': 'Staff 03(test)', 'date': '2026-12-17'}}}})
         else:
             route.continue_()
     context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
@@ -354,7 +354,7 @@ def test_a_stopped_check_names_its_cause_and_checks_again(browser, live_server, 
         page.route('**/api/commands', commands)
         navigate(page, f'schedule/week/{day}?edit={w["id"]}')
         line = page.locator('#main .check-stopped')
-        expect(line).to_contain_text(re.compile(r'The check stopped after \d+:\d\d\. Taylor Noor added a wish for Thu 17 Dec while it ran\.'))
+        expect(line).to_contain_text(re.compile(r'The check stopped after \d+:\d\d\. Staff 03\(test\) added a wish for Thu 17 Dec while it ran\.'))
         # DL-018: one state, one verb: the pill says what the line says
         expect(page.locator('.app-footer').get_by_role('button', name='Check stopped · Check again')).to_be_visible()
         sizes(page, theme, 'b7-waiting-and-errors--failed')

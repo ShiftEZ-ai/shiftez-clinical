@@ -33,7 +33,7 @@ def test_approved_leave_names_the_draft_duty_only_for_coordinators(database):
     with transaction(h.app.state.engine) as db:
         shift = db.scalar(select(m.Shift).where(m.Shift.workspace_id == w['id']))
         duty = db.scalar(select(m.Assignment).where(m.Assignment.shift_id == shift.id))
-        expected = {'person': 'Alex Morgan', 'person_id': duty.person_id, 'assignment_id': duty.id, 'start': aware(duty.start).isoformat(), 'end': aware(duty.end).isoformat(),
+        expected = {'person': 'Staff 01(test)', 'person_id': duty.person_id, 'assignment_id': duty.id, 'start': aware(duty.start).isoformat(), 'end': aware(duty.end).isoformat(),
                     'rota_id': w['id'], 'rota_name': w['name'], 'shift_id': shift.id, 'request_id': request['id']}
     item = next(i for i in h.get('coordinator', '/api/home')['attention'] if i['key'] == 'leave_conflicts')
     assert item == {'key': 'leave_conflicts', 'count': 1, 'classification': DUTIES_DURING_APPROVED_LEAVE, 'sample': [expected]}

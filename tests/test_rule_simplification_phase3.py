@@ -14,7 +14,7 @@ from packages.contracts.schemas import ENDED_REASON, PolicyDefinition, PolicyInp
 from packages.domain.conditions import active_rules
 from packages.domain.rule_groups import canonical_model, ended, expanded, same_checks, same_model, simplify
 from packages.domain.validation import evaluate
-from .test_rule_simplification import PERSON, SERVICE, WEEK_START, quota, rule
+from .test_rule_simplification import PERSON, SERVICE, WEEK_START, configure_baseline_rehearsal, quota, rule
 from .test_rule_templates import activate, propose
 
 ids = (f'00000000-0000-4000-a000-{n:012d}' for n in itertools.count(1))
@@ -290,7 +290,7 @@ def test_baseline_runs_every_round_opens_permissions_and_undoes_it_all(h, monkey
             r.ends_on = date(2026, 10, 1)
         active_before = sorted(p.id for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active')))
         identities_before = {r.id: record(r) for r in db.scalars(select(m.Identity).where(m.Identity.issuer == tool.SYSTEM_ISSUER))}
-    monkeypatch.setattr(tool, 'baseline_refusals', lambda db: {})
+    configure_baseline_rehearsal(monkeypatch, tool)
     monkeypatch.setattr('apps.api.services.independence.today', lambda db, department_id: date(2026, 9, 29))
     args = SimpleNamespace(propose=False, undo=False, changes=True, model=False, no_calendar=False, name=[], reason='Baseline rehearsal', only_reason=None)
     tool.baseline(h.app.state.engine, args)  # dry run: rolled back

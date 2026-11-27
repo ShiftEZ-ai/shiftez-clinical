@@ -92,23 +92,23 @@ def test_planner_legend_follows_filters_colour_by_names_and_layouts(browser, liv
         colour_by(page, 'Duty type')
         # Codes recover full names on hover/focus/open, without a person dictionary in the key.
         with legend_entries(page, legend) as entries:
-            expect(entries.filter(has_text='Alex Morgan')).to_have_count(0)
+            expect(entries.filter(has_text='Staff 01(test)')).to_have_count(0)
         show_names(page, 'code')
         with legend_entries(page, legend) as entries:
             expect(entries.locator('.code-chip')).to_have_count(0)
-            for text in ('Alex Morgan', 'Jordan Lee'):
+            for text in ('Staff 01(test)', 'Staff 02(test)'):
                 expect(entries.filter(has_text=text)).to_have_count(0)
         chip = page.locator(f'.wk-grid {draft_chip(h.seed["people"][0])}')
         chip.hover()
-        expect(page.get_by_role('tooltip')).to_contain_text('Alex Morgan')
+        expect(page.get_by_role('tooltip')).to_contain_text('Staff 01(test)')
         page.mouse.move(-1, -1)
         chip.focus()
-        expect(page.get_by_role('tooltip')).to_contain_text('Alex Morgan')
+        expect(page.get_by_role('tooltip')).to_contain_text('Staff 01(test)')
         chip.click()
-        expect(page.locator('.wk-panel')).to_contain_text('Alex Morgan')
+        expect(page.locator('.wk-panel')).to_contain_text('Staff 01(test)')
         page.keyboard.press('Escape')
         with legend_entries(page, legend) as entries:
-            expect(entries.filter(has_text='Taylor Noor')).to_have_count(0)
+            expect(entries.filter(has_text='Staff 03(test)')).to_have_count(0)
         show_names(page, 'full')
         with legend_entries(page, legend) as entries:
             expect(entries.locator('.code-chip')).to_have_count(0)
@@ -164,14 +164,14 @@ def test_published_rota_and_team_calendar_keys_name_the_team_lead(browser, live_
         expect(key(page)).to_contain_text('Clinical review session')
         show_names(page, 'code')
         chip = page.locator('.wk-grid button.pchip').filter(has=page.locator('.pchip-name')).filter(
-            has_text=re.compile(r'.')).and_(page.get_by_role('button', name=re.compile('^Alex Morgan,')))
+            has_text=re.compile(r'.')).and_(page.get_by_role('button', name=re.compile(r'^Staff 01\(test\),')))
         chip.hover()
-        expect(page.get_by_role('tooltip')).to_contain_text('Alex Morgan')
+        expect(page.get_by_role('tooltip')).to_contain_text('Staff 01(test)')
         page.mouse.move(-1, -1)
         chip.focus()
-        expect(page.get_by_role('tooltip')).to_contain_text('Alex Morgan')
+        expect(page.get_by_role('tooltip')).to_contain_text('Staff 01(test)')
         chip.click()
-        expect(page.locator('.dock-panel')).to_contain_text('Alex Morgan')
+        expect(page.locator('.dock-panel')).to_contain_text('Staff 01(test)')
         expect(page.locator('.dock-panel').get_by_role('button', name='Edit session', exact=True)).to_have_count(0)
         page.keyboard.press('Escape')
         # The team calendar is the People view: its key names the duty codes drawn, not unused types.

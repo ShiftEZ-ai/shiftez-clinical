@@ -100,23 +100,48 @@ def packet(tmp_path, monkeypatch):
             return archive({"shard-plan.json": queue_plan})
         return json.dumps(responses[resource]).encode()
 
-    def git(command, *args):
+    def git(argv):
+        command, *args = argv[3:]
         if command == "rev-parse":
             return {HEAD + "^{tree}": TREE, "HEAD": HEAD}[args[0]].encode()
         if command == "ls-tree":
-            assert args == ("-r", "-z", HEAD, "--", "tests")
+            assert tuple(args) == ("-r", "-z", HEAD, "--", "tests")
             return b"".join(("100644 blob " + TREE + "\t" + name).encode() + b"\0" for name in FILES)
         if command == "merge-base":
-            assert args == ("--is-ancestor", HEAD, HEAD)
+            assert tuple(args) == ("--is-ancestor", HEAD, HEAD)
+            if data.get("ancestry_error"):
+                raise subprocess.CalledProcessError(128, argv, stderr=b"fatal: bad object")
             return b""
-        assert command == "diff" and args == ("--quiet", "--no-ext-diff", "--no-textconv", BASE,
-                                                args[4], "--", *reuse.CONTROLS)
-        if args[4] == data.get("changed_controls"):
-            raise subprocess.CalledProcessError(1, command)
+        assert command == "diff" and tuple(args) == ("--name-only", "-z", "--no-ext-diff", "--no-textconv",
+                                                     "--no-renames", BASE, args[6], "--", *reuse.CONTROLS)
+        if args[6] == data.get("missing_object"):
+            raise subprocess.CalledProcessError(128, argv, stderr=b"fatal: bad object")
+        if args[6] == data.get("changed_controls"):
+            return b".github/workflows/ci.yml\0.github/scripts/queue_reuse.py\0"
         return b""
 
-    monkeypatch.setattr(reuse.evidence, "github_get", api)
-    monkeypatch.setattr(reuse, "git", git)
+    def check_output(argv, *, stderr, timeout=None):
+        assert stderr == subprocess.PIPE
+        if argv[0] == "git":
+            assert argv[:3] == ["git", "-C", str(reuse.TRUSTED)]
+            return git(argv)
+        assert argv[:6] == ["gh", "api", "--hostname", "github.com", "--method", "GET"]
+        assert timeout == 60
+        prefix = f"repos/{REPO}/actions/"
+        assert argv[-1].startswith(prefix)
+        resource = argv[-1].removeprefix(prefix)
+        raw = argv[6:-1]
+        body = api(REPO, resource)
+        if resource == "jobs/32/logs":
+            if "log_error" in data:
+                raise subprocess.CalledProcessError(1, argv, stderr=data["log_error"])
+            if b"\x1b" in body and raw != ["--allow-escape-sequences"]:
+                raise subprocess.CalledProcessError(1, argv, stderr=b"the response contains terminal escape sequences")
+        else:
+            assert raw == []
+        return body
+
+    monkeypatch.setattr(reuse.subprocess, "check_output", check_output)
     return data
 
 
@@ -140,33 +165,71 @@ def test_full_plan_can_reuse_exact_queue_attempt_with_other_shard_width(monkeypa
     assert "/actions/runs/30" in (tmp_path / "summary").read_text()
 
 
-@pytest.mark.parametrize(("member", "key", "value"), [
-    ("run", "conclusion", "failure"),
-    ("run", "head_sha", OTHER),
-    ("run", "head_branch", "gh-readonly-queue/dev/pr-1"),
-    ("run", "path", ".github/workflows/other.yml"),
-    ("gate", "conclusion", "cancelled"),
-    ("gate", "conclusion", "skipped"),
-    ("gate", "run_attempt", 1),
-    ("gate", "started_at", "2020-01-01T00:00:00Z"),
-    ("verdict", "passed", False),
-    ("proof", "tree", OTHER),
-    ("proof", "plan_sha256", "b" * 64),
-    ("queue_plan", "tree", OTHER),
-    ("queue_plan", "base_sha", OTHER),
-    ("queue_plan", "selection", {}),
-    ("queue_plan", "inventory_sha256", "b" * 64),
+def test_gate_log_with_terminal_escapes_can_still_bind_the_artifact(monkeypatch, tmp_path, packet, capsys):
+    packet["log"] += b"\x1b[36mrunner log\x1b[0m\n"
+    invoke(monkeypatch, packet)
+    assert (tmp_path / "output").read_text().strip() == "run=30:2"
+    assert "runner log" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("member", "key", "value", "reason"), [
+    ("run", "conclusion", "failure", "No successful merge-group run"),
+    ("run", "head_sha", OTHER, "No successful merge-group run"),
+    ("run", "head_branch", "gh-readonly-queue/dev/pr-1", "No successful merge-group run"),
+    ("run", "path", ".github/workflows/other.yml", "Invalid dev CI run identity"),
+    ("gate", "conclusion", "cancelled", "The required queue gate did not complete successfully"),
+    ("gate", "conclusion", "skipped", "The required queue gate did not complete successfully"),
+    ("gate", "run_attempt", 1, "The required queue gate did not complete successfully"),
+    ("gate", "started_at", "2020-01-01T00:00:00Z", "Queue verdict predates today's allowance evaluation"),
+    ("verdict", "passed", False, "Queue verdict evidence differs"),
+    ("proof", "tree", OTHER, "Queue verdict evidence differs"),
+    ("proof", "plan_sha256", "b" * 64, "Queue plan seal or planner inputs differ"),
+    ("queue_plan", "tree", OTHER, "Expected the full single-replica plan"),
+    ("queue_plan", "base_sha", OTHER, "Expected the full single-replica plan"),
+    ("queue_plan", "selection", {}, "Expected the full single-replica plan"),
+    ("queue_plan", "inventory_sha256", "b" * 64, "Queue plan seal or planner inputs differ"),
     ("queue_plan", "suites", {"unit": {"shards": [{"files": [FILES[0]]}]},
-                              "browser": {"shards": [{"files": FILES[2:]}]}}),
+                              "browser": {"shards": [{"files": FILES[2:]}]}}, "Candidate plan omits"),
+], ids=[
+    "failed-merge-group-run",
+    "wrong-run-head",
+    "wrong-queue-branch",
+    "wrong-workflow",
+    "cancelled-gate",
+    "skipped-gate",
+    "wrong-gate-attempt",
+    "stale-gate",
+    "nonpassing-verdict",
+    "wrong-proof-tree",
+    "wrong-plan-seal",
+    "wrong-plan-tree",
+    "wrong-plan-base",
+    "partial-plan-selection",
+    "wrong-inventory-seal",
+    "missing-suite-files",
 ])
-def test_unbound_evidence_runs_full_suites(monkeypatch, tmp_path, packet, member, key, value):
+def test_unbound_evidence_runs_full_suites(monkeypatch, tmp_path, packet, capsys, member, key, value, reason):
     packet[member][key] = value
     invoke(monkeypatch, packet)
     assert not (tmp_path / "output").exists()
+    log, = capsys.readouterr().out.splitlines()
+    assert reason in log and log.endswith("running the full suites")
 
 
-@pytest.mark.parametrize("defect", ["missing_run", "missing_proof", "unreadable", "untrusted_controls", "replaced_artifact"])
-def test_absent_or_unavailable_proof_enables_full_suites(monkeypatch, tmp_path, packet, defect):
+@pytest.mark.parametrize(("defect", "reason"), [
+    ("missing_run", "Expected one merge-group run"),
+    ("missing_proof", "KeyError: 'queue-proof.json'"),
+    ("unreadable", "gh (timed out after 60s, stderr: empty)"),
+    ("untrusted_controls", "control files changed: .github/workflows/ci.yml, .github/scripts/queue_reuse.py"),
+    ("replaced_artifact", "Qualification artifact differs from the trusted gate upload"),
+], ids=[
+    "missing-run",
+    "missing-proof",
+    "merge-group-lookup-timeout",
+    "changed-control-files",
+    "replaced-artifact",
+])
+def test_absent_or_unavailable_proof_enables_full_suites(monkeypatch, tmp_path, packet, capsys, defect, reason):
     if defect == "missing_run":
         packet["missing_run"] = True
     elif defect == "missing_proof":
@@ -181,6 +244,44 @@ def test_absent_or_unavailable_proof_enables_full_suites(monkeypatch, tmp_path, 
         packet["log"] = b"2026-01-01T00:00:00.000Z Queue qualification artifact id 99\n"
     invoke(monkeypatch, packet)
     assert not (tmp_path / "output").exists()
+    log, = capsys.readouterr().out.splitlines()
+    assert reason in log and log.endswith("running the full suites")
+
+
+def test_log_read_failure_names_the_command_and_exit(monkeypatch, tmp_path, packet, capsys):
+    packet["log_error"] = b"HTTP 403\n" + b"x" * 300
+    invoke(monkeypatch, packet)
+    assert not (tmp_path / "output").exists()
+    log, = capsys.readouterr().out.splitlines()
+    assert "gh api" in log and "actions/jobs/32/logs (exit 1, stderr: HTTP 403" in log
+    assert "x" * 240 not in log and log.endswith("running the full suites")
+
+
+@pytest.mark.parametrize(("defect", "value", "command"), [
+    ("missing_object", BASE, "diff"),
+    ("ancestry_error", True, "merge-base"),
+], ids=["missing-object-in-diff", "missing-object-in-ancestry-check"])
+def test_missing_object_names_git_exit(monkeypatch, tmp_path, packet, capsys, defect, value, command):
+    packet[defect] = value
+    invoke(monkeypatch, packet)
+    assert not (tmp_path / "output").exists()
+    log, = capsys.readouterr().out.splitlines()
+    assert f"git -C '<trusted checkout>' {command}" in log and "exit 128, stderr: fatal: bad object" in log
+    assert "control files changed" not in log
+
+
+def test_refusal_redacts_tokens_and_signed_redirects(monkeypatch, tmp_path, packet, capsys):
+    env_token = "synthetic-credential"
+    prefixed_token = "ghs_" + "t" * 36
+    header_token = "synthetic-bearer"
+    redirect = "https://example.test/log?signature=synthetic-signature"
+    monkeypatch.setenv("GH_TOKEN", env_token)
+    packet["log_error"] = f"{env_token}\n{prefixed_token}\nAuthorization: Bearer {header_token}\n{redirect}".encode()
+    invoke(monkeypatch, packet)
+    assert not (tmp_path / "output").exists()
+    log, = capsys.readouterr().out.splitlines()
+    assert log.count("[redacted]") == 4
+    assert all(secret not in log for secret in (env_token, prefixed_token, header_token, redirect))
 
 
 @pytest.mark.parametrize("event", ["pull_request", "merge_group", "schedule", "workflow_dispatch", "push"])
@@ -203,7 +304,7 @@ def test_gate_rejects_attempt_change_and_does_not_write_reports(monkeypatch, tmp
     assert not reports.exists()
 
 
-def test_queue_records_proof_only_after_a_passing_trusted_verdict(monkeypatch, tmp_path, packet):
+def test_queue_records_proof_only_after_a_passing_trusted_verdict(monkeypatch, tmp_path, packet, capsys):
     event_file = tmp_path / "event.json"
     event = json.loads(event_file.read_bytes())
     event["merge_group"] = {"base_ref": reuse.MAIN, "base_sha": BASE, "head_sha": HEAD}
@@ -213,6 +314,8 @@ def test_queue_records_proof_only_after_a_passing_trusted_verdict(monkeypatch, t
     verdict.write_text('{"passed":false}', encoding="utf-8")
     invoke(monkeypatch, packet, "--record-attempt", "1", "--reports", str(tmp_path))
     assert not (tmp_path / reuse.PROOF).exists()
+    log, = capsys.readouterr().out.splitlines()
+    assert "Queue reuse proof could not be recorded (Queue verdict did not pass)" in log
     verdict.write_text('{"passed":true}', encoding="utf-8")
     invoke(monkeypatch, packet, "--record-attempt", "1", "--reports", str(tmp_path))
     proof = json.loads((tmp_path / reuse.PROOF).read_bytes())

@@ -4481,6 +4481,8 @@ tr.is-explained>td{background:var(--accent-soft)}
 .rt-n{display:inline-block;min-width:16px;font:500 11.5px/1 var(--mono);color:var(--muted);text-align:right;white-space:nowrap}
 .date-units{display:inline-flex;gap:4px;flex-wrap:wrap}
 .date-units>span{white-space:nowrap}
+/* A change's checks: who and when stay on one line while Issue wraps (a phone's narrow table wraps them instead). */
+@media (min-width:721px){.preview-findings td:nth-child(-n+2){white-space:nowrap}}
 .rule-valid{flex-wrap:nowrap}
 .dt-wrap .rule-valid,.rule-history-body .rule-valid,.rule-facts .rule-valid{flex-wrap:wrap}
 .rt-att{border:0;cursor:pointer;font:inherit;font-size:12px}
