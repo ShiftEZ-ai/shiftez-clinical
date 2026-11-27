@@ -15,7 +15,7 @@ jobs:
     name: Nightly capacity
     if: github.event_name == 'schedule' && vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 1
     permissions:
       actions: read
       contents: read
@@ -52,7 +52,7 @@ jobs:
       && (github.event_name != 'schedule' || needs['nightly-budget'].result == 'success'
           && needs['nightly-budget'].outputs.admitted == 'true')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 7
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
       queue_run: ${{ steps.queue.outputs.run }}
@@ -437,7 +437,7 @@ jobs:
     - browser
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 1
     defaults:
       run:
         working-directory: .
@@ -671,7 +671,7 @@ jobs:
       always() && !cancelled() && needs.checks.result == 'success'
       && needs.checks.outputs.quota_scope == ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 3
     steps:
     - name: Require GitHub-hosted execution
       env:

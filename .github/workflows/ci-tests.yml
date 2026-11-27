@@ -6,7 +6,7 @@ jobs:
     name: ${{ inputs.suite }}
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.suite == 'unit' && 20 || 60 }}
     env:
       TRUSTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'

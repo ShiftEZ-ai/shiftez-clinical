@@ -9,8 +9,7 @@ jobs:
   publish:
     name: Build and publish image
     runs-on: ubuntu-24.04
-    # Generous until the first runs are measured; then set from the measured time plus margin.
-    timeout-minutes: 60
+    timeout-minutes: 4
     permissions:
       contents: read
       packages: write

@@ -139,9 +139,25 @@ A critical change gets one independent review of the full PR diff (merge base to
 ## Data safety
 - Migrations only add; never edit, rename or delete a landed migration (`migrations/safety.py`,
   `tests/test_data_safety.py`). A release never erases production data.
-- Every production deploy takes a verified backup first; never copy one environment's data into another.
-- Publication and audit evidence is never deleted or rewritten. Deleting or rewriting data needs the owner's
-  separate, explicit yes.
+- Personal data includes staff directory and contact details, accounts and access records, rota assignments,
+  training, requests, availability, preferences, notification and calendar records, and feedback. Records without
+  an expiry are kept for scheduling and history. Archiving a draft preserves its contents.
+- The application offers administrators an audited leaver workflow. After the person is marked inactive,
+  `person.anonymise` clears identifying directory and account fields, private notes, copied delivery addresses
+  and unapplied staged payloads. It disables sign-in and revokes active sessions and calendar feeds. Rotas and
+  fairness keep a former-staff reference. See `apps/api/services/leavers.py` and `tests/test_leavers.py`.
+- Publications, audit records and definition history can retain personal references indefinitely. The leaver
+  workflow removes private leave reasons from availability history. Deleting or rewriting real data requires
+  the owner's separate, explicit yes.
+- Worker cleanup deletes expired sessions after `EXPIRED_SESSION_DAYS`, sign-in attempts after the sign-in rate
+  window plus one day, rate-limit rows at their expiry and authentication events after
+  `password_login_audit_retention_days`. Mailbox consent expires at `oauth_flow_minutes`. Cleanup removes the flow
+  after use, expiry or loss of an active session or eligible access. It removes mailbox connections when access ends.
+- The worker clears screenshots at the contract's `screenshot_days` limit and staged edits at the department's
+  `bulk_staged_days` limit. The report or lifecycle record remains. Solver resume state expires under
+  `generation_resume_days`. See `apps/worker/main.py` for cleanup.
+- Take a verified backup before every production deploy. Backups age out under the rotation in
+  [Backup and restore](DELIVERY.md#backup-and-restore). Never copy one environment's data into another.
 
 ## Privacy
 - The repository is public under a proprietary licence (source-visible only; no open licence). Public text cannot be reliably erased:
