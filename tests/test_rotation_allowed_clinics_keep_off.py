@@ -176,15 +176,23 @@ def test_keep_off_rotation_line_blocks_swap_recipient_with_public_wording(h):
     source = h.get("coordinator", f"/api/publications/{publication_id}")["snapshot"]
     first = source["shifts"][0]["participants"][0]["id"]
 
-    choice = recipient(h.get("staff", f"/api/swaps/options?assignment_id={first}&recipient_id={recipient_person}&kind=give"), recipient_person)
+    path = f"/api/swaps/options?assignment_id={first}&recipient_id={recipient_person}&kind=give"
+    # Issue 1659: staff read one neutral sentence; a coordinator keeps the specific protected-time finding.
+    options = h.get("staff", path)
+    choice = recipient(options, recipient_person)
     assert choice["eligible"] is False
-    assert "protected time" in choice["message"]
+    assert choice["message"] == "This colleague is not free at that time."
+    assert "protected time" not in str(options) and "RESTRICTION" not in str(options)
+    identity(h, "coordinator_staff", ["staff", "coordinator"], h.seed["people"][0])
+    specific = recipient(h.get("coordinator_staff", path), recipient_person)
+    assert specific["eligible"] is False and "protected time" in specific["message"]
     assert any(finding["code"] == "RESTRICTION" and "protected time" in finding["message"]
-               for finding in choice["findings"])
+               for finding in specific["findings"])
     response = h.command("staff", "swap.offer", {
         "kind": "give", "publication_id": publication_id, "assignment_id": first,
         "recipient_person_id": recipient_person, "expires_at": "2026-10-09T00:00:00+03:00",
         "reason": "Synthetic rotation clinic check",
     }, status=422)
     assert response["error"]["code"] == "SWAP_INELIGIBLE"
-    assert "RESTRICTION" in {finding["code"] for finding in response["error"]["details"]["findings"]}
+    assert "COLLEAGUE_NOT_FREE" in {finding["code"] for finding in response["error"]["details"]["findings"]}
+    assert "RESTRICTION" not in str(response) and "protected time" not in str(response)

@@ -185,7 +185,7 @@ def test_give_away_transfers_only_offered_duty_through_review_and_publication(pg
     assert second not in str(notices) and "private medical" not in str(notices)
 
 
-def test_give_away_acceptance_requires_recipient_reason_revision_and_original_proposer(h):
+def test_give_away_acceptance_checks_recipient_revision_and_original_proposer(h):
     pid, first, second, _ = source_pair(h)
     payload = {"publication_id": pid, "assignment_id": first, "recipient_person_id": h.seed["people"][1],
         "expires_at": (m.now()+timedelta(days=1)).isoformat(), "reason": "Swap kind must be a known contract value"}
@@ -593,17 +593,23 @@ def test_only_a_refusal_by_a_coordinator_or_approver_keeps_its_required_reason(h
     assert stored_reasons(h, row["id"])[1]["reject"] == "The department cannot spare this cover"
 
 
-def test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text(h):
+@pytest.mark.parametrize("withdraw_note", [{}, {"reason": ""}, {"reason": "Routine update"}])
+def test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text(h, withdraw_note):
     pid, first, _, _ = source_pair(h)
     row = offered(h, pid, first, kind="give")
     row = h.command("staff_two", "swap.accept", {}, row["id"], row["revision"])["swap"]
     assert row["status"] == "counteroffered"
     row = h.command("staff", "swap.confirm", {}, row["id"], row["revision"])["swap"]
     assert row["status"] == "accepted"
-    row = h.command("staff", "swap.withdraw", {}, row["id"], row["revision"])["swap"]
+    row = h.command("staff", "swap.withdraw", withdraw_note, row["id"], row["revision"])["swap"]
     assert row["status"] == "withdrawn"
     reasons = stored_reasons(h, row["id"])[1]
     assert (reasons["accept"], reasons["confirm"], reasons["withdraw"]) == ("", "", "")
+    with transaction(h.app.state.engine) as db:
+        audit = db.scalars(select(m.AuditEvent).where(m.AuditEvent.target_id == row["id"],
+            m.AuditEvent.action.in_(("swap.accept", "swap.confirm", "swap.withdraw"))))
+        assert {event.action: event.reason for event in audit} == {
+            "swap.accept": "", "swap.confirm": "", "swap.withdraw": ""}
 
 
 def extra_staff(h, count):

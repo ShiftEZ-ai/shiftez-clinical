@@ -1900,7 +1900,7 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             row = swaps.get_scoped(db, actor, swap_id)
             return {"swap": swaps.projection(db, row, actor=actor),
-                    "events": [record(event) for event in swaps.events_for(db, actor, row)]}
+                    "events": swaps.events_for(db, actor, row)}
 
     @app.get("/api/planner/views")
     def planner_views(request: Request):

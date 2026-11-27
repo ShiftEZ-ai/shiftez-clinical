@@ -933,6 +933,16 @@
       "reason": "Renamed to test_stopped_resume_reports_valid_incumbent_without_completed_score: a stopped search that keeps a validated complete rota now reports FEASIBLE with score_completed false (one status meaning), so the UNKNOWN status assertion became FEASIBLE and two score-completion assertions were added; the other assertions remain."
     },
     {
+      "node": "tests/test_staff_swaps.py::test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text",
+      "owner": "maintainer",
+      "reason": "Parametrized over the withdraw note (none, empty, a routine note) as test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text[...]; every status and stored-reason assertion remains and an audit-reason assertion is added."
+    },
+    {
+      "node": "tests/test_staff_swaps.py::test_give_away_acceptance_requires_recipient_reason_revision_and_original_proposer",
+      "owner": "maintainer",
+      "reason": "Renamed to test_give_away_acceptance_checks_recipient_revision_and_original_proposer because the recipient reason is now optional; the body is unchanged and every assertion remains."
+    },
+    {
       "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
       "owner": "maintainer",
       "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."

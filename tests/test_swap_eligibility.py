@@ -1,5 +1,7 @@
 """Staff swap previews use the preparation validator before saving consent."""
+import ast
 import copy
+import inspect
 import json
 import time
 from datetime import date, timedelta
@@ -11,7 +13,7 @@ from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services import swaps
 from packages.domain.validation import evaluate
-from packages.domain import validation
+from packages.domain import quotas, resources, validation
 from .governance_support import identity, transition
 from .test_resources_calendars import attach, calendar
 from .test_staff_swaps import accepted, fixed_clock, manual_swap_workflow, offered, ordered_clock, source_pair
@@ -244,6 +246,154 @@ def test_options_marks_recipients_without_disclosing_return_duties(h):
     assert counts(h) == before
 
 
+def assert_private_time_hidden(body):
+    serialized = json.dumps(body)
+    for private in ('UNAVAILABLE', 'RESTRICTION', 'is unavailable at that time.', 'has protected time then.'):
+        assert private not in serialized
+
+
+def test_staff_options_and_refusals_make_leave_and_protection_indistinguishable(h):
+    publication, first, _, _ = source_pair(h, third=True)
+    proposer, on_leave, protected = h.seed['people']
+    rows = []
+    for person, login in ((on_leave, 'staff_two'), (protected, 'staff_three')):
+        offer = h.command('staff', 'swap.offer', {**offer_payload(h, publication, first, 'give'),
+            'recipient_person_id': person})['swap']
+        rows.append(transition(h, offer, 'accept', login)['swap'])
+    h.command('coordinator', 'availability.record', {
+        'person_id': on_leave, 'kind': 'recorded_leave', 'private_reason': 'Synthetic leave note',
+        'start': '2026-10-04T08:00:00+03:00', 'end': '2026-10-04T12:00:00+03:00'})
+    h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'},
+             {'person_id': protected})
+
+    path = f'/api/swaps/options?assignment_id={first}&kind=give'
+    options = h.get('staff', path)
+    assert_private_time_hidden(options)
+    safe_finding = {'code': 'COLLEAGUE_NOT_FREE', 'message': 'This colleague is not free at that time.'}
+    for person in (on_leave, protected):
+        assert {key: value for key, value in recipient(options, person).items() if key not in {'id', 'display_name'}} == {
+            'eligible': False, 'message': safe_finding['message'], 'findings': [safe_finding]}
+    assert options['no_eligible_recipients_reason'] == 'Colleagues are not free at that time.'
+
+    for role in ('coordinator', 'approver'):
+        login = role + '_staff'
+        identity(h, login, ['staff', role], proposer)
+        privileged = h.get(login, path)
+        for person, code, suffix in ((on_leave, 'UNAVAILABLE', 'is unavailable at that time.'),
+                                     (protected, 'RESTRICTION', 'has protected time then.')):
+            choice = recipient(privileged, person)
+            assert choice['eligible'] is False and choice['message'].endswith(suffix)
+            assert choice['findings'] == [{'code': code, 'message': choice['message']}]
+        assert privileged['no_eligible_recipients_reason'] == options['no_eligible_recipients_reason']
+
+    for row in rows:
+        thread = '/api/swaps/' + row['id']
+        before = h.get('staff', thread)
+        result = transition(h, row, 'confirm', status=422)
+        assert_private_time_hidden(result)
+        assert result['error'] == {'code': 'SWAP_INELIGIBLE', 'message': safe_finding['message'],
+                                   'details': {'findings': [safe_finding]}}
+        after = h.get('staff', thread)
+        assert_private_time_hidden(after)
+        assert after == before
+        assert_private_time_hidden(h.get('staff', '/api/requests/all?id=' + row['id']))
+
+
+@pytest.mark.parametrize('code,suffix', [('UNAVAILABLE', 'is unavailable at that time.'),
+                                         ('RESTRICTION', 'has protected time then.')])
+def test_stored_swap_refusal_is_projected_for_the_current_reader(h, code, suffix):
+    row, _ = accepted(h, 'give')
+    message = 'The person taking this duty ' + suffix
+    detail = {'code': 'SWAP_INELIGIBLE', 'message': message,
+              'details': {'findings': [{'code': code, 'message': message, 'person_id': row['recipient_person_id']}]}}
+    with transaction(h.app.state.engine, write=True) as db:
+        db.add(m.SwapEvent(swap_id=row['id'], actor_id=h.seed['identities']['coordinator'],
+                           action='prepare_refused', pair_hash=swaps.pair_hash(db.get(m.SwapRequest, row['id'])),
+                           reason=message, detail=detail))
+    path = '/api/swaps/' + row['id']
+    safe = 'This colleague is not free at that time.'
+    staff = h.get('staff', path)
+    assert_private_time_hidden(staff)
+    refusal = next(event for event in staff['events'] if event['action'] == 'prepare_refused')
+    assert refusal['reason'] == safe
+    assert refusal['detail'] == staff['swap']['prepare_refusal'] == {
+        'code': 'SWAP_INELIGIBLE', 'message': safe,
+        'details': {'findings': [{'code': 'COLLEAGUE_NOT_FREE', 'message': safe}]}}
+    assert_private_time_hidden(h.get('staff', '/api/swaps'))
+    history = h.get('staff', '/api/requests/all?id=' + row['id'])
+    assert_private_time_hidden(history)
+    assert next(event for event in history['history'] if event['action'] == 'swap.prepare_refused')['reason'] == safe
+    reviewer = h.get('approver', path)
+    assert reviewer['swap']['prepare_refusal'] == detail
+    assert next(event for event in reviewer['events'] if event['action'] == 'prepare_refused')['reason'] == message
+    with transaction(h.app.state.engine) as db:
+        saved = db.scalar(select(m.SwapEvent).where(m.SwapEvent.swap_id == row['id'], m.SwapEvent.action == 'prepare_refused'))
+        assert saved.reason == message and saved.detail == detail
+
+
+@pytest.mark.parametrize('code', sorted(swaps.NOT_FREE_CODES - {swaps.COLLEAGUE_NOT_FREE}))
+def test_every_not_free_code_reads_the_same_to_staff(h, monkeypatch, code):
+    publication, first, _, _ = source_pair(h, third=True)
+    proposer, colleague, _ = h.seed['people']
+    evaluate = swaps.evaluate
+
+    def away(*args, **kwargs):
+        result = evaluate(*args, **kwargs)
+        return {**result, 'session_findings': result['session_findings'] + [
+            {'code': code, 'severity': 'error', 'message': 'Private validator detail', 'person_id': colleague}]}
+    monkeypatch.setattr(swaps, 'evaluate', away)
+
+    path = f'/api/swaps/options?assignment_id={first}&kind=give'
+    safe = {'code': 'COLLEAGUE_NOT_FREE', 'message': 'This colleague is not free at that time.'}
+    options = h.get('staff', path)
+    assert code not in json.dumps(options) and 'Private validator detail' not in json.dumps(options)
+    for row in options['recipients']:
+        assert {key: value for key, value in row.items() if key not in {'id', 'display_name'}} == {
+            'eligible': False, 'message': safe['message'], 'findings': [safe]}
+    assert options['no_eligible_recipients_reason'] == 'Colleagues are not free at that time.'
+    refusal = h.command('staff', 'swap.offer', offer_payload(h, publication, first, 'give'), status=422)
+    assert refusal['error'] == {'code': 'SWAP_INELIGIBLE', 'message': safe['message'], 'details': {'findings': [safe]}}
+
+    identity(h, 'coordinator_staff', ['staff', 'coordinator'], proposer)
+    assert [f['code'] for f in recipient(h.get('coordinator_staff', path), colleague)['findings']] == [code]
+    # Only a coordinator or approver reads the specific finding; other team readers who are staff read what staff read.
+    identity(h, 'lead_staff', ['staff', 'programme_lead', 'auditor'], proposer)
+    assert h.get('lead_staff', path)['recipients'] == options['recipients']
+
+
+def test_audience_words_cover_codes_from_the_swap_validator():
+    assert {'UNAVAILABLE', 'RESTRICTION', 'EXTERNAL_ROTATION', 'ROTATION_LEAVE_NEEDS_APPROVAL',
+            'ROTATION_LEAVE_NOT_ALLOWED'} <= swaps.NOT_FREE_CODES
+    # Read the producers used by partial validation. Some warnings share these producers with errors.
+    def codes(expression):
+        if isinstance(expression, ast.IfExp):
+            return codes(expression.body) | codes(expression.orelse)
+        if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+            return {expression.value}
+        return set()
+
+    known = set(quotas.QUOTA_DEVIATION_CODES.values()) | {swaps.COLLEAGUE_NOT_FREE}
+    for fn in (validation.evaluate, validation.validate_session_setup, validation.location_validity_findings,
+               validation.rotation_leave_findings, quotas.evaluate_quotas, resources.evaluate_resources,
+               resources.check_calendar, swaps.Eligibility):
+        for node in ast.walk(ast.parse(inspect.getsource(fn))):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in {'add', 'violation', 'unresolved'} and node.args):
+                known.update(codes(node.args[0]))
+            if isinstance(node, ast.Yield) and isinstance(node.value, ast.Tuple):
+                known.update(codes(node.value.elts[0]))
+            if isinstance(node, ast.Dict):
+                for key, value in zip(node.keys, node.values):
+                    if isinstance(key, ast.Constant) and key.value == 'code':
+                        known.update(codes(value))
+
+    assert known <= swaps.AUDIENCE_WORDS.keys()
+    for code in known:
+        assert swaps.nobody_reason([{'code': code, 'message': 'Private validator detail'}]) == swaps.AUDIENCE_WORDS[code]
+    assert swaps.nobody_reason([{'code': 'FUTURE_CHECK', 'message': 'Private validator detail'}]) == (
+        'Nobody can take this duty under the current rules.')
+
+
 def test_received_options_checks_only_own_return_duties_and_current_availability(h):
     pid, first, second, _ = source_pair(h)
     row = offered(h, pid, first)
@@ -261,7 +411,7 @@ def test_received_options_checks_only_own_return_duties_and_current_availability
         'kind': 'actual_absence', 'private_reason': 'PRIVATE synthetic absence note'})
     blocked = h.get('staff_two', path)['assignments'][0]
     assert blocked['eligible'] is False and blocked['message']
-    assert 'UNAVAILABLE' in {f['code'] for f in blocked['findings']}
+    assert 'COLLEAGUE_NOT_FREE' in {f['code'] for f in blocked['findings']}
     assert all(set(f) == {'code', 'message'} for f in blocked['findings'])
     assert 'PRIVATE' not in str(blocked) and 'private_reason' not in str(blocked)
 
@@ -305,7 +455,7 @@ def test_received_give_away_options_recheck_single_transfer_and_do_not_disclose_
     before = counts(h)
     options = h.get('staff_two', path)
     assert options['assignments'] == [] and options['eligible'] is False and options['message']
-    assert 'UNAVAILABLE' in {f['code'] for f in options['findings']}
+    assert 'COLLEAGUE_NOT_FREE' in {f['code'] for f in options['findings']}
     assert all(set(f) == {'code', 'message'} for f in options['findings'])
     assert second not in str(options) and 'PRIVATE' not in str(options) and 'private_reason' not in str(options)
     assert transition(h, row, 'accept', 'staff_two', status=422)['error']['details']['findings'] == options['findings']
@@ -356,7 +506,7 @@ def test_changed_inputs_refuse_consent_atomically_on_postgres(pg, kind, stage):
             else None, status=422)
     error = result['error']
     assert error['code'] == 'SWAP_INELIGIBLE'
-    assert 'UNAVAILABLE' in {f['code'] for f in error['details']['findings']}
+    assert 'COLLEAGUE_NOT_FREE' in {f['code'] for f in error['details']['findings']}
     assert all(set(f) == {'code', 'message'} for f in error['details']['findings'])
     assert 'PRIVATE' not in str(error)
     assert counts(h) == before
@@ -374,7 +524,7 @@ def test_undo_cannot_reopen_withdrawn_accepted_pair_after_inputs_make_it_ineligi
     before = counts(h)
     error = transition(h, withdrawn, 'undo', status=422)['error']
     assert error['code'] == 'SWAP_INELIGIBLE'
-    assert 'UNAVAILABLE' in {f['code'] for f in error['details']['findings']}
+    assert 'COLLEAGUE_NOT_FREE' in {f['code'] for f in error['details']['findings']}
     assert counts(h) == before
     assert h.get('staff', '/api/swaps/' + withdrawn['id'])['swap'] == withdrawn
 
@@ -405,8 +555,8 @@ def test_current_restrictions_block_mandatory_but_allow_advisory_pairs(h, severi
         return
 
     # Safety kinds are always mandatory. A stored advisory restriction still blocks the swap.
-    assert choice['eligible'] is False and 'protected time' in choice['message']
-    assert any(f['code'] == 'RESTRICTION' and 'protected time' in f['message'] for f in choice['findings'])
+    assert choice['eligible'] is False and choice['message'] == 'This colleague is not free at that time.'
+    assert {'code': 'COLLEAGUE_NOT_FREE', 'message': choice['message']} in choice['findings']
     assert h.command('staff', 'swap.offer', offer_payload(h, pid, first, kind), status=422)['error']['code'] == 'SWAP_INELIGIBLE'
 
 
@@ -773,7 +923,7 @@ def test_options_with_ten_return_duties_per_recipient_stays_within_department_bu
     assert all(set(row) == {'id', 'display_name', 'eligible', 'message', 'findings'} for row in responses['directory']['recipients'])
     assert recipient(responses['eligible'], people[-1])['eligible'] is True
     blocked = recipient(responses['ineligible'], people[0])
-    assert blocked['eligible'] is False and 'RESTRICTION' in {f['code'] for f in blocked['findings']}
+    assert blocked['eligible'] is False and 'COLLEAGUE_NOT_FREE' in {f['code'] for f in blocked['findings']}
     assert all('eligible' in row for row in responses['ineligible']['recipients'])
 
 
@@ -794,7 +944,8 @@ def test_options_say_why_nobody_can_take_a_duty_from_the_same_check(h):
     h.policy({'kind': 'min_rest', 'hours': 12})
     give = h.get('staff', path + '&kind=give')
     assert recipient(give, colleague)['eligible'] is False
-    assert give['no_eligible_recipients_reason'] == recipient(give, colleague)['message'] == 'This swap leaves too little rest between duties.'
+    assert recipient(give, colleague)['message'] == 'This swap leaves too little rest between duties.'
+    assert give['no_eligible_recipients_reason'] == 'Taking this duty would leave too little rest between duties.'
     exchange = h.get('staff', path + '&kind=exchange')  # the colleague still has a valid duty to return
     assert recipient(exchange, colleague)['eligible'] is True and exchange['no_eligible_recipients_reason'] is None
 
@@ -808,5 +959,6 @@ def test_the_reason_nobody_can_take_a_duty_never_names_a_colleagues_protected_ti
     _, first, _, _ = publish_pair(h, w)
     h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'}, {'person_id': colleague})
     options = h.get('staff', '/api/swaps/options?assignment_id=' + first + '&kind=' + kind)
-    assert 'protected time' in recipient(options, colleague)['message']
+    assert recipient(options, colleague)['message'] == 'This colleague is not free at that time.'
+    assert_private_time_hidden(options)
     assert options['no_eligible_recipients_reason'] == 'Colleagues are not free at that time.'
