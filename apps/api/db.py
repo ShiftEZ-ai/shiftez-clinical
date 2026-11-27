@@ -328,8 +328,12 @@ def isolated_publication(session, workspace, checked):
         return False  # Fairness history and wish debt can read earlier publications.
     published_from = local_midnight(workspace.starts_on, organisation.timezone)
     published_until = local_midnight(workspace.ends_on, organisation.timezone)
-    if any(lo < published_until and hi > published_from
-           for lo, hi in (snapshot_window(reader, organisation.timezone) for reader in readers)):
+    try:
+        if any(lo < published_until and hi > published_from
+               for lo, hi in (snapshot_window(reader, organisation.timezone) for reader in readers)):
+            return False
+    except OverflowError:
+        # A legacy sibling outside the representable snapshot window cannot prove isolation.
         return False
     if not _unread_status_change(session, workspace, {'status'}, include_archived=True):
         return False
@@ -337,9 +341,10 @@ def isolated_publication(session, workspace, checked):
     # A fixed or rolling quota can extend the normal schedule window. An older
     # captured definition can still bind, or a saved proposal can be checked.
     # BlockQuota bounds any such extension to 366 days.
+    quota_reach = timedelta(days=366)
     may_reach = {reader.department_id for reader in readers
-                 if reader.starts_on - timedelta(days=366) < workspace.ends_on
-                 and reader.ends_on + timedelta(days=366) > workspace.starts_on}
+                 if reader.starts_on - workspace.ends_on < quota_reach
+                 and workspace.starts_on - reader.ends_on < quota_reach}
     if not may_reach:
         return True
     P, H, F = (model.__table__.c for model in (m.Policy, m.DefinitionHistory, m.SchedulingFact))
