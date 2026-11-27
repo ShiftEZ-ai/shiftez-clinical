@@ -3920,16 +3920,6 @@
     "blocker": false
   },
   {
-    "nodeid": "tests/test_source_parity_fairness.py::test_each_engine_avoids_repeated_named_supervision[case-fdoddeedjpapllakpnoaldffabhbccmgmkjemaefmdigdoeojkoiacckoihklmfc]",
-    "reason": "unstable: Different measured outcomes between replicas in run 44114266718, attempt 1.",
-    "owner": "maintainers",
-    "added": "2026-11-19",
-    "expires": "2026-12-14",
-    "issue": 11,
-    "milestone": "v0.1.0",
-    "blocker": false
-  },
-  {
     "nodeid": "tests/test_staff_overlap_consumers.py::test_staff_rotation_preview_conflicts_use_full_closure_inputs_then_hide_template_labels",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
