@@ -434,7 +434,8 @@ def pytest_runtest_makereport(item, call):
         self.assertEqual(guard["if"], "github.event_name == 'pull_request' || github.event_name == 'merge_group'")
         guard_env = {"POLICY_WORKFLOW_SHA": "${{ github.workflow_sha }}", "GITHUB_TOKEN": "${{ github.token }}"}
         self.assertEqual(guard["env"], guard_env)
-        self.assertEqual(jobs["checks"].get("permissions", workflow["permissions"]), {"contents": "read"})
+        self.assertEqual(jobs["checks"].get("permissions", workflow["permissions"]),
+                         {"contents": "read", "actions": "read"})
         for i, step in enumerate(steps):
             if step.get("id") == "plan" or step.get("uses", "").startswith("actions/upload-artifact@"):
                 self.assertLess(steps.index(guard), i)

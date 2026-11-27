@@ -12,13 +12,12 @@ from apps.api.serialization import record, job_record, job_progress_record, json
 from apps.api.serialization import job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (currency_hint, currency_match, domain_snapshot, fingerprint,
                                 preparation_stamp, prepared_event_currency_matches,
-                                publication_score_baseline, snapshot_hash, workspace_content,
-                                workspace_shifts)
+                                publication_score_baseline, snapshot_hash, workspace_content)
 from .common import scoped, expected
 from .planning import draft, changed, chunks, assignment_source
 from .generation_resume import (clear_generation_resume, generation_created_at, resume_current, resume_expired,
                                 RESUMABLE_GENERATION_RESULTS, has_generation_checkpoint, generation_resume_available,
-                                generation_resume_days)
+                                generation_resume_days, generation_admitted)
 from packages.domain.generation import assignment_fixed, keep_assignment
 from packages.domain.generation_scope import population_allows, selected_session_ids
 from apps.api.workspace_baselines import baseline_reference, generation_manifest
@@ -103,6 +102,17 @@ def baseline_generation_context(db, workspace):
     return defaults, row
 
 
+def generation_request_from_snapshot(workspace, snapshot):
+    """Keep an implicit group selection distinct from an explicit population."""
+    return snapshot.get('generation_request') or snapshot.get('_generation_request') or {
+        'workspace_id': workspace.id, 'kind': 'generation',
+        'session_ids': snapshot.get('generation_session_ids') or [],
+        'generation_scope': snapshot.get('generation_scope'),
+        'planning_group_version_id': snapshot.get('planning_group_version_id'),
+        'lookahead': snapshot.get('lookahead'),
+    }
+
+
 def queue_generation_request(db, actor, workspace, value, settings, defaults, options, baseline, identity,
                              group_metadata=None):
     """Persist a small generation request; the worker freezes the full graph after leasing it."""
@@ -134,17 +144,19 @@ def queue_generation_request(db, actor, workspace, value, settings, defaults, op
         'repair_conflicts': True,
         **(group_metadata or {}),
     }
-    score_baseline = publication_score_baseline(db, workspace, workspace_shifts(db, workspace.id))
+    score_baseline = publication_score_baseline(db, workspace)
     if score_baseline is not None:
         snapshot['score_baseline'] = score_baseline
     job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
                 kind='generation', input_fingerprint=request_token, input_snapshot=snapshot,
                 search_control={'minutes': options.search_minutes, 'stop': False, 'spent_seconds': 0},
                 created_at=generation_created_at(db, workspace.id), supersedes=[])
-    clear_generation_resume(db, workspace_id=workspace.id)
+    if not snapshot.get('_generation_authority_pending'):
+        clear_generation_resume(db, workspace_id=workspace.id)
     db.add(job)
     db.flush()
-    record_supersessions(db, job)
+    if not snapshot.get('_generation_authority_pending'):
+        record_supersessions(db, job)
     job.input_snapshot = {**job.input_snapshot,
                           'generation_manifest': generation_manifest(
                               baseline, job.input_snapshot, job=job, requester_id=actor.identity_id)}
@@ -214,7 +226,7 @@ def create_job(db, actor, command, settings):
         require_generation_sessions_in_scope(value.session_ids, db=db, workspace=workspace)
         from .planning_groups import guard_generation
         group_metadata = guard_generation(db, actor, workspace, None, value)
-        if group_metadata:
+        if 'planning_group_version_id' in group_metadata:
             identity = identity or catalogue_proof_identity()
             require(identity is not None, 'BUILD_IDENTITY_REQUIRED',
                     'Restart on a stable build before scheduling a selected population', 409)
@@ -222,6 +234,8 @@ def create_job(db, actor, command, settings):
         if value.lookahead == 'coupled':
             require(settings.generation_engine == 'cp_sat', 'LOOKAHEAD_ENGINE_REQUIRED',
                     'Joint lookahead requires the CP-SAT scheduler', 422)
+        if '_generation_admission_capture' in db.info:
+            return {}
         return queue_generation_request(db, actor, workspace, value, settings, defaults, options, baseline, identity,
                                         group_metadata)
     # Validation is a durable request for the worker to read the current rota.
@@ -548,7 +562,7 @@ def continue_generation(db, actor, command, settings):
     value = s.GenerationContinue.model_validate(command.payload)
     previous = scoped(db, m.Job, command.target_id, actor)
     require_latest_run(db, previous)
-    from .planning_groups import guard_frozen_generation, guard_job_control
+    from .planning_groups import guard_generation, guard_job_control
     guard_job_control(db, actor, previous)
     checkpoint_candidate = has_generation_checkpoint(previous)
     resumable_result = (previous.result or {}).get('status') in RESUMABLE_GENERATION_RESULTS
@@ -602,7 +616,16 @@ def continue_generation(db, actor, command, settings):
                                 'previous_search_seconds': previous_spent,
                                 'search_seconds': 0,
                                 'total_search_seconds': previous_spent}
-    guard_frozen_generation(db, actor, workspace, snapshot)
+    request = generation_request_from_snapshot(workspace, snapshot)
+    scope = guard_generation(db, actor, workspace, None, s.JobInput.model_validate(request),
+                             retained_population=snapshot.get('planning_population'))
+    require(scope.get('generation_role_bindings') == snapshot.get('generation_role_bindings'),
+            'STALE_INPUTS', 'Scheduling population roles changed; start a fresh run', 409)
+    if '_generation_admission_capture' in db.info:
+        return {}
+    snapshot['_generation_request'] = request
+    if scope.get('_generation_authority_pending'):
+        snapshot['_generation_authority_pending'] = True
     expired = resume_expired(previous, settings.generation_resume_days)
     job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
         kind='generation', input_fingerprint=previous.input_fingerprint, input_snapshot=snapshot,
@@ -610,10 +633,12 @@ def continue_generation(db, actor, command, settings):
         resume_checkpoint=None if expired else previous.resume_checkpoint,
         search_control={'minutes': minutes, 'stop': False, 'spent_seconds': 0},
         created_at=generation_created_at(db, workspace.id), supersedes=[])
-    clear_generation_resume(db, workspace_id=workspace.id)
+    if not snapshot.get('_generation_authority_pending'):
+        clear_generation_resume(db, workspace_id=workspace.id)
     db.add(job)
     db.flush()
-    record_supersessions(db, job)
+    if not snapshot.get('_generation_authority_pending'):
+        record_supersessions(db, job)
     return {'job': job_record(job), 'preparation_expired': expired}
 
 
@@ -663,6 +688,10 @@ def apply_generation(db, actor, command):
     require(plan is not None, 'RECONCILIATION_REQUIRED', 'Prepare this proposal before entering the writer transaction', 409)
     workspace = scoped(db, m.Workspace, value.workspace_id, actor)
     workspace = draft(db, actor, value.workspace_id, workspace.revision)
+    db.refresh(workspace, with_for_update={'key_share': True, 'of': m.Workspace})
+    workspace = draft(db, actor, value.workspace_id, workspace.revision)
+    db.execute(select(m.Job.id).where(m.Job.id == value.job_id, m.Job.department_id == actor.department_id)
+               .with_for_update())
     job, version = load_apply_job(db, actor, value.job_id)
     require(job.workspace_id == workspace.id and job.kind == "generation" and job.status == "succeeded",
             "JOB_STATE", "Select a completed generation job for this workspace", 409)
@@ -860,7 +889,8 @@ def run_facts(db, *where, statuses=LIVE_RUN_STATUSES):
     J, snapshot = m.Job, m.Job.input_snapshot
     rows = db.execute(select(J.id, J.workspace_id, J.created_at, snapshot['generation_session_ids'],
                              snapshot['focus_ids'], snapshot['generation_scope'], snapshot['_deferred_generation']).where(
-        J.kind == 'generation', *([J.status.in_(statuses)] if statuses else []), *where)).all()
+        J.kind == 'generation', generation_admitted(J),
+        *([J.status.in_(statuses)] if statuses else []), *where)).all()
     full_rota_ids = {row[1] for row in rows if row[6] and not (row[3] or row[4])}
     full_rota = {}
     if full_rota_ids:

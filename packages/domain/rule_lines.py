@@ -21,7 +21,7 @@ from pydantic_core import to_jsonable_python
 
 from packages.contracts.rule_catalogue import _MODELS, CATALOGUE_BY_ID, NUMBER_ORDER, catalogue_entry, slot_for_number as _slot
 from packages.contracts.schemas import NEVER_OVERRIDDEN, SAFETY_STRICTNESS, PolicyDefinition, RuleLine, _canonical_tree, safety_rule
-from .conditions import INHERITED_LEVEL, OUTRANKED, absolute_values
+from .conditions import INHERITED_LEVEL, OUTRANKED, absolute_values, active_rules
 
 LEVELS = ('off', 'low', 'medium', 'high', 'critical', 'mandatory')
 # These values change how a line is applied, not the quantity it counts.  Keeping them
@@ -451,6 +451,47 @@ def safety_display_key(policy):
     return (not bool(limits), rule['kind'] if limits else '', tuple(
         (rule.get(field) is None, -(rule.get(field) or 0) if direction == 'max' else rule.get(field) or 0)
         for field, direction in limits.items()))
+
+
+def weakens_safety_rules(before, after):
+    """Every effective safety obligation must still hold at least as strictly after an own decision."""
+    from .rule_groups import _canonical_scope
+    from .supervision_levelling import spread_gap
+
+    def obligations(policies):
+        for copy in active_rules(policies):
+            definition = copy['definition']
+            rule = definition['rule']
+            kind = rule['kind']
+            if not safety_rule(definition) or definition.get('severity', 'mandatory') != 'mandatory' or copy.get('_advisory_catalogue_slot'):
+                continue
+            directions = SAFETY_STRICTNESS.get(kind, {})
+            if kind == 'spread_evenly':
+                # Both spread modes enforce the same gap bound.
+                rule = {key: value for key, value in rule.items() if key != 'mode'}
+                rule['maximum_gap'] = spread_gap(copy)
+                directions = {'maximum_gap': 'min'}
+            shape = json.dumps([copy.get('department_id'), definition.get('workspace_id'),
+                                _canonical_scope(definition['scope']),
+                                {key: value for key, value in rule.items() if key not in directions}], sort_keys=True)
+            first = str(copy.get('starts_on') or '')
+            last = str(copy.get('ends_on') or '\uffff')
+            yield shape, first, last, rule, directions
+
+    replacements = {}
+    for shape, first, last, rule, _ in obligations(after):
+        replacements.setdefault(shape, []).append((first, last, rule))
+    for shape, first, last, rule, directions in obligations(before):
+        def preserves(bounds):
+            start, end, replacement = bounds
+            return start <= first and end >= last and all(
+                rule.get(field) is None or replacement.get(field) is not None and (
+                    replacement[field] >= rule[field] if direction == 'max' else replacement[field] <= rule[field])
+                for field, direction in directions.items())
+
+        if not any(map(preserves, replacements.get(shape, ()))):
+            return True
+    return False
 
 
 def catalogue_display_policies(policies, context):
@@ -976,18 +1017,50 @@ def has_value(line, key):
     return number is not None and (key == 'apply' or number.get('value') is not None)
 
 
+def _weekly_workload(kind, settings):
+    """Match the basic calendar-week workload measures across limit and quota slots."""
+    if kind in ('max_duties', 'max_hours'):
+        if settings['window'] == 'week' and settings.get('group_by', 'all') == 'all':
+            metric = 'duties' if kind == 'max_duties' else 'scheduled_hours'
+            return metric, 'include' if settings['include_overtime'] else 'exclude'
+    elif kind == 'block_quota' and settings['window_alignment'] == 'calendar_week':
+        metric = settings.get('metric')
+        if (metric in ('duties', 'scheduled_hours') and not settings['assignment_type_ids']
+                and not settings['participation'] and not settings['prorate_partial_windows']
+                and not settings['prorate_department_days']):
+            return metric, settings['overtime']
+    return None
+
+
 def _group(rule, line, k, keys, *, default_partition=None):
     """A number's group key: the line's where, days, hours and what number `k` counts there (the old kind it writes
     beside `keys` and that kind's settings, a quota's block aside). Lines share a number only within one group."""
     entry = _entry(rule)
-    kind = _slot(entry, k, rule, line, keys)['kind']
-    given = resolved_settings(kind, _settings(rule, line).get(kind, {}))
+    slot = _slot(entry, k, rule, line, keys)
+    kind = slot['kind']
+    settings = _settings(rule, line)
+    given = resolved_settings(kind, settings.get(kind, {}))
     counts = {f: given.get(f) for f in entry['line_settings'][kind]
               if not (kind == 'balance_goal' and f in FAIR_SHARE_DIALS)
               and (kind != 'block_quota' or f not in ('starts_on', 'ends_on'))}
     if kind == 'allocation_overtime':
         counts.pop('volunteer_required', None)  # Volunteering changes permission, not the duty a line applies to.
-    partition = ((line.get('source_bindings') or {}).get(k) or {}).get('precedence_partition')
+    bindings = line.get('source_bindings') or {}
+    partition = (bindings.get(k) or {}).get('precedence_partition')
+    weekly = _weekly_workload(kind, {**given, **slot['fixed']})
+    numbers = line.get('numbers') or {}
+    if (weekly is None and kind == 'block_quota' and k not in numbers
+            and 'max' in numbers and not settings.get('block_quota')):
+        limit = _slot(entry, 'max', rule, line, list(numbers))
+        limit_kind = limit['kind']
+        weekly = _weekly_workload(limit_kind, resolved_settings(
+            limit_kind, {**settings.get(limit_kind, {}), **limit['fixed']}))
+    if weekly is not None:
+        kind, counts = 'weekly_workload', weekly
+        if k not in numbers:
+            partitions = {pin['precedence_partition'] for key, pin in bindings.items() if key in numbers}
+            if len(partitions) == 1:
+                partition = next(iter(partitions))
     if partition is None:
         partition = default_partition
     return json.dumps([partition, _canonical_tree(line.get('where')), sorted(line.get('weekdays') or range(7)), line.get('start_time') or '00:00',
@@ -1439,7 +1512,8 @@ def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sourc
         return None
     scope = valid['scope']
     if winners:
-        direct = {w for w, guard in winners if kind == 'block_quota' and guard is None and unconditional_people(lines[w])}
+        direct = {w for w, guard in winners if kind == 'block_quota' and guard is None and unconditional_people(lines[w])
+                  and _slot(_entry(d['rule']), numbers[0][2], d['rule'], lines[w], list(lines[w]['numbers']))['kind'] == kind}
         people = sorted({p for w in direct for p in named_people(lines[w])})
         dynamic = [guard or source_key(policy, lines[w]) for w, guard in winners if w not in direct]
         extra = ([{'field': 'person_ids', 'op': 'none', 'values': people}] if people else []) + (

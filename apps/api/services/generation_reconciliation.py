@@ -2,6 +2,8 @@
 from copy import deepcopy
 from uuid import uuid5, NAMESPACE_URL
 from sqlalchemy import literal_column, select
+from sqlalchemy.orm import defer
+from sqlalchemy.orm.attributes import set_committed_value
 from packages.contracts import schemas as s
 from packages.domain.proposal_reconciliation import reconcile
 from packages.domain.generation_scope import selected_session_ids
@@ -27,9 +29,20 @@ def refresh_inputs(db, actor, command, plan):
 def load_apply_job(db, actor, job_id):
     if db.get_bind().dialect.name != 'postgresql':
         return scoped(db, m.Job, job_id, actor), None
-    # Read the version and its payload in the same statement. Scoped reuses the row and checks visibility.
-    row = db.execute(select(m.Job, literal_column('jobs.xmin::text'), literal_column('jobs.ctid::text'))
-                     .where(m.Job.id == job_id).execution_options(populate_existing=True)).one_or_none()
+    xmin, ctid = literal_column('jobs.xmin::text'), literal_column('jobs.ctid::text')
+    query = select(m.Job, xmin, ctid).where(m.Job.id == job_id).execution_options(populate_existing=True)
+    prepared = (db.info.get('_generation_plan') or {}).get('job_payload')
+    if prepared is not None and prepared[0] == job_id:
+        _, (prepared_xmin, prepared_ctid), frozen, result = prepared
+        row = db.execute(query.options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+            xmin == prepared_xmin, ctid == prepared_ctid)).one_or_none()
+        if row is not None:
+            job = scoped(db, m.Job, job_id, actor)
+            set_committed_value(job, 'input_snapshot', frozen)
+            set_committed_value(job, 'result', result)
+            return job, (row[1], row[2])
+    # A changed version must be read with its current payloads in the same statement.
+    row = db.execute(query).one_or_none()
     job = scoped(db, m.Job, job_id, actor)
     return job, (row[1], row[2]) if row is not None else None
 
@@ -148,6 +161,7 @@ def prepare(db, actor, command):
         remember_fix_list(workspace.validation, plan['validation'], accepted_issues=workspace.accepted_issues or [],
                           summary_cache=summary_cache)
     return {'receipt': receipt, 'assignment_ids': assignment_ids, 'result_guard': proposal_guard(result, version),
+            'job_payload': (job.id, version, frozen, result) if version is not None else None,
             'actor_id': actor.identity_id, 'department_id': actor.department_id, 'workspace_id': workspace.id,
             'validation': plan['validation'], 'data': plan['data'], 'population_contribution': contribution,
             'currency_hint': currency_hint(db, workspace), 'current_data': captured,

@@ -205,7 +205,14 @@ def test_a_reply_the_page_cannot_patch_claims_no_result_and_a_cancelled_check_ke
         # latest revision is unchecked, so Submit stays held, saying the same.
         cancel = page.locator('.app-footer').get_by_role('button', name=re.compile(r'^Cancel: '))
         expect(cancel).to_be_visible(timeout=20000)
-        cancel.click()
+        queued = [job['id'] for job in checks_open(h, w)]
+        # The page draws "Not checked" before its job.cancel answers: the job list is read after that reply, not before.
+        with page.expect_response(lambda r: r.url.endswith('/api/commands') and r.request.method == 'POST'
+                                  and (r.request.post_data_json or {}).get('kind') == 'job.cancel',
+                                  timeout=20000) as stopped:
+            cancel.click()
+        assert stopped.value.ok, stopped.value.status
+        assert stopped.value.request.post_data_json['target_id'] in queued, (stopped.value.request.post_data_json, queued)
         expect(cancel).to_have_count(0, timeout=20000)
         held_as_footer_says(page, 'Not checked', press=True)
         expect(page.locator('.app-footer')).not_to_contain_text(QUEUED)
@@ -218,6 +225,8 @@ def test_a_check_that_has_not_started_keeps_submit_held_and_the_panel_stops_sayi
     w, context, page = start(browser, live_server, h)
     try:
         # Nobody runs the queued check (no live worker in the rota's summary) and the page's take-over is refused.
+        takeovers = []
+
         def no_worker(route):
             response = route.fetch()
             route.fulfill(response=response, json={**response.json(), 'worker_liveness': 'stopped'})
@@ -225,6 +234,7 @@ def test_a_check_that_has_not_started_keeps_submit_held_and_the_panel_stops_sayi
         def refused_takeover(route):
             sent = route.request.post_data_json or {}
             if sent.get('kind') == 'job.cancel' and (sent.get('payload') or {}).get('only_if_queued'):
+                takeovers.append(sent['target_id'])
                 return route.fulfill(status=409, json={'error': {'code': 'WORKFLOW_STATE', 'message': 'The check could not be taken over.'}})
             route.continue_()
         page.route(re.compile(r'.*/api/workspaces/[^/?]+/summary$'), no_worker)
@@ -237,7 +247,10 @@ def test_a_check_that_has_not_started_keeps_submit_held_and_the_panel_stops_sayi
         # The panel's slot no longer says the check is running, and keeps its place.
         expect(panel.locator('.wk-save-slot')).to_have_count(1)
         expect(panel.locator('.wk-save-slot')).to_have_text('')
-        assert checks_open(h, w), 'the check is still queued: nobody ran it'
+        queued = checks_open(h, w)
+        assert queued, 'the check is still queued: nobody ran it'
+        assert takeovers == [job['id'] for job in queued]
+        expect(page.locator('.check-stopped')).to_have_count(0)
     finally:
         context.close()
 

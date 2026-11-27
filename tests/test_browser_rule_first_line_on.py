@@ -101,3 +101,24 @@ def test_a_line_added_to_a_rule_switched_off_keeps_it_off(browser, live_server, 
     proposed = entry(h, 'duties_per_week')['proposed']
     assert proposed['definition']['rule'].get('on', True) is False
     assert approve(h, proposed)['definition']['rule'].get('on', True) is False
+
+
+def test_approval_of_a_new_rule_proposed_off_says_it_stays_off(browser, live_server, h):
+    flag(h)
+    assert entry(h, 'duties_per_week')['rule'] is None
+    proposal = propose_rule(h, 'duties_per_week', [{'id': str(uuid.uuid4()), 'numbers': {'max': {'value': 5}}}],
+                            on=False, reason='Keep this rule off')['record']
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, 'rules/duties_per_week')
+        waiting = page.locator('#main .rc-waiting')
+        expect(waiting.locator('.rc-prop-summary')).to_contain_text('Rule stays off')
+        waiting.get_by_role('button', name='Review and approve').click()
+        panel = page.locator('.rc-line-panel')
+        expect(panel.get_by_role('heading', name=re.compile('rule stays off'))).to_be_visible()
+        panel.get_by_role('button', name='Approve and activate', exact=True).click()
+        expect(page.locator('#toast-tray .toast', has_text='Duties per week: the rule is off.')).to_be_visible()
+    finally:
+        context.close()
+    active = entry(h, 'duties_per_week')['rule']
+    assert active['id'] == proposal['id'] and active['definition']['rule']['on'] is False

@@ -143,6 +143,13 @@ def test_the_tags_picker_says_the_servers_limits_under_the_field(browser, live_s
 def test_person_edit_is_live_after_reload_and_offers_undo(browser, live_server, h):
     """Ordinary person facts apply immediately, survive reload and offer Undo."""
     p = person(h)
+
+    def directory_extension():
+        rows = h.get("coordinator", "/api/directory")["people"]
+        entry = next(row for row in rows if row["id"] == p["id"])
+        return next((contact["value"] for contact in entry.get("contacts", ())
+                     if contact["legacy_field"] == "work_extension"), None)
+
     context, page = sign_in(browser, live_server, "coordinator")
     try:
         panel = open_person(page, p)
@@ -160,6 +167,7 @@ def test_person_edit_is_live_after_reload_and_offers_undo(browser, live_server, 
         expect_loaded(page, "people")
         panel = open_person(page, p)
         expect(panel).to_contain_text("4321")
+        assert directory_extension() == "4321"
         panel.get_by_role("button", name=f"Edit {p['display_name']}", exact=True).click()
         extension = form.get_by_label("Office extension", exact=True)
         expect(extension).to_have_value("4321")
@@ -167,6 +175,14 @@ def test_person_edit_is_live_after_reload_and_offers_undo(browser, live_server, 
         form.get_by_role("button", name="Save version", exact=True).click()
         expect(form).to_have_count(0)
         assert not person(h).get("work_extension")
+        assert not directory_extension()
+
+        toast.get_by_role("button", name="Undo", exact=True).click()
+        expect(page.locator("#toast-tray")).to_contain_text("Undone")
+        assert directory_extension() == "4321"
+        page.reload()
+        expect_loaded(page, "people")
+        expect(open_person(page, p)).to_contain_text("4321")
     finally:
         context.close()
 

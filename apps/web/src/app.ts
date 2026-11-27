@@ -104,7 +104,7 @@ import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
+import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
@@ -132,6 +132,7 @@ import {rotationBoard} from './rotation_board.js';
 import {peopleTimeline,timelineAvailable} from './person_timeline.js';
 import {menu,menuSource,opens} from './dom.js';  // the shared menu (UX › controls S2b)
 import {popup} from './dom.js';  // what a button opens (UX › controls S4)
+import {byLabel} from './dom.js';  // the one name order of every list of people
 import {overflowMore,type MoreNoun} from './dom.js';  // the one "+N" (DESIGN D8)
 import {SAFETY_DECIDED,UNDECIDED,baselineSourceLabel,changeLabel,refreshPlan} from './draft_baseline.js';
 import {groupToggle} from './dom.js';  // a group's header is its toggle (UX › controls S5)
@@ -436,7 +437,7 @@ let selected:Set<string>=new TickedSet(()=>selectTicked([...selected])),renderSe
 // Inbox and approvals open for every account that may open them; `phone` below is the one place that decides. Every
 // other page (planning, Configuration, Rules…) is for a desktop.
 /** Sections that need a permission beyond Configuration itself (the server refuses the rest): GitHub is the Developer's. */
-const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.github',ai_provider:'ai.providers',notifications:'notification.policy.update'};
+const SECTION_PERMISSION:Record<string,Permission>={integrations:'integrations.github',ai_provider:'ai.providers',notifications:'notification.policy.update',branding:'branding.configure'};
 // `live`: what a page shows, by live-change scope (the pulse's `changes`): a change in any other scope reads nothing here.
 // `liveIds`: the records of a scope the page follows (none named: every record of it).
 const paths:Record<string,{title:string;/** Help that changes what someone does here (N-15: no taglines). */help?:string;roles:string[];phone?:(parts:string[],query:URLSearchParams)=>boolean;
@@ -467,7 +468,7 @@ const paths:Record<string,{title:string;/** Help that changes what someone does 
   // Admins and coordinators, plus whoever holds a section's own permission (an operator's GitHub/AI provider): AO-001.
   configuration:{title:'Configuration',roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,...Object.values(SECTION_PERMISSION)],live:['catalogue','settings','people','rules','access']},
   // Review routes (deciding proposals) on a phone; People & roles and Role history stay on the desktop (PAGE_TABS `phone`).
-  access:{title:'Access & approvals',phone:parts=>tabsFor('access').some(t=>t.phone&&(!parts[0]||t.key===parts[0])),roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ACCESS_SYSTEM_ROLES],live:['access','people','rules','requests']},
+  access:{title:'Access & approvals',phone:parts=>tabsFor('access').some(t=>t.phone&&(!parts[0]||t.key===parts[0])),roles:[CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN],live:['access','people','rules','requests']},
   system:{title:'System',roles:[CAPABILITY.CATALOGUE_READ,CAPABILITY.SYSTEM_OPERATIONS,CAPABILITY.AUDIT_READ,CAPABILITY.FEEDBACK_READ_ALL],
     live:['jobs','settings','access','people','catalogue','feedback']},
   // The Inbox follows the unread count the pulse carries (onPulse) and changes named for it.
@@ -521,14 +522,15 @@ const ctx=():Context=>({get me(){return me!;},get catalogues(){return catalogues
   fill:(id,s,person)=>openFill(id,s,undefined,person)});
 /** A draft session's fill panel on the Schedule (for an issue, or with its search set to one person's name). */
 function openFill(id:string,s:Row,issue?:FillIssue,q?:string){workspaceId=id;draftNone=false;queueFill(id,String(s.id),undefined,issue,q);toCalendar(s);navigate(routeHash('schedule',[schedView,planDay],{edit:id}).slice(1));}
-const choices=(items:Row[])=>items.map(r=>({value:r.id,label:labelOf(r)}));
+// People are listed by name; other records keep the order the server gives them (ranks and leave types have their own).
+const choices=(items:Row[],people=false)=>{const list=items.map(r=>({value:r.id,label:labelOf(r)}));return people?list.sort(byLabel):list;};
 // What the bulk screens read from the app (bulk.ts): condition fields, a field's choices, record names, roles.
 // The catalogue a field picks from is its contract `ref`; a field named <thing>_id picks from <things> when it has none.
 const refOf=(key:string,ref?:string)=>ref||[key.replace(/_ids?$/,'s'),key.replace(/y_ids?$/,'ies'),key.replace(/_ids?$/,'')].find(k=>catalogues[k]);
 setBulkContext({
   conditionFields:keys=>[...ruleConditionFields(ctx()).filter(f=>keys.includes(f.key)&&!isTyped(f.key)),...typedFields(keys)],
   choices:(f,key,collection)=>{if(key==='weekdays')return weekdayOptions();if(key==='tags')return [...new Set(rows(collection).flatMap(r=>(r.tags||[]) as string[]))].sort().map(t=>({value:t,label:t}));
-    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false)):undefined;},
+    const kind=refOf(key,f.ref);return kind?choices(rows(kind).filter(r=>r.active!==false),kind==='people'):undefined;},
   permits:(...roles)=>permits(...roles),
   stagedCount:()=>Number((me as Row|null)?.bulk_staged_count||0),
   reviewCount:()=>Number((me as Row|null)?.bulk_review_count||0),identity:()=>me?.identity_id||'',
@@ -1463,6 +1465,7 @@ let refreshForeground:string|null=null,refreshSkipped=false,redrawOwed=false;
 /** The next render is a wait the person started (an explicit Refresh or Retry, a save's follow-up): it may show the top
  *  bar. A navigation (a new page or address) always may; a background redraw (a live update, polling) never does. */
 let foregroundRender=false,renderedHash='';
+const rulesSource={workspace:''};
 // A live change names its scopes: the next refresh reads only what they can change. undefined: none owed; null: everything.
 let refreshScopes:Set<LiveScope>|null|undefined;
 // The changes behind refreshScopes (their ids, e.g. which rota), for kept answers per record (api.ts forgetReads).
@@ -1686,6 +1689,7 @@ async function renderPage(live=false){
   const leaving=leaveCheck;
   if(!me||booting)return;const renderStarted=performance.now();if(view!=='schedule')watchPanelJob('');windowOnScreen=false;if(view!=='access')accessRead=null;redrawOwed=false;const readsAtStart=readsDone();captureTableScroll(document.querySelector<HTMLElement>('#main'));const serial=++renderSerial;reuseFor=reusePlanner?serial:0;reusePlanner=false;const route=paths[view]||paths.home;leaveCheck=null;if(view!=='rules')revealRules=[];
   const changedPage=view!==renderedView,active=document.activeElement as HTMLElement|null,rulesRead=rulesAhead;rulesAhead=null;
+  if(changedPage||view!=='rules'||routeParts.length)rulesSource.workspace='';
   // Owner, 6 Nov 2026: the top bar only for what the person is waiting for (a page or address being opened, their own
   // Refresh); a background redraw keeps the page on screen and usable and swaps it quietly.
   const waited=changedPage||location.hash!==renderedHash||foregroundRender;foregroundRender=false;openingPage(waited);
@@ -1732,7 +1736,6 @@ async function renderPage(live=false){
   // A planner redraw (view, filter, live update, save) keeps the shell and the current grid on screen until the new
   // one is ready: no "Loading…" flash, and the grid keeps its scroll position. Other pages rebuild the shell.
   const keep=view==='schedule'&&!schedSubPage()&&!changedPage&&!!document.querySelector('.topbar .planner-bar')&&!!document.querySelector('#main .planner-main');
-  const scroll=keep?plannerScroll():null;
   // Configuration: switching sections keeps the old section on screen (inert) until the new one is ready, instead of a
   // blank "Loading…". shortcut: Configuration only; pages that query their own DOM while loading would see the stale copy.
   // SW3-A-23: the Fix list too: a background refresh keeps the list on screen (inert) instead of the page skeleton.
@@ -1782,7 +1785,8 @@ async function renderPage(live=false){
       const source=!routeParts.length&&!routeQuery.has('exception')&&ruleCatalogueOn()?find('policies',routeQuery.get('source')||''):undefined;
       const entry=source&&source.status!=='retired'?catalogueEntryOf(source.definition?.rule):undefined;
       if(entry){routeQuery.delete('source');return navigate(`rules/${encodeURIComponent(entry.id)}`);}
-      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead});else await rulesPage(t);
+      if(ruleCatalogueOn())await ruleCataloguePage(ctx(),t,{parts:routeParts,openTag,navigate,setLeave:dirty=>{leaveCheck=dirty;},whichRule:canLookupRules()?id=>whichRuleDialog(id||''):undefined,exceptions:exceptionsPanel,openRule:p=>{void openRuleSource(p.id);},openLine:openRuleRow,inDraft:draftHealth,ahead:rulesRead,
+        source:rulesSource,frame:()=>{if(t.isConnected){liftHeader(t);liftFooterStatus(t);closeOrphanPopover();}}});else await rulesPage(t);
       // Needs you › Rule exception links the record itself (home.py: ?source=<rule>&exception=<id>).
       if(routeQuery.has('exception'))exceptionsPanel(routeQuery.get('exception')!);
       else if(routeQuery.has('source'))await openRuleSource(routeQuery.get('source')!);
@@ -1790,9 +1794,9 @@ async function renderPage(live=false){
       // Needs you › Rule exceptions (the server's link_target "#rules?exceptions=1") opens what waits.
       else if(routeQuery.has('exceptions'))exceptionsPanel();},
     configuration:configurationPage,
-    // Admins and Developers: one /api/access read serves People & roles, Role history and both tab counts, for the visit
+    // One /api/access read serves People & roles, Role history and both tab counts for the visit
     // (a save, the pulse or leaving the page reads it again).
-    access:t=>{const data=permits(CAPABILITY.ADMIN)||may('access.system_roles')?accessRead||=get<Row>('/api/access').catch(e=>{accessRead=null;throw e;}):null;
+    access:t=>{const data=permits(CAPABILITY.ADMIN,CAPABILITY.ACCESS_SYSTEM_ROLES,CAPABILITY.ACCESS_INSTALLATION_ADMIN)?accessRead||=get<Row>('/api/access').catch(e=>{accessRead=null;throw e;}):null;
       return pageTabs(t,{people:t=>accessPage(t,data!,'people'),routes:t=>routingPage(ctx(),t,{phone:phoneLite()}),history:t=>accessPage(t,data!,'history')},
         data?()=>data.then(a=>({people:a.identities.length,history:a.bindings.length})).catch(()=>({})):undefined);},
     system:t=>pageTabs(t,{imports:dataPage,bulk:async t=>bulkEditorPage(t,ctx()),operations:operationsPage,audit:auditPage,feedback:t=>feedbackPage(t,{mine:false,query:routeQuery,triage:may('feedback.triage'),github:may('feedback.export_github')})}),
@@ -1813,7 +1817,7 @@ async function renderPage(live=false){
   if(serial===renderSerial){pageFailed=false;renderedHash=location.hash;liftHeader(content);liftFooterStatus(content);
       // The jobs may have been read while this page was still being built (markProposal then saw the previous footer).
       const shownDraft=view==='schedule'&&!schedSubPage()?scheduleCache.drafts.get(workspaceId):undefined;if(shownDraft)markProposal(shownDraft);
-      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){keepFocus(main,()=>main.replaceChildren(body));scroll?.();}
+      body.inert=false;body.replaceChildren(content);if(shown)reveal(content);if(keep){const scroll=plannerScroll();keepFocus(main,()=>main.replaceChildren(body));scroll();}
       buildingPage(null);sayCheck();sayCancel();  // likewise the check's job: answered while this footer was detached, its words and Cancel were missed
       void liveModule?.then(m=>m.pageShown());  // the new footer replaced the run's strip: back in now, not at its next tick
       closeOrphanPopover();trackStatusFooter(document.querySelector<HTMLElement>('.app-footer')!);phoneBanner(main);if(!windowOnScreen)main.setAttribute('data-loaded-view',view);if(readsDone()>readsAtStart)refreshFailed=false;
@@ -2099,15 +2103,19 @@ function takeOver(job:NonNullable<typeof checkJob>){checkTaken.add(job.id);check
     if(checkJob?.id===job.id)checkJob=null;checkSync=true;sayCheck();checkWake(job.id);
     sayCancel();  // the server cannot stop this one
     await command('workspace.validate',{reason:'Automatic rota check',automatic:true},job.w.id,job.w.revision);
-  })().catch(e=>{checkGone=job.id;checkUnstarted=job.key;checkWake(job.id);throw e;});
+  })().catch(e=>{checkGone=job.id;checkWake(job.id);throw e;});
   done.catch(()=>{});  // read by the job's wait (waitCheck)
   checkOwn={id:job.id,done};}
 /** The joined job's wait. Null: Cancel set it aside, or this page took it over and checked the rota itself. */
-const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
+const waitCheck=async(job:Row,key:string)=>{const id=String(job.id),last=checkGone===id?null:
+    await awaitJob(job,{seen:checkSeen,stop:()=>checkCancelled===key||checkGone===id});
   if(last&&DONE_JOB.includes(last.status))checkEndedSeen(last);
   // A status read can see this page's own take-over cancel before the cancel's reply: the take-over says what happened.
   if(checkGone!==id&&checkOwn?.id===id&&last?.status==='cancelled')await checkOwn.done.catch(()=>{});
-  if(checkGone!==id)return last;if(checkOwn?.id===id)await checkOwn.done;return null;};
+  if(checkGone!==id)return last;
+  // A whole-rota read can change the key while the same queued job still owns the failed take-over.
+  if(checkOwn?.id===id)await checkOwn.done.catch(e=>{if(autoCheckKey===key)checkUnstarted=key;throw e;});
+  return null;};
 const stopJob=(id:string)=>command('job.cancel',{reason:'Cancelled the rota check'},id).catch(e=>{if(!sessionChanged(e))reportError(e);});
 const cancelCheck=()=>{checkCancelled=autoCheckKey;autoChecking=false;if(checkJob?.key===autoCheckKey)void stopJob(checkJob.id);void redraw();};
 const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
@@ -2183,22 +2191,29 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   autoCheckKey=key;autoChecking=true;checkStarted=existing?Date.parse(existing.started_at||existing.created_at)||Date.now():Date.now();checkStop=null;checkCancelled='';checkUnstarted='';
   checkSync=!existing&&!workersKnown()&&!serverChecking(w.validation);  // runCheck's own choice, known before the footer draws
   // Show the result without disturbing someone mid-task: wait while a dialog is open or a field has focus.
-  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;// Working in a session panel counts too: a redraw would rebuild it under the person.
-    // The rota's Workload targets dock is not busy: its refresh redraws only the targets. Nor is the Fix list panel: it is
-    // drawn again in place with the checked counts, keeping the focus where it was (drawFixPanel), so the footer, the
-    // grid and the panel never wait on it (QA cycle 3 maintenance).
-    // ME-21: focus left on the Auto-schedule panel (its Apply) is not work in progress: the panel survives a redraw (its
-    // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
-    if(checkBusy()){setTimeout(()=>settle(job),1500);return;}
+  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;
+    // The result is taken in as it lands (its job is this page's own from now: onPulse skips its pulse); only the redraw
+    // waits for someone mid-task.
     // A complete-check delta replaces the held validation in place. This is the
     // same authority boundary as an edit delta; missing/stale/partial deltas
     // fall back to the authoritative workspace read.
     const patched=job&&applyCheckDelta(scheduleCache.drafts.get(w.id),job);
-    if(patched){scheduleCache.drafts.set(w.id,patched);if(job?.id)checkSettled.set(String(job.id),Date.now());void redraw();void loadNavBadges(true,['workspace.validate']);return;}
+    if(job?.id)checkSettled.set(String(job.id),Date.now());
     // The check changed only this rota's results: read the rota and its row again (a refresh after a job command would
     // redraw them from memory, leaving "Needs a check" up), never the account and lists.
-    if(job?.id)checkSettled.set(String(job.id),Date.now());
-    readAfresh();forgetSchedule();void redraw();void loadNavBadges(true,['workspace.validate']);};  // never join a read begun before the check landed
+    if(patched)scheduleCache.drafts.set(w.id,patched);else{readAfresh();forgetSchedule();}  // never join a read begun before the check landed
+    // A draw begun since it landed (the person's own view change) read the checked rota and shows it: no second one.
+    const landed=renderSerial;
+    const show=()=>{if(view!=='schedule'||workspaceId!==w.id||renderSerial!==landed&&!redrawOwed)return;
+      // Working in a session panel counts too: a redraw would rebuild it under the person.
+      // The rota's Workload targets dock is not busy: its refresh redraws only the targets. Nor is the Fix list panel: it is
+      // drawn again in place with the checked counts, keeping the focus where it was (drawFixPanel), so the footer, the
+      // grid and the panel never wait on it (QA cycle 3 maintenance).
+      // ME-21: focus left on the Auto-schedule panel (its Apply) is not work in progress: the panel survives a redraw (its
+      // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
+      if(checkBusy()){setTimeout(show,1500);return;}
+      void redraw();};
+    show();void loadNavBadges(true,['workspace.validate']);};
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
@@ -3369,8 +3384,8 @@ function printSheet(){
       try{
         const data=await read(selected.id,selected.current);if(!data||!body.isConnected||pub.input.value!==selected.id)return;
         // Names and allowed filters belong to this published version, including people and clinics since renamed or retired.
-        const people=choices(Object.values(data.snapshot.people)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
-        const clinics=choices(Object.values(data.snapshot.services)).sort((a,b)=>a.label.localeCompare(b.label,undefined,{numeric:true}));
+        const people=choices(Object.values(data.snapshot.people),true);
+        const clinics=choices(Object.values(data.snapshot.services)).sort(byLabel);
         // S-23: the label is "Clinics"; what no tick means is said once beside it, not in the label.
         if(full&&clinics.length){service=multi('Clinics',clinics);service.wrap.append(el('small',{class:'hint'},'None ticked prints every clinic.'));}
         if(full&&people.length){person=select('Print person',people,'',false,'All people');person.wrap.classList.add('span-2');}
@@ -3877,7 +3892,7 @@ function scoreCheckHooks(){
   return {step,query:routeQuery,zone:zone(),canEdit:permits(CAPABILITY.COORDINATOR),canRead:permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR),canAddMissing:may('score_check.add_missing'),
     go:(to:ScoreStep,q:Record<string,string>)=>navigate(routeHash('schedule',['benchmark',to],q).slice(1)),leave:()=>navigate('schedule'),
     setLeave:(dirty:(()=>boolean|string)|null)=>{if(mine===renderSerial)leaveCheck=dirty;},
-    choices:(kind:string)=>choices(rows(kinds[kind]||'people')),
+    choices:(kind:string)=>choices(rows(kinds[kind]||'people'),(kinds[kind]||'people')==='people'),
     openIssues,openRules:(id:string)=>openRotaPanel(id),openScoring:()=>navigate('configuration/auto_schedule'),
     submit:(id:string)=>void rotaWhole(id).then(publishDialog).catch(reportError),
     // Rota's draft of the same sessions (score_check.auto), opened with Auto-schedule ready to run (the Planner's own flow).
@@ -4473,22 +4488,33 @@ function myLeave():Promise<Span[]>{
   if(!leaveRead||leaveRead.who!==me!.identity_id||Date.now()-leaveRead.at>60000)leaveRead={at:Date.now(),who:me!.identity_id,rows:get<{availability:Row[]}>('/api/availability').then(r=>r.availability.filter(a=>!a.retracted).map(a=>({start:Date.parse(a.start),end:Date.parse(a.end)})))};
   return leaveRead.rows;
 }
-/** The Schedule's scroll (the planner column and the view's own scroller, the week or month grid), read before a redraw;
- *  the result puts it back when the redrawn view is the same one (rota, saved view, layout and layer: its viewKey),
- *  so another rota or view starts at the top. The list's table keeps its own (table_view). */
+/** The Schedule's scroll (the planner column and the view's own scroller, the week or month grid), read as a redraw
+ *  swaps the view in (not when it starts: a scroll made while it loads is the one kept); the result puts it back when
+ *  the redrawn view is the same one (rota, saved view, layout and layer: its viewKey), so another rota or view starts
+ *  at the top. The list's table keeps its own (table_view). */
 let stopScrollRestore=()=>{};
+// The put-back in force: where it aims, and where it last left each scroller (short of the aim until the grid has its height).
+let scrollKept:{view:string,kept:number[][],left:number[][]}|null=null;
+// Still where the put-back left it, or as near as its content now allows (a collapsed grid clamps its scroll): nothing else moved it.
+const scrollHeld=(n:HTMLElement,p:number[])=>[[n.scrollTop,p[0],n.scrollHeight-n.clientHeight],[n.scrollLeft,p[1],n.scrollWidth-n.clientWidth]]
+  .every(([now,was,max])=>Math.abs(now-was)<=1||Math.abs(now)<Math.abs(was)&&Math.abs(now)>=max-1);
 function plannerScroll(){
-  stopScrollRestore();  // the previous draw's put-back must not fight this one's reading
   const at=()=>[...document.querySelectorAll<HTMLElement>('#main .planner-main,#main .planner-main .wk-scroller')];
-  const key=()=>document.querySelector<HTMLElement>('#schedule-view')?.dataset.viewKey,view=key(),kept=at().map(n=>[n.scrollTop,n.scrollLeft]);
-  const put=()=>at().forEach((n,i)=>{if(kept[i]){n.scrollTop=kept[i][0];n.scrollLeft=kept[i][1];}});
+  const key=()=>document.querySelector<HTMLElement>('#schedule-view')?.dataset.viewKey,view=key(),was=scrollKept?.view===view?scrollKept:null;
+  // A scroller the last put-back is still bringing to its place keeps that aim (read now, it would say the clamped place).
+  const kept=at().map((n,i)=>was?.left[i]&&scrollHeld(n,was.left[i])?was.kept[i]:[n.scrollTop,n.scrollLeft]),left:number[][]=[];
+  stopScrollRestore();  // the previous draw's put-back must not fight this one
+  const put=()=>at().forEach((n,i)=>{if(kept[i]){n.scrollTop=kept[i][0];n.scrollLeft=kept[i][1];left[i]=[n.scrollTop,n.scrollLeft];}});
   // The grid's fitting (observeSize: pill names, toolbar rows) changes its height after the draw, however many frames
   // later a loaded machine takes, which clamped the scroll just put back (Month to the top): each size change of what
   // scrolls puts it back again, until the person moves it, another view is shown or the next draw reads it afresh.
   const watch=()=>{for(const n of at())for(const e of ['wheel','pointerdown','keydown','touchstart'])n.addEventListener(e,()=>stopScrollRestore(),{once:true,passive:true});};
   return ()=>{if(!view||key()!==view)return;put();watch();
-    const stops=at().flatMap(n=>[...n.children]).map(c=>observeSize(c,()=>{if(key()===view)put();else stopScrollRestore();}));
-    stopScrollRestore=()=>{stops.forEach(s=>s());stopScrollRestore=()=>{};};};
+    // Only while every scroller is where the put-back left it: a scroll made since (the page's own too, which fires none
+    // of the events above) is newer than the aim and ends it.
+    const stops=at().flatMap(n=>[...n.children]).map(c=>observeSize(c,()=>{if(key()===view&&at().every((n,i)=>!left[i]||scrollHeld(n,left[i])))put();else stopScrollRestore();}));
+    scrollKept={view,kept,left};
+    stopScrollRestore=()=>{stops.forEach(s=>s());scrollKept=null;stopScrollRestore=()=>{};};};
 }
 // A published session (the published layer) opens read-only; set by the Schedule for the sessions it draws.
 let readOnlySession:(s:Row)=>void=()=>{};
@@ -4569,8 +4595,8 @@ const ALL_CONFIG_KINDS=CONFIG_GROUPS.flatMap(([,kinds])=>kinds).filter(k=>k!=='s
 /** The admin's sections this person may open: the one list behind the section menu, its addresses and the palette. */
 const configKinds=()=>ALL_CONFIG_KINDS.filter(k=>(!SECTION_PERMISSION[k]||may(SECTION_PERMISSION[k]))&&(k!=='ai_provider'||scoreCheckOn()));
 /** The sections this person's Configuration holds: an admin's all, a coordinator's guide and tags, and any section its own
- *  permission grants (an operator reaches GitHub without any departmental configuration). */
-const configSections=()=>permits(CAPABILITY.ADMIN)?['setup',...configKinds()]:[...new Set([...(permits(CAPABILITY.COORDINATOR)?COORDINATOR_KINDS:[]),...configKinds().filter(k=>SECTION_PERMISSION[k]||catalogueSection(k))])];
+ *  permission grants. Admins reach branding from Department settings. */
+const configSections=()=>permits(CAPABILITY.ADMIN)?['setup',...configKinds().filter(k=>k!=='branding')]:[...new Set([...(permits(CAPABILITY.COORDINATOR)?COORDINATOR_KINDS:[]),...configKinds().filter(k=>SECTION_PERMISSION[k]||catalogueSection(k))])];
 /** A record section this person may edit: its Bulk edit command's roles (editRoles) admit them, so whatever Bulk lets
  *  them change has its own single edit in Configuration too (M1: Bulk-editable == single-edit). */
 const catalogueSection=(kind:string)=>!!editRoles(kind)&&catalogueEditable(kind);
@@ -5011,6 +5037,7 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   if(catalogueKind==='board'){await rotationBoard(target,{ctx:ctx(),zone:zone(),mine:false});return;}
   if(catalogueKind==='tags'){tagsPage(target,ctx(),permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR));return;}
   if(catalogueKind==='department'){await departmentSettingsPage(target);return;}
+  if(catalogueKind==='branding'){target.append(brandingPanel());return;}
   if(catalogueKind==='auto_schedule'){await autoScheduleSettingsPage(target);return;}
   if(catalogueKind==='scheduling_groups'){await schedulingGroupsPage(target,{me:me!,zone:zone(),today:toLocal(new Date().toISOString(),zone()).slice(0,10),fields:ruleConditionFields(ctx()),words:c=>conditionWords({conditions:c})});return;}
   if(catalogueKind==='ai_provider'){await aiProviderPage(target,zone());return;}
@@ -6754,7 +6781,7 @@ async function exportsPage(target:HTMLElement){
     // Not awaited: the page is shown, and every other download works, while the people load (I-13). A row from a page
     // since replaced is detached, so a late answer changes nothing; a changed session is the shell's to handle.
     if(full&&pending)void publicationCache(pub.id,pub.current).data
-      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{})).sort((a,b)=>a.label.localeCompare(b.label)))))
+      .then(d=>pending.replaceWith(calendar(choices(Object.values(d.snapshot.people||{}),true))))
       .catch(e=>{if(!sessionChanged(e))pending.replaceWith(calendar(null,true));});
   }
   if(subscription&&full)target.append(subscription);
@@ -7582,7 +7609,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   }
   const from=field('From','date',st().from,{required:true,min:first,max:last}),to=field('To','date',st().to,{required:true,min:first,max:last});
   from.input.addEventListener('change',()=>{st().from=from.input.value;keptSetup(st());syncRun();});to.input.addEventListener('change',()=>{st().to=to.input.value;keptSetup(st());syncRun();});
-  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort((a,b)=>a.label.localeCompare(b.label));
+  const services=[...new Set(live.flatMap(s=>s.service_ids as string[]))].map(id=>({value:id,label:name('services',id),tone:'place'})).sort(byLabel);
   const clinics=el('div',{class:'field'},el('label',{'aria-hidden':'true'},'Clinics'),multiPick('Clinics',services,st().clinics=st().clinics.filter(c=>services.some(x=>x.value===c)),v=>{st().clinics=v;keptSetup(st());syncRun();},'All clinics').wrap);
   const scope=select('Assign into',[{value:'period',label:'All sessions in these dates'},{value:'open',label:'Open sessions only'},{value:'selected',label:'Selected sessions only'}],st().scope);
   scope.input.addEventListener('change',()=>{st().scope=scope.input.value;keptSetup(st());syncRun();});
@@ -8294,12 +8321,12 @@ async function inboxPage(target:HTMLElement){
   if(page&&inboxPath()!==readPath)void search();
 }
 
-const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),roleForCapability(CAPABILITY.OPERATOR)];
+const ROLE_ORDER:readonly string[]=[roleForCapability(CAPABILITY.ADMIN),roleForCapability(CAPABILITY.COORDINATOR),roleForCapability(CAPABILITY.APPROVER),roleForCapability(CAPABILITY.CREDENTIALER),roleForCapability(CAPABILITY.PROGRAMME_LEAD),roleForCapability(CAPABILITY.STAFF),roleForCapability(CAPABILITY.AUDITOR),INSTALLATION_ADMIN_ROLE,roleForCapability(CAPABILITY.OPERATOR)];
 /** Access & approvals › People & roles (who signs in, their roles) or › Role history (every grant). */
 async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'history'){
   const access=await data;const identities:Row[]=access.identities;
   const accounts:Record<string,Row>=access.accounts||{};
-  const admin=permits(CAPABILITY.ADMIN);
+  const admin=permits(CAPABILITY.ADMIN),fullAccess=admin||may('access.system_roles');
   const invite=admin&&access.accounts_enabled?button('Invite person',()=>inviteDialog(peopleChoices(ctx()),refresh,roleChoices(ROLE_NAMES)),'primary'):null;
   const onboard=admin&&access.accounts_enabled?button('Onboard staff',()=>onboardingPanel(rows('people'),new Set(identities.map(i=>i.person_id).filter(Boolean)),refresh),'secondary'):null;
   target.append(sectionHead('People who can sign in','',invite,onboard,!admin?null:button('Add hospital sign-in',()=>void hospitalSignIn(),access.accounts_enabled?'secondary':'primary',access.accounts_enabled?{}:{'data-tip':'Invitations are off on this server; hospital sign-in still works.'})));
@@ -8313,8 +8340,7 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
     const issuer=field('Sign-in provider','url',cfg.issuer!,{required:true,readonly:true}),subject=field('Hospital user ID (subject)','text','',{required:true}),display=field('Name shown in the app','text','',{required:true}),person=select('Their staff profile',peopleChoices(ctx()),'',false,'None (not on rotas)'),reason=area('Reason');reason.input.required=true;
     form.append(issuer.wrap,...(cfg.institutional_enabled===false?[note('Hospital sign-in is switched off in the sign-in settings: this person can sign in once it is on.','info')]:[]),subject.wrap,display.wrap,person.wrap,reason.wrap);return async()=>{await command('identity.bind',{issuer:cfg.issuer,subject:subject.input.value,display_name:display.input.value,person_id:person.input.value||null,reason:reason.input.value});await refresh();};
   });}
-  // Who gives or revokes a role: the server's rule from the contract (role_grants.ts). With no Developer, the system
-  // owner restores one outside the app.
+  // Who gives or revokes a role comes from the server permission contract.
   const manages=(r:string)=>!grantRefusal(r,me!.roles);
   // Every role of the contract, in this page's order; one this person may not give is shown disabled with why (maintenance).
   const roleChoices=(roles:readonly string[]):Choice[]=>[...roles].sort((a,b)=>ROLE_ORDER.indexOf(a)-ROLE_ORDER.indexOf(b))
@@ -8388,17 +8414,17 @@ async function accessPage(target:HTMLElement,data:Promise<Row>,tab:'people'|'his
     if(a&&!i.disabled&&a.accepted_at)acts.push({label:'Password reset link',icon:'lock',run:link('account.reset_link','Password reset link','Password reset link')});
     if(!i.disabled&&(!a||a.accepted_at))acts.push({label:'End all sessions',icon:'logout',danger:true,armed:true,run:async()=>{const r=await command('account.end_sessions',{reason:'Ended all sessions'},i.id);notify(r.ended?`${who} was signed out everywhere (${plural(r.ended,'session')}).`:`${who} had no open sessions.`);}});
     return acts;};
-  const people=dataTable<Row>({id:'access',noun:['person','people'],rows:identities,rowId:i=>i.id,searchLabel:'Search people with access',searchPlaceholder:'Name or sign-in',
-    bulk:accessActions,
+  const people=dataTable<Row>({id:'access',noun:['person','people'],rows:identities,rowId:i=>i.id,searchLabel:'Search people with access',searchPlaceholder:fullAccess?'Name or sign-in':'Name',
+    bulk:fullAccess?accessActions:undefined,
     columns:[
       {key:'name',label:'Person',text:i=>String(i.display_name)+' '+(accounts[i.id]?.username||''),cell:i=>el('strong',{},i.display_name)},
-      {key:'issuer',label:'Signs in with',text:i=>accounts[i.id]?.username||String(i.issuer),facet:i=>accounts[i.id]?'Sign-in name':String(i.issuer),
-        cell:i=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer)},
-      {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):['No current role'],sort:i=>rolesOf(i).length,
-        cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},'No current role'))},
+      ...(fullAccess?[{key:'issuer',label:'Signs in with',text:(i:Row)=>accounts[i.id]?.username||String(i.issuer||''),facet:(i:Row)=>accounts[i.id]?'Sign-in name':String(i.issuer||''),
+        cell:(i:Row)=>accounts[i.id]?el('span',{},el('span',{class:'mono'},accounts[i.id].username),el('small',{class:'muted'},' · '+accounts[i.id].email)):el('small',{class:'mono muted'},i.issuer||'—')}]:[]),
+      {key:'roles',label:'Access roles',text:i=>rolesOf(i).map((b:Row)=>roleLabel(b.role)+' '+grantState(b)).join(' '),facet:i=>rolesOf(i).length?rolesOf(i).map((b:Row)=>roleLabel(b.role)):fullAccess?['No current role']:[],sort:i=>rolesOf(i).length,
+        cell:i=>el('div',{class:'tag-row'},...rolesOf(i).map((b:Row)=>el('span',{class:'role-chip duty-slate','data-tip':`From ${formatDate(b.starts_on)}${b.ends_on?' until '+formatDate(lastIncludedDate(b.ends_on))+' (included)':' · no end date'}`},roleLabel(b.role),live(b)?null:el('small',{},' · Scheduled from '+formatDate(b.starts_on)))),rolesOf(i).length?null:el('span',{class:'muted'},fullAccess?'No current role':'—'))},
       {key:'status',label:'Status',facet:i=>accountState(i),cell:i=>{const state=accountState(i),a=accounts[i.id];
         return el('span',{class:'status-dot '+(state==='Active'?'on':'off'),'data-tip':a&&!a.accepted_at&&a.invite_expires_at?(a.invite_open?'Link expires ':'Link expired ')+formatDate(a.invite_expires_at,zone()):''},state);}},
-      {key:'last',label:'Last sign-in',text:i=>String(i.last_sign_in_at||''),sort:i=>String(i.last_sign_in_at||''),cell:i=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},'Never')},
+      ...(fullAccess?[{key:'last',label:'Last sign-in',text:(i:Row)=>String(i.last_sign_in_at||''),sort:(i:Row)=>String(i.last_sign_in_at||''),cell:(i:Row)=>i.last_sign_in_at?el('span',{},dateUnits([formatDate(i.last_sign_in_at,zone())]),el('small',{class:'muted'},' '+formatTime(i.last_sign_in_at,zone()))):el('span',{class:'muted'},admin||may('access.system_roles')?'Never':'—')}]:[]),
     ],
     rowActions:i=>i.id===me!.identity_id?removeRoles(i):!admin?(i.disabled?removeRoles(i):[{label:'Give a role',icon:'plus' as const,run:()=>giveRole(i)},...removeRoles(i)]):[...(!i.disabled?[{label:'Give a role',icon:'plus' as const,run:()=>giveRole(i)}]:[]),...removeRoles(i),...accountActions(i),...(!i.disabled?[{label:TERMS.disableSignIn,icon:'lock' as const,danger:true,run:()=>confirmAction(TERMS.disableSignIn,'Existing sessions lose access on their next request. You can enable sign-in again later. Cross-department sign-ins need the institutional operator.',async reason=>{await command('identity.disable',{reason},i.id,i.revision);await refresh();},TERMS.disableSignIn)}]
       :[{label:TERMS.enableSignIn,icon:'check' as const,run:()=>confirmAction(TERMS.enableSignIn,'They can sign in again with the access roles they still hold.',async reason=>{await command('identity.enable',{reason},i.id,i.revision);await refresh();},TERMS.enableSignIn)}])]});
@@ -8572,7 +8598,7 @@ async function auditPage(target:HTMLElement){
   const read=newest((path:string)=>get(path));
   // The people list (for the Person filter) is read once per visit; reloads skip it.
   const reload=async(first=true)=>{if(first)auditOffset=0;const next=await read(`/api/audit?offset=${auditOffset}&people=false&${auditQuery()}`);if(next){data=next;draw();}};
-  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'}))];
+  const people=[{value:'',label:'Everyone'},...(data.people as Row[]).map(p=>({value:p.id,label:p.display_name||'Account not available'})).sort(byLabel)];
   const exportCsv=button('Export CSV',()=>download('/api/audit.csv?'+auditQuery()),'secondary small',{'data-tip':'Download every change matching these filters'});
   // Filters go to the server, so they span all history rather than one loaded page of 100.
   const bar=collectionToolbar({label:'Audit log',
