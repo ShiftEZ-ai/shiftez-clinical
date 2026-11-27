@@ -65,8 +65,22 @@ def test_consecutive_undo_stops_when_the_edit_history_is_empty(browser, live_ser
     w, first, _ = edited_draft(h)
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
+        schedule_read = f"**/api/workspaces/{w['id']}?view=schedule"
+
+        def without_availability(route):
+            reply = route.fetch()
+            data = reply.json()
+            del data['workspace']['can_undo']
+            route.fulfill(response=reply, json=data)
+
+        page.route(schedule_read, without_availability)
         open_rota(page, w['id'])
         undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit', exact=True)
+        expect(undo).to_have_attribute('aria-disabled', 'true')
+        expect(undo).to_have_attribute('data-tip', 'Undo availability is unknown')
+        page.unroute(schedule_read, without_availability)
+        page.reload()
+        expect(undo).to_be_enabled()
         with command(page, 'workspace.undo') as latest:
             undo.click()
         assert latest.value.ok and people(h, w) == [[first]]

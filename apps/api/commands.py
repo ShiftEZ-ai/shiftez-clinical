@@ -364,7 +364,7 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         from .services import independence
         return independence.permission_command(db, actor, command)
     if kind.startswith("swap."):
-        return swaps.swap_command(db, actor, command)
+        return swaps.read_command_result(actor, swaps.swap_command(db, actor, command))
     if kind in {"wish.create", "wish.update", "wish.restore"}:
         from .services import wishes
         return wishes.save(db, actor, command)
@@ -782,6 +782,8 @@ def receipt_result(kind, result, *, db=None, actor=None, settings=None):
     if db is not None:
         from .services.leave_disclosure import overlap_labels
         result = overlap_labels(db, actor, result)
+    if db is not None and kind.startswith('swap.'):
+        result = swaps.read_command_result(actor, result)
     if db is not None and kind.startswith(('person.contact.', 'catalogue.', 'bulk.', 'staff_import.')):
         from .services.contacts import redact_reply
         result = redact_reply(db, actor, result)
@@ -1171,7 +1173,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                 command_kind=command.kind, required_roles=allowed, key=idempotency_key,
                                 payload_hash=payload_hash, result=outcome))
         override_blockers = db.info.pop('_assignment_override_blockers', [])
-        reason = str(command.payload.get("reason", command.kind))[:500]
+        reason = (swaps.optional_swap_note(command.kind, command.payload.get("reason", ""))
+                  if command.kind in swaps.OPTIONAL_NOTE_COMMANDS
+                  else str(command.payload.get("reason", command.kind))[:500])
         if command.kind == 'request.create' and command.payload.get('kind') == 'absence_report':
             reason = 'Absence reported'
         if command.kind in {'workspace.approve', 'policy.activate', 'policy.activate_many'}:

@@ -2727,7 +2727,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // Draft edits save at once: their Undo is always one press away, not only in a toast or the tools menu.
     if(draft&&!w.archived_at){
       const b=iconButton('Undo last edit','undo',()=>undoLast(),{class:'bare','data-tip':'Undo (Ctrl Z)','aria-keyshortcuts':'Control+Z Meta+Z'});
-      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Open the rota to check Undo availability.');
+      undoButton=reading?hold(b):w.can_undo===true?b:notYet(b,w.can_undo===false?NO_UNDO:'Undo availability is unknown');
     }
     // SW3-A-06: after your own Undo (the server's can_redo), Redo sits beside it until the rota changes again. H-11: from
     // the Undo's own reply at once, not only once the draft has been read again (a minute under load).

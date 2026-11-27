@@ -23,6 +23,12 @@ from .input_manifest import digest
 from .time import aware, local_midnight, local_stamp, overlaps, union_hours, duration_hours
 
 METRIC_VERSION = "block-quota-v6"
+QUOTA_DEVIATION_CODES = {
+    "above_maximum": "QUOTA_ABOVE_MAXIMUM",
+    "above_target": "QUOTA_ABOVE_TARGET",
+    "below_minimum": "QUOTA_BELOW_MINIMUM",
+    "below_target": "QUOTA_BELOW_TARGET",
+}
 # Departmental monthly limits and four-week targets overlap (121 in the baseline).
 # shortcut: bounded evaluation; partition planning scope if 256 quotas are exceeded.
 MAX_POLICIES = 256
@@ -606,7 +612,7 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             if calculation is not None:
                 row['target_calculation'] = calculation
             if state not in {"met", "unresolved"}:
-                code = "RULE_EXCEPTION" if exc else "QUOTA_" + state.upper()
+                code = "RULE_EXCEPTION" if exc else QUOTA_DEVIATION_CODES[state]
                 severity = "warning" if exc or comparison == "target" or row["severity"] == "advisory" else "error"
                 add(code, "Approved full-block quota exception applies" if exc else policy["name"],
                     person=pid, a=a, b=b, severity=severity, rule=policy["id"], extra={

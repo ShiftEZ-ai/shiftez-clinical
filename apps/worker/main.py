@@ -202,7 +202,9 @@ def describe(db, event, publication, identity, *, wishes=None, rota_label=None):
         return ('Your absence was approved' if own else f"Absence approved for {_name(db, event.payload.get('person_id'))}"), spans_text(db, event) + 'The approved rota change is ready to publish. Published duties change when it is published.'
     if event.kind == "swap" and event.payload.get('notice'):
         if event.payload['notice'] == 'no_recipients':
-            return 'Nobody eligible can take this duty', (event.payload.get('no_eligible_recipients_reason') or 'Open Requests to withdraw the offer or ask the coordinator for cover.')
+            from apps.api.services.swaps import AUDIENCE_NOTICE_TITLE, UNKNOWN_AUDIENCE_REASON, stored_audience_reason
+            return AUDIENCE_NOTICE_TITLE, (stored_audience_reason(event.payload.get('no_eligible_recipients_reason'))
+                                           or UNKNOWN_AUDIENCE_REASON)
         return 'Your swap offer needs a new duty', 'The offered duty changed in the published rota. Open Requests to choose a current duty.'
     if event.kind == "swap":
         row = db.get(m.SwapRequest, event.payload.get("swap_id"))

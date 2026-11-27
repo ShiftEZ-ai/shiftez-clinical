@@ -27,7 +27,7 @@ from packages.domain.input_manifest import digest
 _HOME_CACHE: OrderedDict[tuple, dict] = OrderedDict()
 _HOME_CACHE_LOCK = Lock()
 _HOME_CACHE_LIMIT = 128
-_HOME_PROJECTION_VERSION = 2
+_HOME_PROJECTION_VERSION = 3
 
 
 def _home_stamp(db, actor, now, max_days):
