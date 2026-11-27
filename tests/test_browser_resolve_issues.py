@@ -618,7 +618,6 @@ def test_revealed_issues_clear_selection_and_undo_stay_clickable_beside_the_toas
         main = issues_page(page)
         revealed = main.locator('.issues-list.fade-in')
         expect(revealed).to_be_visible()
-        revealed.evaluate('e=>Promise.all(e.getAnimations().map(animation=>animation.finished))')
         counts = main.locator('.issues-counts')
         total = int(re.match(r'(\d+) open', counts.inner_text()).group(1))
         bar = page.get_by_role('toolbar', name='Bulk actions')

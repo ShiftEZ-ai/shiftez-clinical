@@ -149,7 +149,7 @@ export type FillIssue={key:string;title:string;detail?:string;rule_id?:string;se
 type Panel={workspace:string;kind:'session'|'fill'|'person'|'help';shift?:string;assignment?:string;replace?:string;flash?:string;more?:boolean;q?:string;issue?:FillIssue;
   /** The session panel's tab (Session, Why or Rules) and what the Why tab looks at. */
   tab?:'session'|'why'|'rules';why?:WhyState;
-  /** The fill search took the focus when this panel first opened: a redraw (a live update, a finished check) never takes it again. */
+  /** The fill search's first focus is handled: the panel took it, or a linked replacement keeps it on the grid. */
   searched?:boolean;
   /** The revision this panel's own Assign saved: its result stays drawn while that revision is held, and the status slot
    *  says the whole-rota check behind it until that check settles. */
@@ -318,8 +318,9 @@ function highlightFocus(root:HTMLElement,workspace:string){
 export function toggleHelp(workspace:string,onOpen?:()=>void){panel=panel?.kind==='help'?null:{workspace,kind:'help'};if(panel)onOpen?.();redrawCurrent?.(undefined,true);}
 export const helpOpen=()=>panel?.kind==='help';
 /** Open a session's fill panel; with `replace`, to pick someone in place of that assignment; with `issue`, for that issue;
- *  with `q`, its search already set (one named person). */
-export function queueFill(workspace:string,shift:string,replace?:string,issue?:FillIssue,q?:string){panel={workspace,kind:'fill',shift,...(replace?{replace}:{}),...(issue?{issue}:{}),...(q?{q}:{})};}
+ *  with `q`, its search already set (one named person). A linked replacement focuses its person chip instead. */
+export function queueFill(workspace:string,shift:string,replace?:string,issue?:FillIssue,q?:string,focusSearch=true){
+  panel={workspace,kind:'fill',shift,...(replace?{replace}:{}),...(issue?{issue}:{}),...(q?{q}:{}),searched:!focusSearch};}
 export function closeWeekPanel(){stopAsking('panel');if(panel){panel=null;redrawCurrent?.(undefined,true);}}
 /** Resolve mode: step through every open place and blocking rule problem, in date order, one panel at a time. */
 export const resolve={active:false,workspace:'',current:'',skipped:new Set<string>(),

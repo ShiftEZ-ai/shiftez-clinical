@@ -1739,7 +1739,9 @@ tr.dt-linked>td{background:var(--accent-soft)}
    Keep the page selector weak enough for shared selection-bar spacing to override its bottom padding. */
 @media screen{
   .page.page-contained:where(:not(:has(>div>div>.rc-waiting)):has(.rt,>div>div>[data-table=rule-line-db]>.dt-body>.table-scroll)){display:flex;flex-direction:column;overflow:hidden;scrollbar-gutter:auto;max-width:none;padding-bottom:16px}
-  .page-contained :is(div:has(>.rt),div:has(>div>.rt),.rt,.rt-body),
+  /* A background redraw keeps the list on screen one wrapper deeper (app.ts renderPage): it keeps the same height, so
+     its restored native position is not clamped to the top. */
+  .page-contained :is(div:has(>.rt),div:has(>div>.rt),.rt,.rt-body),.page-contained>div:has(>div>div>.rt),
   .page-contained:not(:has(>div>div>.rc-waiting))>div:has(>div>[data-table=rule-line-db]>.dt-body>.table-scroll),
   .page-contained:not(:has(>div>div>.rc-waiting))>div>div:has(>[data-table=rule-line-db]>.dt-body>.table-scroll){display:flex;flex-direction:column;flex:1;min-height:0}
   .page-contained .rt>.dt-toolbar{flex:none}

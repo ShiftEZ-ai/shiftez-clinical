@@ -189,7 +189,7 @@ const freshScheduling=(workspace='',open=false)=>({workspace,open,scope:'period'
    *  groupKeep: a group run's own Keep existing (on unless unticked); scopeError: the server's reason a group was refused. */
   group:null as Conditions|null,pickGroup:false,groupKeep:undefined as boolean|undefined,scopeError:'',
   /** The run the grid is showing live (autoschedule_live.ts) until it ends. */live:'',
-  /** A Run press waiting for the server: no second run starts meanwhile, even from a redrawn panel. */starting:false,
+  /** A Run press waiting for the server (its kind): no second run starts meanwhile, even from a redrawn panel. */starting:'',
   /** The setup's fields are open (Change): a redraw keeps them open. Not kept on the device (keepSetup). */editing:false});
 let schedulingSettings=freshScheduling();
 // Each rota keeps its own run setup (dates, clinics, priorities) while you switch between rotas; sign-out forgets them.
@@ -1441,7 +1441,7 @@ const SESSION_MOVED=(day:string)=>`This session moved to ${day}`,SESSION_REMOVED
  *  background check (keptReads) resolves it again against the fresh replies, and so does any later draw of its rota
  *  that finds it on another day or gone (F7: the fresh rota may arrive only with a live update), so a session moved or
  *  removed elsewhere is said there. */
-let shiftLink:{id:string;serial:number;rota:string;day:string}|null=null;
+let shiftLink:{id:string;serial:number;rota:string;day:string;person:string}|null=null;
 function navigate(target:string){
   if(!leaving(()=>navigate(target),pageName(target)))return;
   const from=pageStep();setRoute(target);applyScheduleRoute();
@@ -1906,7 +1906,8 @@ async function drawPage(live=false){
       // A linked session is marked only after mounting; explicit detail links use the existing planner panel.
       if(view==='schedule'&&!schedSubPage()&&routeShift){const id=routeShift;requestAnimationFrame(()=>{
         if(serial===renderSerial&&routeShift===id){routeShift='';const at=scheduleCache.drafts.get(workspaceId)?.shifts.find(s=>String(s.id)===id);
-          shiftLink={id,serial,rota:workspaceId,day:at?toLocal(at.start,zone()).slice(0,10):''};markShift(id,routePerson);routePerson='';
+          const person=routePerson||(shiftLink?.id===id?shiftLink.person:'');
+          shiftLink={id,serial,rota:workspaceId,day:at?toLocal(at.start,zone()).slice(0,10):'',person};markShift(id,person);routePerson='';
           // Settled: the link leaves the address (replaced, never a new entry), so Back or a reload does not replay it.
           if(routeQuery.get('panel')!=='session'){routeQuery.delete('shift');writeRoute();}
           const s=routeQuery.get('panel')==='session'?scheduleCache.drafts.get(workspaceId)?.shifts.find(s=>String(s.id)===id):undefined;if(s)openSession(s);}
@@ -2891,9 +2892,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // ---- Body: the view, the auto-schedule panel beside it, rules in context ----
   const bodyWrap=el('div',{class:'planner-body'+(autoChecking&&draft&&!fresh?' is-working':'')});const mainCol=el('div',{class:'planner-main'});bodyWrap.append(mainCol,side);
   let reloadScheduling:(()=>Promise<void>)|undefined;
-  if(auto?.classList.contains('auto-button')&&windowDraft)auto.addEventListener('click',()=>void loadWhole(auto,()=>currentAuto()?.click()));
+  // The top bar is redrawn in place (a rota check landing): a press it replaces mid-way still acts (dom.ts footerAct).
+  if(auto?.classList.contains('auto-button')&&windowDraft)footerAct(auto,'auto-schedule',()=>loadWhole(auto,()=>currentAuto()?.click()));
   else if(auto?.classList.contains('auto-button')&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
-  else if(auto?.classList.contains('auto-button'))auto.addEventListener('click',()=>unpin(()=>{
+  else if(auto?.classList.contains('auto-button'))footerAct(auto,'auto-schedule',()=>unpin(()=>{
     // A superseded bar hands the press to the current one; the current bar while its redraw is still being attached
     // (bar swapped in first, body after) toggles its own panel, which then attaches open or closed.
     if(!side.isConnected&&currentAuto()!==auto){currentAuto()?.click();return;}schedulingSettings.open=side.hidden;side.hidden=!schedulingSettings.open;auto!.setAttribute('aria-expanded',String(schedulingSettings.open));if(schedulingSettings.open){closeWeekPanel();side.querySelector<HTMLElement>('summary,button')?.focus({preventScroll:true});
@@ -3011,7 +3013,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // G-05: on a draft (Home › Duties during approved leave), that session's replacement list for that person (the
   // assignment, or the person), their chip marked and focused.
   if(replaceAsk&&shiftAsk&&draft&&whole){const s=whole.shifts.find(x=>String(x.id)===shiftAsk),a=(s?.participants as Row[]|undefined)?.find(p=>p.id===replaceAsk||p.person_id===replaceAsk);
-    routeQuery.delete('replace');if(s&&a){queueFill(w!.id,String(s.id),String(a.id));routePerson=String(a.person_id);}}
+    routeQuery.delete('replace');if(s&&a){queueFill(w!.id,String(s.id),String(a.id),undefined,undefined,/* focusSearch */false);routePerson=String(a.person_id);}}
   else if(replaceAsk&&shiftAsk&&pubHooks){const s=pubHooks.sessions().find(x=>String(x.id)===shiftAsk);
     if(s||++replaceMisses>1){routeQuery.delete('replace');replaceMisses=0;}
     if(s&&changeable(s)){replaceNext(String(s.id),replaceAsk);queueMicrotask(()=>readOnly(s));}else if(!s&&!routeQuery.has('replace'))notify('That duty is not on this week of the published rota.','warning');}
@@ -3047,7 +3049,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       create:planner&&permits(CAPABILITY.COORDINATOR)?'New rota':undefined,onCreate:planner&&permits(CAPABILITY.COORDINATOR)?()=>workspaceForm(ctx(),undefined,inView()):undefined,onShowAll:()=>showAllSessions(),unlinked:unlinkedStaff(me!),...mine};
   let listParts:Parameters<NonNullable<WeekHooks['onTable']>>[0]={};
   // Motion: a new view fades in; paging slides the way you moved. Plain re-renders (live updates) do not animate.
-  const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
+  const viewKey=`${w?.id}|${plannerViewId}|${schedView}|${layerMode}`,viewPanel=el('div',{id:'schedule-view',class:'schedule-view',role:'region','data-view-key':viewKey,'data-redraw-key':`${viewKey}|${range}`,'aria-label':`${SCHED_VIEWS.find(v=>v.key===schedView)!.label} view`});
   // The live check lands after its read, in a later redraw (loadLiveCoverage): this says which page has it drawn.
   viewPanel.toggleAttribute('data-live-checked',!!liveCheck);
   target.append(viewPanel);
@@ -7923,7 +7925,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       const t=runScope();if(typeof t==='string')throw new Error(t);ids=t;
     }
     // Feedback at once: Review & apply and the footer show the run starting before the server has answered.
-    st().starting=true;let starting:HTMLElement|null=null;
+    st().starting=kind;let starting:HTMLElement|null=null;
     if(kind==='generation'){st().step=3;drawStep();feedback.inert=false;feedback.removeAttribute('aria-busy');
       feedback.replaceChildren(...continuedNotes(diagnostic),generationProgress({id:'',revision:0,status:'queued'},0,diagnostic,phoneQuery.matches));starting=startingStrip();void liveView();}
     else drawStep();
@@ -7937,7 +7939,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       ...(kind==='generation'&&own?{planning_group_version_id:own.group_version_id||(own.group_id===planning!.group_id?planning!.group_version_id:undefined),lookahead:leaveRoom?.input.checked?'coupled':'none'}:{}),
       // Repairs move other people's assignments: never in a group run.
       session_ids:ids,repair_unavailable:!cpSat&&kind==='generation'&&!keeping()&&!grouped(),repair_conflicts:!cpSat&&kind==='generation'&&!keeping()&&!grouped()},undefined,w.revision);}
-    catch(e){st().starting=false;starting?.remove();jobsKey='';
+    catch(e){st().starting='';starting?.remove();jobsKey='';
       // A group the server refuses (nobody matches, a field it no longer accepts): said on What to fill, beside Run.
       if(e instanceof ApiError&&e.code==='INVALID_SCOPE'){st().scopeError=e.message;st().step=1;drawStep();void load().catch(failed);return;}
       // SW3-A-03: a run that did not start says so, with Try again; Run is offered again. The read after it may fail
@@ -7949,7 +7951,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       const n=note(`The run didn't start. ${(e as Error).message}`,'error',e);n.classList.add('auto-start-failed');
       n.append(' ',button('Try again',()=>{n.remove();void queue(kind,diagnostic,extra).catch(reportError);},'link-button'));
       feedback.prepend(n);return;}
-    st().starting=false;starting?.remove();active=true;
+    st().starting='';starting?.remove();active=true;
     // The new run is on the grid and in the footer now, not after the next read of the job list.
     const job=created?.job as Row|undefined;
     if(job?.id&&kind==='generation'){st().live=job.id;const hooks=liveHooks(data);void ours(liveView()).then(m=>m.liveRun(job.id,hooks).update(job));}
@@ -8096,7 +8098,9 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // the list is read again once it has ended (or when this panel has none yet).
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
     const response:Row=withEnded(firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id))));
-    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch)return;
+    // A Run press still waiting for the server shows its run starting; a reply read meanwhile has no run in it yet and
+    // must not draw over it ("No auto-schedule runs"). The press reads the jobs again once the server has answered.
+    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch||st().starting)return;
     // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
     // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).
     if(woke!==panelWakes)return load();
@@ -8139,6 +8143,10 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // Hidden panels still discover live jobs, but completed results are read only when opened.
     if(!running&&target.hidden){if(!jobs.length)known=true;if(!st().step)drawStep();return;}
     if(!liveRunning&&nextKey===jobsKey)return;
+    // A Run press still waiting for the server: a list read before it (none yet, or older runs) never replaces its pending
+    // progress; the press reads again once the run is created. A panel rebuilt meanwhile shows that progress too.
+    if(st().starting&&!liveRunning){if(st().starting==='generation'&&!feedback.querySelector('.auto-stage')){feedback.inert=false;feedback.removeAttribute('aria-busy');
+      feedback.replaceChildren(generationProgress({id:'',revision:0,status:'queued'},0,false,phoneQuery.matches));}return;}
     // The latest run is read before anything is cleared: what is shown stays until its replacement is ready.
     // Drawing the proposal reuses the read already on screen; fresh summaries still verify its job and rota revisions.
     // A rule check does not replace an unfinished auto-schedule run's Continue action.
@@ -8155,7 +8163,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     const cached=!liveRunning&&shown&&proposal?.job_id===shown.id&&proposal.session===sessionKey()&&proposal.workspace_revision===w.revision&&proposal.job.revision===shown.revision&&!notCompared(proposal.job)&&proposal.job.input_fingerprint===data.current_fingerprint?proposal.job:null;
     const applied=shown?.status==='applied'&&shown.result?.applied?shown:null;
     const latestRead:Row|null=!liveRunning&&shown?(applied||cached||(shown.kind==='validation'?heldCheck(String(shown.id)):null)||(await get('/api/jobs/'+shown.id)).job):null;
-    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch)return;
+    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch||st().starting)return;
     // Focus inside the run's progress or result stays on the same control across this redraw (WCAG 2.4.3).
     const had=feedback.contains(document.activeElement)?document.activeElement:null,keep=had?focusSpot(feedback,had):null;
     // Keep Cancel mounted for this run so a status update cannot take away the press or its confirmation.
