@@ -158,15 +158,16 @@ def test_a_self_approver_can_add_but_cannot_reduce_protected_time(h, source, cha
     assert restriction["definition"]["rule"]["kind"] == "restriction"
     assert restriction["definition"]["severity"] == "mandatory"
 
+    for action in ("retire", "undo"):
+        same_rule = decide(h, current, action, role=username, status=403)["error"]
+        assert same_rule["code"] == "SELF_APPROVAL"
+
     weaker = h.command(username, "calendar.protection.propose", {**payload,
         "on": change != "off", "line": {**line, "end_time": "10:00" if change == "shorter" else "11:00"},
         "replaces_id": current["id"], "expected_revision": current["revision"]})["fact"]
     refusal = decide(h, weaker, role=username, status=403)["error"]
     assert refusal["code"] == "SELF_APPROVAL"
     assert "Another authorised person must approve a change that weakens a safety rule" in refusal["message"]
-    for action in ("retire", "undo"):
-        same_rule = decide(h, current, action, role=username, status=403)["error"]
-        assert same_rule["code"] == "SELF_APPROVAL"
     with transaction(h.app.state.engine) as db:
         assert db.get(m.SchedulingFact, current["id"]).status == "active"
         assert db.get(m.SchedulingFact, weaker["id"]).status == "proposed"
