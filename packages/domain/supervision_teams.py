@@ -90,6 +90,8 @@ def with_duty_ranks(data, shifts):
 def own_and_paired(participants, person_id):
     """What a staff member sees of a session: their own participation and the people paired with them on it (their named
     supervisor, the trainees who name them). The one rule for the published rota, the Schedule and exports."""
+    if person_id is None:
+        return []
     mine = next((p for p in participants if p["person_id"] == person_id), None)
     supervisor = (mine or {}).get("supervisor_person_id")
     return [{key: value for key, value in p.items() if key != 'override_reason'} for p in participants

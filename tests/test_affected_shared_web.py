@@ -47,8 +47,13 @@ def test_a_browser_driven_service_change_selects_every_browser_test():
         assert owners is not None and failed in owners and browser_files() <= owners, changed
     for path in ("apps/api/commands.py", "apps/api/snapshots.py", "apps/api/services/planning.py"):
         owners = selector.direct_test_owners([path], tests)
-        unit = {test for test in tests if selector.suite(test) == "unit"}
-        assert browser_files() <= owners and not unit <= owners, path
+        assert owners == tests, path
+
+
+def test_policy_service_selects_indirect_api_approval_coverage():
+    tests = set(selector.test_files())
+    owners = selector.direct_test_owners(["apps/api/services/policies.py"], tests)
+    assert "tests/test_policy_transition_approvals.py" in owners
 
 
 def test_other_backend_paths_keep_their_direct_owners():

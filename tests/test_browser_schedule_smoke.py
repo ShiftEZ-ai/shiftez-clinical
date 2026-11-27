@@ -54,9 +54,15 @@ def test_every_schedule_layout_draws_a_draft_and_a_published_rota(browser, live_
         assert not problems, problems
         # The selection panel (a day head selects) and the session panel (a person's duty opens it), on the draft Week.
         open_layout(page, f"schedule/week/2026-10-14?edit={draft['id']}")
-        page.locator('.wk-day[data-rk*="2026-10-14"]').first.click()
-        expect(page.locator('.rk-panel').get_by_role('heading', level=2)).to_be_visible()
-        press_escape(page)  # nothing selected: the panel shows the rota's rules (Why panel v2, 539c1930b)
+        day = page.locator('.wk-day[data-rk*="2026-10-14"]').first
+        day.click()
+        panel = page.locator('.rk-panel')
+        expect(panel.get_by_role('heading', level=2)).to_be_visible()
+        # The rule map can finish after the heading appears and bring focus into the panel.
+        # Clear the selection from the grid, after the panel's initial focus has settled.
+        expect(panel.locator(':focus')).to_have_count(1)
+        day.focus()
+        press_escape(page)
         expect(page.get_by_role('dialog', name='Rules in this rota')).to_be_visible()
         expect(page.locator('.rk-selected')).to_have_count(0)
         page.locator(f'#schedule-view button.pchip[data-assignment][data-person="{alex}"]').first.click()
