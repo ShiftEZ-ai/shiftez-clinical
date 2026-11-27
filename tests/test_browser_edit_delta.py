@@ -44,6 +44,7 @@ def test_complete_check_delta_patches_the_held_validation_and_falls_back_on_unce
     try:
         checked = page.evaluate(APPLY_CHECK, [held(), check_reply()])
         assert checked['workspace']['validation']['findings'] == [{'code': 'NEW'}]
+        assert checked['workspace']['validation_current'] is True
         assert checked['current_fingerprint'] == 'checked'
         for case in ([held(), {'delta': None}], [held(), check_reply(stale=True)],
                      [held(), check_reply(partial=True)], [{**held(), 'partial': True}, check_reply()],

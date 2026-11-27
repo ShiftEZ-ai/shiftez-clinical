@@ -80,10 +80,13 @@ def said(page: Page):
 def test_assignment_save_holds_submit_on_one_clock_and_says_the_check_once(browser, live_server, h, monkeypatch, width, theme):
     typ = h.configure('assignment_types', {'name': 'Required attendance', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 1}]}})['record']['id']
-    w = h.shift(h.workspace(), typ=typ, people=[h.seed['people'][0]])['workspace']
-    [shift] = h.detail(w)['shifts']
-    payload = {key: shift[key] for key in ('assignment_type_id', 'location_id', 'service_ids', 'start', 'end', 'attributes')}
-    payload.update(workspace_id=w['id'], shift_id=shift['id'], participants=[])
+    first = h.shift(h.workspace(), typ=typ, people=[])
+    w = h.shift(first['workspace'], '2026-10-06T08:00:00+03:00', '2026-10-06T12:00:00+03:00',
+                typ=typ, people=[])['workspace']
+    w = h.lifecycle(w, 'validate')['workspace']
+    shift_id = first['shift_id']
+    causes = h.get('coordinator', f'/api/workspaces/{w["id"]}/fix-list?view=lean')['causes']
+    cover = next(c for c in causes if shift_id in c['shift_ids'] and (c.get('session_findings') or {}).get(shift_id))
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': width, 'height': 920}, color_scheme=theme)
     held = []
 
@@ -98,20 +101,25 @@ def test_assignment_save_holds_submit_on_one_clock_and_says_the_check_once(brows
             route.continue_()
 
     try:
+        page.route(re.compile(r'.*/api/planner/fill-options\?async_options=true$'),
+                   lambda route: route.continue_(url=route.request.url.split('?')[0]))
         if width <= 400:
             navigate(page, f'schedule/issues?draft={w["id"]}')
             expect(page.locator('.fix-page')).to_be_visible()
+            row = page.locator(f'.fix-page li[data-cause="{cover["id"]}"]')
+            row.locator('.fix-chip', has_text=re.compile(r'^\w{3} 4$')).click()
+            panel = row.locator('.fix-fill-box')
         else:
             open_rota(page, w['id'])
-            expect(page.locator('#schedule-view')).to_be_visible()
+            page.locator(f'#schedule-view [data-session~="{shift_id}"] .pchip.gap').first.click()
+            panel = page.locator('.wk-panel')
         worker_up(h)
         page.evaluate("""() => { window.__said = []; let last = '';
             new MutationObserver(() => { const t = document.getElementById('loading-live')?.textContent || '';
                 if (t !== last) { last = t; if (t) window.__said.push(t); } })
               .observe(document.body, {childList: true, subtree: true, characterData: true}); }""")
         page.route('**/api/commands', hold_edit)
-        page.evaluate("""([payload, revision]) => { void window.importBundle('api.js').then(m =>
-            m.command('shift.update', payload, undefined, revision)); }""", [payload, w['revision']])
+        panel.locator('.wk-cand.ok').first.get_by_role('button', name=re.compile(r'^Assign ')).click()
         wait_held(page, held)
         # Saving: Submit waits from the save's start, on the clock.
         expect(page.locator('#save-state')).to_have_attribute('aria-label', 'Saving…')
@@ -121,7 +129,8 @@ def test_assignment_save_holds_submit_on_one_clock_and_says_the_check_once(brows
         assert saved.value.ok
         data = saved.value.json()
         assert data['validation']['scope'] == 'command_changes' and data['validation']['stale_since']
-        assert shift['id'] in data['validation']['stale_shift_ids']
+        assert saved.value.request.post_data_json['payload']['shift_id'] == shift_id
+        assert shift_id in data['validation']['stale_shift_ids']
         assert data['fix_list_delta']['summary']['checking'] is True
         # Saved and checking: still the one clock, and nothing is said while the check runs.
         expect(page.locator('#save-state')).to_have_attribute('aria-label', 'Saved just now')
@@ -156,6 +165,7 @@ def test_assignment_save_holds_submit_on_one_clock_and_says_the_check_once(brows
             submit = page.locator('.planner-bar').get_by_role('button', name='Submit for review…', exact=True)
             expect(submit).not_to_have_attribute('data-tip', WAITS)
             expect(submit).not_to_have_attribute('data-tip', INCOMPLETE)
+            expect(check_line.get_by_role('button', name='Needs a check', exact=True)).to_have_count(0)
         # The late must fix toast (#1437) needs the settle receipt; a normal check offers none.
         expect(page.locator('#toast-tray .toast', has_text='with your edit')).to_have_count(0)
     finally:

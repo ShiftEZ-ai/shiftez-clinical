@@ -55,7 +55,7 @@ export function applyCheckDelta(held:WorkspaceData|undefined,reply:Row|null|unde
     ||String(d.workspace_id)!==String(held.workspace.id)||Number(d.revision)!==Number(held.workspace.revision)
     ||!Array.isArray(d.validation.findings)||!Array.isArray(d.validation.coverage))return null;
   const validation={...withoutDetail(d.validation,SCHEDULE_DETAIL_FIELDS.check),coverage:scheduleCoverage(d.validation.coverage)};
-  return {...held,workspace:{...held.workspace,validation},
+  return {...held,workspace:{...held.workspace,validation,validation_current:true},
     current_fingerprint:d.current_fingerprint||d.validation.fingerprint||held.current_fingerprint};
 }
 

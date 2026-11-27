@@ -2217,7 +2217,7 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   autoCheckKey=key;autoChecking=true;checkStarted=Date.parse(w.validation?.stale_since)||(existing?Date.parse(existing.started_at||existing.created_at)||Date.now():Date.now());checkStop=null;checkCancelled='';checkUnstarted='';
   checkSync=!existing&&!workersKnown()&&!serverChecking(w.validation);  // runCheck's own choice, known before the footer draws
   // Show the result without disturbing someone mid-task: wait while a dialog is open or a field has focus.
-  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;
+  const settle=(job?:Row|null,clearedBefore?:number)=>{if(view!=='schedule'||workspaceId!==w.id)return;
     // The result is taken in as it lands (its job is this page's own from now: onPulse skips its pulse); only the redraw
     // waits for someone mid-task.
     // A complete-check delta replaces the held validation in place. This is the
@@ -2239,7 +2239,8 @@ function autoCheck(data:WorkspaceData,existing?:Row){
       // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
       if(checkBusy()){setTimeout(show,1500);return;}
       void redraw();};
-    show();void loadNavBadges(true,['workspace.validate']);};
+    if(clearedBefore===undefined)show();else void sayChecked(w.id,job,clearedBefore).then(show,show);
+    void loadNavBadges(true,['workspace.validate']);};
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
@@ -2247,7 +2248,7 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   // and the checking state stays the newer check's.
   const superseded=()=>autoCheckKey!==key&&autoCheckKey.startsWith(w.id+':');
   void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);
-    const before=fixCache.get(w.id)?.list.summary.since?.cleared||0;settle(job);void sayChecked(w.id,job,before);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
+    settle(job,fixCache.get(w.id)?.list.summary.since?.cleared||0);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
     // The page's own take-over failed too: the check hasn't started (the footer pill says so), with why.
     if(checkUnstarted===key){if(!sessionChanged(e))reportError(e);}
     // It names what stopped it (maintenance's cause) above the grid with Check again, never a toast that goes away (B7).
@@ -2261,7 +2262,9 @@ function autoCheck(data:WorkspaceData,existing?:Row){
  *  toast (the tray is the live region, so nothing else is said) with Show, and an Undo of exactly that edit only while it
  *  is still their current save on this rota; otherwise the counts in words. */
 async function sayChecked(id:string,job:Row|null|undefined,clearedBefore:number){
-  const d=scheduleCache.drafts.get(id),here=()=>view==='schedule'&&workspaceId===id;if(!d||!here())return;
+  const here=()=>view==='schedule'&&workspaceId===id;if(!here())return;
+  const d=scheduleCache.drafts.get(id)||await wholeRota(id,true,false).catch(()=>null);
+  if(!d||!here()||!d.workspace.validation_current)return;
   const list=await fixListFor(id,d).catch(()=>null);
   if(!list||!here()||list.revision!==d.workspace.revision||list.summary.checking)return;
   // Only a complete, non-stale receipt, and only its changes (coalesced saves) that are this reader's own deferred saves,
@@ -4254,7 +4257,8 @@ async function fixPage(target:HTMLElement,id:string){
   // (fixListFor). Kept, a held copy left the page on the edit's "Checking…" counts. A newer patched copy still wins.
   const [,data]=await Promise.all([ensureCatalogues(),wholeRota(id,true,false).catch(()=>scheduleCache.drafts.get(id)||null)]);
   if(mySerial!==renderSerial)return;
-  if(data?.workspace.status==='draft'&&serverChecking(data.workspace.validation)){
+  if(data?.workspace.status==='draft'&&!data.workspace.archived_at&&permits(CAPABILITY.COORDINATOR)
+      &&editableDraft(data.workspace,me!.identity_id)&&serverChecking(data.workspace.validation)){
     workspaceId=id;autoCheck(data);}
   const day=String(data?.workspace.starts_on||departmentToday());
   // A saved view is a scheduling group (R2): people by rank, programme or tag, as the person is on the rota's first day.
