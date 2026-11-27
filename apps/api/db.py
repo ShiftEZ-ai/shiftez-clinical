@@ -778,6 +778,7 @@ def retain_snapshot_input_savepoint(session, transaction):
 def discard_rolled_back_snapshot(session, previous_transaction):
     session.info.get('_request_parents', {}).clear()
     session.info.get('_request_authority', {}).clear()
+    session.info.pop('_isolated_publication', None)
     session.info.pop('_baseline_hints', None)
     session.info.pop('write_domain_snapshots', None)
     session.info.pop('_live_safety_sources', None)
