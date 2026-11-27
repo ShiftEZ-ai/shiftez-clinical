@@ -79,9 +79,10 @@ def test_linux_child_cannot_read_parent_environ_and_has_expected_credentials(sep
     launcher = ['sudo', '-n'] if os.geteuid() else []
     launcher += ['setpriv', '--reuid', str(worker_uid), '--regid', str(worker_gid), '--clear-groups',
                  f'--bounding-set={capabilities}', f'--inh-caps={capabilities}', f'--ambient-caps={capabilities}', '--']
+    source_root = os.getenv('CI_UNIT_APP_SOURCE', str(isolation.ROOT))
     code = f'''
 import json, os, subprocess, sys
-sys.path.insert(0, {str(isolation.ROOT)!r})
+sys.path.insert(0, {source_root!r})
 from apps.api.services import score_check_isolation as isolation
 assert (os.geteuid(), os.getegid(), os.getgroups()) == ({worker_uid}, {worker_gid}, [])
 with open('/proc/self/status', encoding='utf-8') as status:
