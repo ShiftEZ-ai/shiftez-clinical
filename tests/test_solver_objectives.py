@@ -582,3 +582,46 @@ def test_allocation_preference_balancing_alone_does_not_overfill_needed_sessions
     assert result['status'] == 'candidate_feasible', result
     assert result['compiled_component_values']['preferences'] is not None, result
     assert [len(shift['participants']) for shift in apply(data, result)['shifts']] == [1, 1], result
+
+
+@pytest.mark.parametrize('demand', ['lead', 'quota'])
+def test_mode_balance_caps_duties_outside_staffing_demand(h, demand):
+    from .scheduler_departments import apply
+    from .test_governed_leadership import activate, line, proposal
+
+    first, second = h.seed['people'][:2]
+    demand_type = h.configure('assignment_types', {'name': 'Separate staffing duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 1}]}})['record']['id']
+    if demand == 'lead':
+        requirement = activate(h, proposal(h, [line(demand_type, [second])]))
+    else:
+        requirement = h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+                                'metric': 'duties', 'comparison': 'minimum', 'amount': 1,
+                                'assignment_type_ids': [demand_type]}, {'person_id': second})
+    preference = h.policy({'kind': 'allocation_preference', 'priority': 0, 'balance_by': 'service_mode',
+                           'balance_window': 'rota', 'balance_target_share': 0.5}, severity='advisory')
+    w = h.shift(h.workspace(), people=[first])['workspace']
+    w = h.shift(w, start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00',
+                service=1, people=[second])['workspace']
+    w = h.shift(w, start='2026-10-06T08:00:00+03:00', end='2026-10-06T12:00:00+03:00',
+                typ=demand_type, people=[first])['workspace']
+    data = h.snapshot(w)
+    data['policies'] = [preference, requirement]
+    data['people'] = {pid: data['people'][pid] for pid in (first, second)}
+    for service, mode in zip(h.seed['services'], ('physical', 'virtual')):
+        data['services'][service]['mode'] = mode
+    data['generation_options'] = {'mode': 'fill_gaps', 'shortlist_width': 0,
+        'scoring': {'weights': {'coverage': 0, 'rules': 0, 'fairness': 0, 'preferences': 100, 'stability': 0}}}
+
+    result = generate(data, 5, deterministic=True)
+    assert result['solver_status'] == 'OPTIMAL', result
+    assert result['status'] == 'candidate_feasible', result
+    shifts = apply(data, result)['shifts']
+    assert [len(shift['participants']) for shift in shifts if shift['assignment_type_id'] != demand_type] == [1, 1], result
+    [required] = [shift for shift in shifts if shift['assignment_type_id'] == demand_type]
+    assert {p['person_id'] for p in required['participants']} == {first, second}, result
+    if demand == 'lead':
+        assert [p['person_id'] for p in required['participants'] if p['team_lead']] == [second], result
+    else:
+        [row] = result['validation']['quota_report']['rows']
+        assert row['actual'] == row['amount'] == 1, result

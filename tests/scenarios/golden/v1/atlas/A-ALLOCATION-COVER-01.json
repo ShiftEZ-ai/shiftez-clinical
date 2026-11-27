@@ -1,9 +1,9 @@
 {
   "id": "A-ALLOCATION-COVER-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Allocation balance stays within requested cover",
   "intent": "Balancing two service modes does not add staff to filled duties.",
-  "pressure": "Extra staffing on the ordinary duties improves mode balance. The supervised duty needs both the trainee and the named supervisor.",
+  "pressure": "Extra staffing on the ordinary duties improves mode balance. The supervised duty also has a quota that cannot count the ordinary duties.",
   "covers": {
     "kind.allocation_preference": ["staffing", "pressure", "seed_robustness"],
     "kind.allocation_preference.balance_by": ["staffing", "pressure", "staffing_with_supervision"]
@@ -114,7 +114,17 @@
       }
     }},
     {"key": "activate_balance", "role": "approver", "kind": "policy.activate", "target": "$balance",
-      "revision": "$balance.revision", "payload": {"reason": "Synthetic scenario review"}}
+      "revision": "$balance.revision", "payload": {"reason": "Synthetic scenario review"}},
+    {"key": "quota", "role": "coordinator", "kind": "policy.create", "payload": {
+      "name": "Supervised duty quota", "owner": "Scenario coordinator", "source": "Synthetic scenario",
+      "starts_on": "2020-01-01", "definition": {
+        "rule": {"kind": "block_quota", "metric": "duties", "comparison": "minimum", "amount": 1,
+          "starts_on": "2027-02-07", "ends_on": "2027-02-09", "assignment_type_ids": ["$supervised_type"]},
+        "scope": {"person_id": "$p1"}, "severity": "mandatory", "workspace_id": "$workspace"
+      }
+    }},
+    {"key": "activate_quota", "role": "approver", "kind": "policy.activate", "target": "$quota",
+      "revision": "$quota.revision", "payload": {"reason": "Synthetic scenario review"}}
   ],
   "inputs": {
     "generation_options": {
