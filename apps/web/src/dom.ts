@@ -880,9 +880,12 @@ export function popover(anchor: HTMLElement, build: (panel: HTMLElement, close: 
   }
   // D-057 (a redraw never loses what the person has open): its button redrawn away, the panel moves to the one `keep`
   // finds for the same record, named open (aria-expanded) and placed against it. False: nothing took its place.
+  // A button in the page being built (alive()) still counts: that page swaps in later, and its frames pass meanwhile.
   const rehome = () => {
     if (state.anchor.isConnected) return true;
-    const next = options.keep?.(); if (!next?.isConnected) return false;
+    if (!options.keep) return false;
+    if (alive(state.anchor)) return true;
+    const next = options.keep(); if (!next || !alive(next)) return false;
     state.anchor = next; next.setAttribute('aria-expanded','true'); placer?.place(); return true;
   };
   const state = {node: panel, anchor, close, tryClose: g.tryClose, key: options.key, place: () => {}, rehome};
@@ -1020,7 +1023,7 @@ export function menuSource(host:Element,source:(anchor:HTMLElement)=>MenuEntry[]
  *  hand-over: the hand-over happens now and the same item of the menu as it is now runs, or the menu closes. True when
  *  the press was handled so (the caller then runs nothing of its own, built from an earlier draw). */
 export function handOver(item:HTMLElement):boolean{
-  const open=openPopover;if(!open?.node.contains(item)||open.anchor.isConnected)return false;
+  const open=openPopover;if(!open?.node.contains(item)||alive(open.anchor))return false;
   const again=open.rehome()?[...open.node.querySelectorAll<HTMLElement>('[role^=menuitem]')].find(b=>b.textContent===item.textContent):null;
   if(again&&again!==item)again.click();else open.close();return true;
 }
@@ -1042,7 +1045,7 @@ export function menu(anchor:HTMLElement,label:string,items:MenuEntry[]|(()=>Menu
   const atEnd=openAtEnd;openAtEnd=false;
   let box:HTMLElement|null=null,shut=()=>{};
   const keep=o.keep?()=>{
-    const next=document.querySelector<HTMLElement>(o.keep!);let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
+    const next=document.querySelector<HTMLElement>(o.keep!)||pageBuilding?.querySelector<HTMLElement>(o.keep!)||null;let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
     for(let n:Element|null=next;n&&!source;n=n.parentElement)source=menuSources.get(n);
     const entries=next&&source?source(next):[];if(!box||!entries.length)return null;
     const at=box.contains(document.activeElement)?document.activeElement!.textContent:null,was=box.querySelector<HTMLElement>('.armed')?.dataset.armedFrom;
