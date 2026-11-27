@@ -75,6 +75,19 @@ def test_type_versions_undo_stale_and_effective_dates(pg):
     assert not pg.get('staff', f"/api/people/{pg.seed['people'][1]}/card")['contacts']
 
 
+def audit_contains_sample_pager(rows):
+    # A pager can also occur inside an identifier or timestamp without leaking a value.
+    audit = re.sub(r'\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b', '', json.dumps(rows), flags=re.I)
+    return re.search(r'(?<![0-9A-Za-z.])441[78](?![0-9A-Za-z])', audit) is not None
+
+
+def test_audit_pager_check_distinguishes_values_from_ids():
+    row = {'actor_id': '00000000-4417-4418-8000-000000000001'}
+    assert not audit_contains_sample_pager([row])
+    assert audit_contains_sample_pager([{**row, 'reason': 'pager-4417'}])
+    assert audit_contains_sample_pager([{**row, 'detail': {'value': 4418}}])
+
+
 def test_value_validation_undo_override_and_mirror(pg):
     typ = next(t for t in pg.get('admin', '/api/contact-types')['contact_types'] if t['legacy_field'] == 'pager')
     person = pg.seed['people'][0]
@@ -99,9 +112,7 @@ def test_value_validation_undo_override_and_mirror(pg):
     assert undo(pg, cleared)['record']['value'] == '4417'
     with transaction(pg.app.state.engine) as db:
         assert db.get(m.Person, person).pager == restored['value']
-        audit = json.dumps([record(r) for r in db.scalars(select(m.AuditEvent))])
-        # Whole values only: timestamps (.441793) and ids may contain the same digits.
-        assert not re.search(r'(?<![0-9A-Za-z.])441[78](?![0-9A-Za-z])', audit)
+        assert not audit_contains_sample_pager([record(r) for r in db.scalars(select(m.AuditEvent))])
     set_value(pg, typ, '4420', pg.seed['people'][1], role='staff', status=403)
 
 
