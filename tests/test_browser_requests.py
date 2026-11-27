@@ -1361,7 +1361,9 @@ def test_request_type_change_keeps_person(browser, live_server, h):
         dialog = new_request(page, 'Other request')
         person = dialog.get_by_label('Person', exact=True)
         person.select_option(other['id'])
-        expect(person.locator('optgroup')).not_to_have_count(0)  # grouped by rank, as every people choice
+        # The shared people list: one flat list for a single choice, each person carrying their rank for the row.
+        expect(person.locator('optgroup')).to_have_count(0)
+        expect(person.locator('option[data-group]')).not_to_have_count(0)
         dialog.get_by_role('radio', name=re.compile('^Leave or absence')).check()
         # A short people list is checkboxes (a long one the shared picker's hidden <select multiple>).
         expect(dialog.locator('fieldset[name="People"] input:checked')).to_have_attribute('value', other['id'])
@@ -1410,5 +1412,37 @@ def test_overtime_offer_names_uncovered_days_before_sending(browser, live_server
         expect(dialog.get_by_text(re.compile(r"can’t be offered overtime on \d{1,2} \w{3} \d{4}"))).to_be_visible()
         assert not [body for body in sent if 'request.create' in body]
         expect(page.locator('#save-state')).not_to_contain_text('Not saved')
+    finally:
+        context.close()
+
+
+def test_leave_balance_on_phone_and_negative_approval_confirmation(browser, live_server, h):
+    from .test_leave_balances import configure, request_between
+
+    configure(h, 0)
+    made = request_between(h, day(), day(1))
+    context, page = sign_in(browser, live_server, 'staff', PHONE)
+    try:
+        navigate(page, 'requests')
+        expect(page.get_by_text('0 calendar days remaining', exact=False)).to_be_visible()
+        no_horizontal_scroll(page)
+    finally:
+        context.close()
+    context, page = sign_in(browser, live_server, 'approver', PHONE)
+    try:
+        navigate(page, f"requests?open={made['id']}")
+        panel = page.locator('.request-panel')
+        expect(panel.get_by_text('-1 calendar day after approval', exact=False)).to_be_visible()
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        page.get_by_role('dialog', name='Approve leave').get_by_role('button', name='Approve', exact=True).click()
+        warning = page.get_by_role('dialog', name='Confirm negative leave balance')
+        expect(warning.get_by_text('-1 calendar day after approval', exact=False)).to_be_visible()
+        no_horizontal_scroll(page)
+        warning.get_by_role('button', name='Cancel', exact=True).click()
+        expect(panel.get_by_role('button', name='Approve', exact=True)).to_be_visible()
+        panel.get_by_role('button', name='Approve', exact=True).click()
+        page.get_by_role('dialog', name='Approve leave').get_by_role('button', name='Approve', exact=True).click()
+        warning.get_by_role('button', name='Approve below zero', exact=True).click()
+        expect(panel.locator('.request-history')).to_contain_text('Approved below zero')
     finally:
         context.close()

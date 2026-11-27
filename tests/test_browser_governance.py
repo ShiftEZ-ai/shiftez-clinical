@@ -594,7 +594,8 @@ def test_approve_dialog_names_rule_adjustments(browser, live_server, h, scheme, 
 @pytest.mark.parametrize('scheme,viewport', [('light', {'width': 1440, 'height': 1000}),
                                            ('dark', {'width': 390, 'height': 844})])
 def test_self_approval_is_marked_in_review_strip(browser, live_server, h, scheme, viewport):
-    """LIVE-26: approving your own rota under a self-approval permission is said in the dialog and on the review step."""
+    """LIVE-26: approving your own rota under a self-approval permission is said in the dialog and on the review step,
+    which then reads Self-approved in place of "Independent approval", never both."""
     identity(h, 'solo', ['coordinator', 'approver'])
     h.command('admin', 'self_approval.grant', {'identity_id': h.seed['identities']['solo'], 'actions': ['rota.approve'],
               'starts_on': '2026-10-01', 'reason': 'Only one approver this quarter'})  # D4: in force, ends a year later
@@ -607,13 +608,17 @@ def test_self_approval_is_marked_in_review_strip(browser, live_server, h, scheme
         strip = page.locator('.review-strip')
         expect(strip).to_be_visible()
         expect(strip.get_by_text('Self-approved', exact=True)).to_have_count(0)
+        expect(strip.locator('.review-facts')).to_contain_text('Independent approval')
         page.get_by_role('button', name='Approve rota', exact=True).click()
         form = page.get_by_role('dialog', name='Approve rota', exact=True)
         expect(form.locator('.approve-summary').get_by_text('Self-approved', exact=True)).to_be_visible()
+        expect(form.get_by_label('Reason', exact=True)).to_have_count(1)  # asked once, where the decision is made
         form.get_by_label('Reason', exact=True).fill('Checked the rest gaps myself')
         save_dialog(form, 'Approve rota')
         assert h.detail(own)['workspace']['status'] == 'approved'
         expect(page.locator('.review-strip').get_by_text('Self-approved', exact=True)).to_be_visible()
+        expect(page.locator('.review-strip .review-facts')).not_to_contain_text('Independent')
+        expect(page.locator('.review-strip .review-facts')).to_contain_text('1 of 1 approvals')
     finally:
         context.close()
 

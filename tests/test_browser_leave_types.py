@@ -193,3 +193,24 @@ def test_coordinator_records_leave_with_a_type_and_the_timeline_shows_it(browser
             expect(jordan_row.locator('.pg-cell.leave')).to_have_count(0)  # never shown as blocking
         finally:
             context.close()
+
+
+def test_admin_edits_and_undoes_leave_allowances(browser, live_server, h):
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        open_config(page, 'Leave types')
+        page.get_by_role('button', name='Leave allowances', exact=True).click()
+        dialog = page.get_by_role('dialog', name='Leave allowances')
+        dialog.get_by_role('button', name='Add allowance', exact=True).click()
+        dialog.get_by_label('Leave type', exact=True).select_option(label='Annual')
+        dialog.get_by_label('Calendar days per year', exact=True).fill('15')
+        dialog.get_by_label('Reason', exact=True).fill('Set annual allowance')
+        save_dialog(dialog, 'Save allowances')
+        saved = h.get('admin', '/api/leave-balance-settings')['configuration']
+        assert saved['allowances'] == [{'leave_type_id': selected(h)['id'], 'days': 15,
+                                        'person_id': None, 'starts_on': None}]
+        page.locator('.toast', has_text='Leave allowances saved').get_by_role('button', name='Undo', exact=True).click()
+        expect(page.locator('.toast').filter(has_text='Undone.')).to_be_visible()
+        assert h.get('admin', '/api/leave-balance-settings')['configuration']['allowances'] == []
+    finally:
+        context.close()

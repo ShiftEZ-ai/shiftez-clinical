@@ -702,12 +702,15 @@ def create_app(settings: Settings | None = None, engine=None):
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
+        outcome = {}
         def operation(db):
             # A concurrent disable or reset can make this session unusable while the account lock is contended.
             account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account)
-        return liveness_write(engine, operation, context={"route": "auth.password_change"})
+            # The scanner treats this response as a password and follows the shared return value to worker logs (issue 1642).
+            outcome.update(accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account))
+        liveness_write(engine, operation, context={"route": "auth.password_change"})
+        return outcome
 
     @app.get("/auth/start")
     def oidc_start(request: Request, next: str = "", identifier: str = Query(default="", max_length=255), remember_me: bool = False):
@@ -3187,6 +3190,29 @@ def create_app(settings: Settings | None = None, engine=None):
     def timeline_preview(value: s.TimelineRotationInput, request: Request):
         from .services.timeline_commands import preview
         return retry_write(engine, lambda db: preview(db, actor_for(request, db, write=True), value))
+
+    @app.get('/api/leave-balance-settings', response_model=s.LeaveBalanceSettings)
+    def leave_balance_settings(request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            return leave_balances.settings(db, actor_for(request, db))
+
+    @app.get('/api/my-leave-balances', response_model=list[s.LeaveBalance])
+    def my_leave_balances(request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            actor = actor_for(request, db)
+            return leave_balances.balances(db, actor, actor.person_id) if actor.person_id else []
+
+    @app.get('/api/requests/{request_id}/leave-balances', response_model=list[s.LeaveBalance])
+    def request_leave_balances(request_id: s.ID, request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            actor = actor_for(request, db)
+            row = scoped(db, m.RequestRecord, request_id, actor)
+            require(actor.person_id == row.person_id or availability.may_decide(db, actor, row),
+                    'FORBIDDEN', 'Only the person and permitted decision makers can read this balance', 403)
+            return leave_balances.balances(db, actor, row.person_id, request=row) if row.kind == 'leave' else []
 
     @app.get("/api/rotation-board", response_model=s.RotationBoard)
     def rotation_board(request: Request, start: s.date, end: s.date, programme_id: s.ID | None = None):

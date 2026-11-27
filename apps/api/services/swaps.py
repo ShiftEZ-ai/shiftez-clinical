@@ -1,6 +1,7 @@
 """Staff consent is separate from rota review and atomic official publication."""
 
 import copy
+from collections import Counter
 from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -26,6 +27,9 @@ from .person_record import require_person
 OPEN_STATES = {"offered", "counteroffered", "accepted", "reviewing"}
 # Validator findings that depend only on the person and the duty they would take, never on other duties.
 RECIPIENT_DUTY_CODES = {"NOT_ELIGIBLE", "UNAVAILABLE", "EXTERNAL_ROTATION"}
+# Said of a whole audience, a refusal never names one colleague's own leave or protected time.
+AUDIENCE_WORDS = {"UNAVAILABLE": "Colleagues are not free at that time.", "RESTRICTION": "Colleagues are not free at that time.",
+                  "SWAP_RETURN_REQUIRED": "Colleagues have no future duty to offer in return on this rota."}
 
 
 def staff_identity(db, identity_id, person_id, department_id, cache=None):
@@ -474,6 +478,13 @@ def require_eligible(result):
             422, {"findings": result["findings"]})
 
 
+def nobody_reason(failures):
+    """Why nobody can take a duty: the commonest refusal of the one eligibility check, in the words staff already read.
+    A colleague's own leave or protected time is counted but never named."""
+    reasons = Counter(AUDIENCE_WORDS.get(f['code'], f['message']) for f in failures)
+    return reasons.most_common(1)[0][0] if reasons else 'There are no other active staff sign-ins in this department.'
+
+
 def eligible_staff(db, publication, assignment_id, expires_at, kind, *, failures=None, stop_after_first=False):
     """Freeze the invitation audience once, sharing one validator context across all current staff."""
     department = db.get(m.Department, publication.department_id)
@@ -530,11 +541,8 @@ def compute_audience(db, inputs):
     publication = db.get(m.Publication, row.publication_id)
     failures = []
     people = eligible_staff(db, publication, row.first_assignment_id, aware(row.expires_at), row.kind, failures=failures)
-    from collections import Counter
-    reasons = Counter(f['message'] for f in failures)
     return {'person_ids': sorted(people), 'no_eligible_recipients_reason':
-            ('Nobody eligible can take this duty. ' + (reasons.most_common(1)[0][0] if reasons else
-             'There are no other active staff sign-ins in this department.')) if not people else None}
+            'Nobody eligible can take this duty. ' + nobody_reason(failures) if not people else None}
 
 
 def store_audience(db, inputs, result, error=None):
@@ -672,6 +680,9 @@ def options(db, actor, assignment_id=None, swap_id=None, recipient_id=None, kind
             "recipient_id": recipient_id, "kind": kind, "allowed_kinds": department.swap_kinds_allowed,
             **(preview.recipient(row.first_assignment_id, person_id, row.expires_at, kind)
                if row and kind == "give" else {}),
+            # Why nobody can take the chosen duty, from the checks above (never a second rule in the client).
+            "no_eligible_recipients_reason": nobody_reason([f for r in recipients for f in r["findings"]])
+                if assignment_id and not row and not any(r["eligible"] for r in recipients) else None,
             "assignments_partial": len(entries) > 200 and not (row and kind == "give"),
             "recipients_partial": not row and len(people) > 500,
             "basis": "Own future published duties and active staff names only; no colleague schedules or private attributes"}
@@ -910,10 +921,7 @@ def swap_command(db, actor, command):
             recipients = eligible_staff(db, publication, first.id, value.expires_at, value.kind,
                                         failures=failures, stop_after_first=True)
             if not recipients:
-                from collections import Counter
-                reasons = Counter(f['message'] for f in failures)
-                reason = 'Nobody can take this duty — ask your coordinator. ' + (reasons.most_common(1)[0][0]
-                    if reasons else 'There are no other active staff sign-ins in this department.')
+                reason = 'Nobody can take this duty — ask your coordinator. ' + nobody_reason(failures)
                 require(False, 'SWAP_NO_RECIPIENTS', reason, 422,
                         {'audience_count': 0, 'no_eligible_recipients': True,
                          'no_eligible_recipients_reason': reason})
@@ -936,7 +944,8 @@ def swap_command(db, actor, command):
         again = undo(db, actor, row, value.reason)
         return {"swap": projection(db, again), "undone": projection(db, row)}
     if kind in {"swap.withdraw", "swap.reject"}:
-        value = s.Decision.model_validate(command.payload)
+        # The one required reason: a coordinator's or approver's refusal of a swap both people agreed to.
+        value = (s.Decision if kind == "swap.reject" else s.SwapNote).model_validate(command.payload)
         require(row.status in OPEN_STATES, "SWAP_STATE", "This swap is already closed", 409)
         if kind == "swap.withdraw":
             own_person(db, actor)
@@ -954,7 +963,7 @@ def swap_command(db, actor, command):
             require(row.recipient_person_id in {None, person_id}, "FORBIDDEN", "Only an eligible recipient can respond to this offer", 403)
         publication = assert_live(db, row)
         if kind == "swap.accept":
-            value = s.Decision.model_validate(command.payload)
+            value = s.SwapNote.model_validate(command.payload)
             require(row.kind == "give", "SWAP_KIND", "An exchange requires a duty in return", 409)
             require(row.status == "offered", "SWAP_STATE", "Only an unanswered give-away can be accepted", 409)
             require_eligible(Eligibility(db, publication).recipient(row.first_assignment_id, person_id, row.expires_at, row.kind))
@@ -975,7 +984,7 @@ def swap_command(db, actor, command):
             row.counteroffered_at, row.status = m.now(), "counteroffered"
         elif kind == "swap.confirm":
             own_person(db, actor)
-            value = s.Decision.model_validate(command.payload)
+            value = s.SwapNote.model_validate(command.payload)
             require(row.status == "counteroffered", "SWAP_STATE", "The recipient must acknowledge the offer before confirmation", 409)
             require(actor.identity_id == row.proposer_id, "FORBIDDEN", "Only the original proposer can confirm this swap", 403)
             require_eligible(Eligibility(db, publication).pair(row.first_assignment_id, row.second_assignment_id,
