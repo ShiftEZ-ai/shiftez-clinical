@@ -8,6 +8,7 @@ EXECUTION_PROOFS = ('append_functions', 'append_targets', 'guard_functions', 'gu
                     'current_schema', 'nullable_added_columns', 'new_sql_tables')
 _IDENT = re.compile(r'[A-Za-z_][A-Za-z_0-9$]*\Z|"(?:[^"]|"")+"\Z')
 _NUMBER = re.compile(r'\d+(?:\.\d+)?\Z')
+_LINE_END = re.compile(r'[\r\n]')
 _TYPES = {'VARCHAR', 'CHAR', 'TEXT', 'INTEGER', 'INT', 'BIGINT', 'SMALLINT', 'BOOLEAN', 'BOOL',
           'TIMESTAMP', 'TIME', 'DATE', 'JSON', 'JSONB', 'NUMERIC', 'DECIMAL', 'FLOAT', 'DOUBLE',
           'REAL', 'UUID', 'BYTEA'}
@@ -37,22 +38,6 @@ def _forget_function(tokens, schema):
         name, _ = _name(tail)
         for key in ('append_functions', 'guard_functions'):
             schema.get(key, {}).pop(name, None)
-
-
-def clear_execution_proofs(schema):
-    for key in EXECUTION_PROOFS:
-        schema.pop(key, None)
-
-
-def _forget_function(tokens, schema):
-    tail = tokens[2:] if tokens[:2] in (['CREATE', 'FUNCTION'], ['DROP', 'FUNCTION']) else (
-        tokens[4:] if tokens[:4] == ['CREATE', 'OR', 'REPLACE', 'FUNCTION'] else [])
-    if tail[:2] == ['IF', 'EXISTS']:
-        tail = tail[2:]
-    if tail:
-        name, _ = _name(tail)
-        for key in ('append_functions', 'guard_functions'):
-            schema.get(key, {}).pop(name, None)
         if name and name.rsplit('.', 1)[-1] in {'rota_publication_guard', 'to_jsonb'}:
             schema.pop('retained_publication_guard', None)
 
@@ -60,11 +45,11 @@ def _forget_function(tokens, schema):
 def _tokens(sql):
     tokens, i = [], 0
     while i < len(sql):
-        if sql[i].isspace():
+        if sql[i] in ' \t\n\r\f':
             i += 1
         elif sql.startswith('--', i):
-            end = sql.find('\n', i)
-            i = len(sql) if end < 0 else end + 1
+            end = _LINE_END.search(sql, i + 2)
+            i = len(sql) if end is None else end.end()
         elif sql.startswith('/*', i):
             depth, i = 1, i + 2
             while depth and i < len(sql):
@@ -180,6 +165,96 @@ def _name(tokens):
 
 def _literal(token):
     return bool(_NUMBER.fullmatch(token) or token in {'NULL', 'TRUE', 'FALSE'} or token.startswith("'"))
+
+
+def _check_in_list(tokens):
+    if len(tokens) < 5 or tokens[1:3] != ['IN', '('] or tokens[-1] != ')' or not _IDENT.fullmatch(tokens[0]):
+        return None
+    values = tokens[3:-1:2]
+    if tokens[4:-1:2] != [','] * (len(values) - 1):
+        return None
+    if all(value.startswith("'") and '\\' not in value for value in values):
+        kind = 'text'
+    elif all(re.fullmatch(r'[0-9]{1,9}', value) for value in values):
+        kind, values = 'integer', [int(value) for value in values]
+    elif all(value in {'TRUE', 'FALSE'} for value in values):
+        kind = 'boolean'
+    else:
+        return None
+    return _identifier(tokens[0]), kind, frozenset(values)
+
+
+def check_definition(sql):
+    """The source proof for a plain CHECK membership expression."""
+    try:
+        return _check_in_list(_tokens(sql)) if isinstance(sql, str) else None
+    except ValueError:
+        return None
+
+
+def forget_checks(schema, table):
+    if table in schema.get('checks', {}):
+        del schema['checks'][table]
+
+
+def _named_check(tokens):
+    if (len(tokens) > 5 and tokens[0] == 'CONSTRAINT' and _IDENT.fullmatch(tokens[1])
+            and tokens[2:4] == ['CHECK', '('] and tokens[-1] == ')'):
+        definition = _check_in_list(tokens[4:-1])
+        if definition:
+            return _identifier(tokens[1]), definition
+    return None
+
+
+def _alter_actions(tokens):
+    return _name(tokens[2:]) if tokens[:2] == ['ALTER', 'TABLE'] else (None, [])
+
+
+def _forget_publication_guard(schema, table):
+    if table and table.rsplit('.', 1)[-1].lower() == 'publications':
+        schema.pop('retained_publication_guard', None)
+
+
+def _replace_check(schema, first, second=()):
+    table, actions = _alter_actions(first)
+    if not table or CURRENT_SCHEMA in table or actions[:2] != ['DROP', 'CONSTRAINT']:
+        return False
+    if second:
+        second_table, add = _alter_actions(second)
+        if second_table != table:
+            return False
+        parts = [actions, add]
+    else:
+        parts = _parts(actions, ',')
+    if len(parts) != 2:
+        return False
+    drop, add = parts
+    if len(drop) != 3 or not _IDENT.fullmatch(drop[2]) or add[:1] != ['ADD']:
+        return False
+    replacement = _named_check(add[1:])
+    if not replacement or replacement[0] != _identifier(drop[2]):
+        return False
+    name, new = replacement
+    old = schema.get('checks', {}).get(table, {}).get(name)
+    if not old or old[:2] != new[:2] or not old[2] < new[2]:
+        return False
+    schema['checks'][table][name] = new
+    _forget_publication_guard(schema, table)
+    return True
+
+
+def check_replacement(schema, sql, following=None):
+    """Consume one ALTER or an adjacent DROP/ADD pair, with no intervening effects."""
+    try:
+        statements = _statements(_tokens(sql))
+        if following is not None:
+            other = _statements(_tokens(following))
+            if len(statements) != 1 or len(other) != 1:
+                return False
+            statements += other
+        return len(statements) in {1, 2} and _replace_check(schema, *statements)
+    except ValueError:
+        return False
 
 
 def schema_template(sql, holes):
@@ -341,7 +416,7 @@ def _sequence_default(tokens):
     return len(tokens) - len(args) + end + 1 if args[end:end + 1] == [')'] else 0
 
 
-def _column_definition(tokens, *, new_table=False):
+def _column_definition(tokens, checks, *, new_table=False):
     if len(tokens) < 2 or not _IDENT.fullmatch(tokens[0]) or tokens[1] not in _TYPES:
         return False
     tail = tokens[2:]
@@ -354,9 +429,10 @@ def _column_definition(tokens, *, new_table=False):
         tail = tail[end + 1:]
     if tail[:2] in (['WITH', 'TIME'], ['WITHOUT', 'TIME']) and tail[2:3] == ['ZONE']:
         tail = tail[3:]
-    not_null, default = False, None
+    not_null, default, check_name = False, None, None
     while tail:
         if tail[:1] == ['CONSTRAINT'] and len(tail) > 2 and _IDENT.fullmatch(tail[1]):
+            check_name = _identifier(tail[1]) if tail[2:3] == ['CHECK'] else None
             tail = tail[2:]
         elif tail[:2] == ['NOT', 'NULL']:
             not_null, tail = True, tail[2:]
@@ -390,6 +466,9 @@ def _column_definition(tokens, *, new_table=False):
             expression = tail[2:end]
             if depth or not expression or 'SELECT' in expression or not _read_expression(expression):
                 return False
+            if check_name is not None:
+                checks[check_name] = _check_in_list(expression)
+                check_name = None
             tail = tail[end + 1:]
         else:
             return False
@@ -490,6 +569,7 @@ def _create_sequence(tokens):
 
 
 def _schema_statement(tokens, schema):
+    checks = {}
     if tokens[:2] == ['CREATE', 'TABLE']:
         tail = tokens[2:]
         new_table = tail[:3] != ['IF', 'NOT', 'EXISTS']
@@ -497,10 +577,13 @@ def _schema_statement(tokens, schema):
             tail = tail[3:]
         name, tail = _name(tail)
         if not (name and tail[:1] == ['('] and tail[-1:] == [')'] and all(
-                _column_definition(part, new_table=new_table) is not False for part in _parts(tail[1:-1], ','))):
+                _column_definition(part, checks, new_table=new_table) is not False for part in _parts(tail[1:-1], ','))):
             return False
+        forget_checks(schema, name)
         if new_table:
             schema.setdefault('new_sql_tables', set()).add(name)
+            if checks:
+                schema.setdefault('checks', {})[name] = checks
         return True
     if tokens[:2] == ['CREATE', 'SEQUENCE']:
         return _create_sequence(tokens)
@@ -512,8 +595,12 @@ def _schema_statement(tokens, schema):
             return False
         tail = tail[2:] if tail[1:2] == ['COLUMN'] else tail[1:]
         new_table = table in schema.get('new_sql_tables', ()) or bool(_guard_table(table, schema))
-        column = _column_definition(tail, new_table=new_table)
-        return column is not False and (not column[0] or column[1] not in (None, 'NULL'))
+        column = _column_definition(tail, checks, new_table=new_table)
+        if column is False or column[0] and column[1] in (None, 'NULL'):
+            return False
+        if checks:
+            schema.setdefault('checks', {}).setdefault(table, {}).update(checks)
+        return True
     return False
 
 
@@ -910,13 +997,16 @@ def preserves_schema(sql):
         return False
 
 
-def analyze_sql(sql, *, schema=None):
+def analyze_sql(sql, *, schema=None, replace_checks=True):
     """Return a proven class and actionable uncertainty; unknown SQL always needs approval."""
     try:
-        statements = iter(_statements(_tokens(sql)))
-        result = 'additive'
+        statements = _statements(_tokens(sql))
+        result, consumed = 'additive', False
         proof = schema if schema is not None else {}
-        for tokens in statements:
+        for index, tokens in enumerate(statements):
+            if consumed:
+                consumed = False
+                continue
             _parts(tokens, ',')  # Reject malformed or injected parenthesis boundaries.
             _forget_function(tokens, proof)
             if 'retained_publication_guard' in proof and tokens[:2] == ['CREATE', 'TRIGGER']:
@@ -927,10 +1017,14 @@ def analyze_sql(sql, *, schema=None):
             if 'retained_publication_guard' in proof and tokens[:2] in (['ALTER', 'TABLE'], ['CREATE', 'TABLE']):
                 relation = tokens[5:] if tokens[2:5] == ['IF', 'NOT', 'EXISTS'] else tokens[2:]
                 table, _ = _name(relation)
-                if table and table.rsplit('.', 1)[-1].lower() == 'publications':
-                    proof.pop('retained_publication_guard')
+                _forget_publication_guard(proof, table)
             if (_additive_routine(tokens) or _grant(tokens) or _schema_statement(tokens, proof)
                     or (tokens[:1] == ['SELECT'] and _read_expression(tokens))):
+                continue
+            if replace_checks and _replace_check(proof, tokens):
+                continue
+            if replace_checks and index + 1 < len(statements) and _replace_check(proof, tokens, statements[index + 1]):
+                consumed = True
                 continue
             if (_guard_routine(tokens, proof) or _new_table_guard(tokens, proof)
                     or _append_routine(tokens, proof) or _additive_trigger(tokens, schema)):
@@ -946,15 +1040,17 @@ def analyze_sql(sql, *, schema=None):
                 result = 'fill_only'
                 continue
             clear_execution_proofs(proof)
+            proof.pop('checks', None)
             # Preflight must still find an index after a statement that needs ancestor facts.
             if record_precheck := proof.get('record_duplicate_precheck'):
-                for later in statements:
+                for later in statements[index + 1:]:
                     _index(later, {'record_duplicate_precheck': record_precheck})
             return {'class': 'destructive', 'findings': ['SQL is destructive or not statically proven safe: ' + ' '.join(tokens[:6])]}
         return {'class': result, 'findings': []}
     except (ValueError, IndexError, RecursionError):
         if schema is not None:
             clear_execution_proofs(schema)
+            schema.pop('checks', None)
         return {'class': 'destructive', 'findings': ['SQL cannot be statically parsed safely']}
 
 

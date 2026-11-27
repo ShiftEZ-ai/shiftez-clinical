@@ -1,7 +1,7 @@
 """Raw SQL safety proofs include deferred trigger and routine execution."""
 import pytest
 
-from migrations.sql_safety import analyze_sql
+from migrations.sql_safety import analyze_sql, check_replacement
 
 
 def test_nested_boolean_inline_check_is_additive():
@@ -14,6 +14,68 @@ def test_nested_boolean_inline_check_is_additive():
 def test_named_inline_foreign_key_is_additive():
     assert analyze_sql('ALTER TABLE events ADD COLUMN email_sender_identity_id VARCHAR(36) '
                        'CONSTRAINT fk_events_email_sender REFERENCES identities(id)')['class'] == 'additive'
+
+
+@pytest.mark.parametrize('actions,expected', [
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))",
+     'additive'),
+    ("DROP CONSTRAINT role_check; ALTER TABLE items ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))",
+     'additive'),
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('ONE', 'two', 'three'))",
+     'destructive'),
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', NULL))",
+     'destructive'),
+    ("DROP CONSTRAINT role_check CASCADE, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))",
+     'destructive'),
+    ("DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three')), DROP COLUMN other",
+     'destructive'),
+    ("DROP CONSTRAINT role_check; INSERT INTO items VALUES ('three'); "
+     "ALTER TABLE items ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))", 'destructive'),
+    ("DROP CONSTRAINT role_check; -- comment\rDELETE FROM items;\n"
+     "ALTER TABLE items ADD CONSTRAINT role_check CHECK (role IN ('one', 'two', 'three'))", 'destructive'),
+], ids=['atomic', 'adjacent', 'changed-literal', 'null', 'cascade', 'extra-action', 'interleaved-write',
+        'carriage-return-comment'])
+def test_check_constraint_replacement_uses_named_sql_definition(actions, expected):
+    old = "CREATE TABLE items (role VARCHAR(32) CONSTRAINT role_check CHECK (role IN ('one', 'two'))); "
+    assert analyze_sql(old + 'ALTER TABLE items ' + actions)['class'] == expected
+
+
+@pytest.mark.parametrize('drop,expression,suffix', [
+    ('items DROP CONSTRAINT role_check', "role IN ('one', 'two', 'three')", ' NOT VALID'),
+    ('items DROP CONSTRAINT role_check', "role IN ('one', 'two', 'three')", ' NO INHERIT'),
+    ('items DROP CONSTRAINT role_check', "role IN ('one', 'two', 'three') OR enabled", ''),
+    ('items DROP CONSTRAINT role_check', "role NOT IN ('one', 'two', 'three')", ''),
+    ('items DROP CONSTRAINT role_check', "role\u00a0 IN ('one', 'two', 'three')", ''),
+    ('items DROP CONSTRAINT IF EXISTS role_check', "role IN ('one', 'two', 'three')", ''),
+    ('ONLY items DROP CONSTRAINT role_check', "role IN ('one', 'two', 'three')", ''),
+], ids=['not-valid', 'no-inherit', 'or-predicate', 'not-in', 'non-ascii-identifier', 'if-exists', 'only'])
+def test_widening_needs_an_unmodified_check_replacement(drop, expression, suffix):
+    old = "CREATE TABLE items (role TEXT CONSTRAINT role_check CHECK (role IN ('one', 'two'))); "
+    sql = old + f'ALTER TABLE {drop}, ADD CONSTRAINT role_check CHECK ({expression}){suffix}'
+    assert analyze_sql(sql)['class'] == 'destructive'
+
+
+@pytest.mark.parametrize('column_type,old,new,expected', [
+    ('INTEGER', '1, 2', '1, 2, 3', 'additive'),
+    ('INTEGER', '1, 2', '01, 2', 'destructive'),
+    ('BOOLEAN', 'false', 'false, true', 'additive'),
+    ('BOOLEAN', 'true, false', 'true', 'destructive'),
+    ('TEXT', "'1', '2'", '1, 2, 3', 'destructive'),
+], ids=['integer', 'integer-equal', 'boolean', 'boolean-narrowing', 'kind-change'])
+def test_widening_compares_values_of_the_same_literal_kind(column_type, old, new, expected):
+    sql = (f'CREATE TABLE items (role {column_type} CONSTRAINT role_check CHECK (role IN ({old}))); '
+           f'ALTER TABLE items DROP CONSTRAINT role_check, ADD CONSTRAINT role_check CHECK (role IN ({new}))')
+    assert analyze_sql(sql)['class'] == expected
+
+
+def test_widening_a_publication_check_invalidates_the_retained_guard():
+    schema = {}
+    old = "CREATE TABLE publications (kind TEXT CONSTRAINT kind_check CHECK (kind IN ('one', 'two')))"
+    assert analyze_sql(old, schema=schema)['class'] == 'additive'
+    schema['retained_publication_guard'] = {'kind'}
+    assert check_replacement(schema, "ALTER TABLE publications DROP CONSTRAINT kind_check, "
+                             "ADD CONSTRAINT kind_check CHECK (kind IN ('one', 'two', 'three'))")
+    assert 'retained_publication_guard' not in schema
 
 
 @pytest.mark.parametrize('suffix,kind', [('', 'destructive'), ('DELETE FROM history;', 'destructive')])

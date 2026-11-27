@@ -188,6 +188,7 @@ def capture_before(db, actor, command, *, skip_contact_snapshots):
     for row in rows:
         event_window = []
         snapshots[row.id] = domain_snapshot(db, row, operational=True, shared_inputs=shared,
+                                            include_manifest=False,
                                             live_memberships=rank_preview, _event_currency=event_window)
         if event_window:
             event_windows.append(event_window)
@@ -276,6 +277,7 @@ def build_preview(engine, prepared):
             memo[(ident, w.revision)] = baseline
             workspaces.append({"workspace_id": w.id, "name": w.name, "status": w.status, "before": previous,
                 "after": domain_snapshot(db, w, operational=True, shared_inputs=shared,
+                                         include_manifest=False,
                                          live_memberships=rank_preview, _event_now=captured_at),
                 "saved": domain_snapshot(db, w, shared_inputs=shared, mandatory_rules=False, _event_now=captured_at)
                 if w.status in LIVE and not rank_preview else None})
@@ -286,8 +288,9 @@ def rank_cover_impact(workspaces, at):
     published, drafts = [], []
     for workspace in workspaces:
         before, after = workspace['before'], workspace['after']
-        old = finding_index(evaluate(before, explain_findings=False))
-        new = finding_index(evaluate(after, explain_findings=False))
+        hours = {}
+        old = finding_index(evaluate(before, explain_findings=False, workload_hours_cache=hours))
+        new = finding_index(evaluate(after, explain_findings=False, workload_hours_cache=hours))
         invalidated = {new[key].get('shift_id') for key in new.keys() - old.keys()
                        if new[key]['severity'] == 'error'} & set(after['focus_ids'])
         target = published if workspace['status'] == 'published' else drafts
@@ -308,18 +311,19 @@ def evaluate_preview(prepared):
         return json_value({**prepared['response'], 'rank_cover': rank_cover_impact(prepared['workspaces'], at)})
     impacts = []
     for w in prepared["workspaces"]:
-        previous = evaluate(w["before"], explain_findings=False)
-        proposed = evaluate(w["after"], explain_findings=False)
+        hours = {}
+        previous = evaluate(w["before"], explain_findings=False, workload_hours_cache=hours)
+        proposed = evaluate(w["after"], explain_findings=False, workload_hours_cache=hours)
         old, new = finding_index(previous), finding_index(proposed)
         introduced, resolved = new.keys() - old.keys(), old.keys() - new.keys()
         # Decorate only changed observations; re-citations need no extra evaluation.
-        new_findings = finding_index(evaluate(w["after"])) if introduced else {}
-        old_findings = finding_index(evaluate(w["before"])) if resolved else {}
+        new_findings = finding_index(evaluate(w["after"], workload_hours_cache=hours)) if introduced else {}
+        old_findings = finding_index(evaluate(w["before"], workload_hours_cache=hours)) if resolved else {}
         impacts.append({"workspace_id": w["workspace_id"], "name": w["name"], "status": w["status"],
             "before_error_count": previous["error_count"], "after_error_count": proposed["error_count"],
             "before_warning_count": previous["warning_count"], "after_warning_count": proposed["warning_count"],
             "introduced": [f for key, f in new_findings.items() if key in introduced],
             "resolved": [f for key, f in old_findings.items() if key in resolved],
             "recited": recited_findings(old, new),
-            "saved_draft_validation": evaluate(w["saved"]) if w["saved"] is not None else None})
+            "saved_draft_validation": evaluate(w["saved"], workload_hours_cache=hours) if w["saved"] is not None else None})
     return json_value({**prepared["response"], "impacts": impacts})
