@@ -657,7 +657,7 @@ function searchOptionControls(o:SearchOptionsSpec,input:HTMLInputElement,typed:(
  *  holds before the search and filters, or undefined when the server applied them, and the noun): the toolbar then
  *  says what they hide, none left included ("Filtered: 9 of 43 people shown · Show all"), so no list filtered to
  *  nothing is a dead end. */
-export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>void;search:HTMLInputElement|null;shown:(count:number,of:number|undefined,noun:[string,string])=>void}{
+export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>void;search:HTMLInputElement|null;searchPending:()=>boolean;shown:(count:number,of:number|undefined,noun:[string,string])=>void}{
   const tool=(label:string,glyph:IconName)=>el('button',{type:'button',class:'dt-tool',...popup('dialog'),'aria-label':label,'data-tip':label},icon(glyph),el('span',{class:'dt-tool-label'},label),el('span',{class:'dt-tool-count'}));
   const state=(b:HTMLElement,label:string,on:boolean,count='',detail='')=>{
     b.classList.toggle('on',on);b.querySelector('.dt-tool-count')!.textContent=count;
@@ -666,9 +666,9 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
     const key=spec.key&&`${spec.key}:${label}`;
     anchor.addEventListener('click',()=>popover(anchor,(panel,close)=>{panel.classList.add('dt-pop');build(panel,close);},{label,placement:'below',key}));
     if(key)queueMicrotask(()=>adoptPopover(key,anchor));};
-  const parts:HTMLElement[]=[];let search:HTMLInputElement|null=null,syncSearch:(()=>void)|undefined;
+  const parts:HTMLElement[]=[];let search:HTMLInputElement|null=null,syncSearch:(()=>void)|undefined,timer=0;
   if(spec.search){
-    const o=spec.search;let timer=0;
+    const o=spec.search;
     // The one panel search (dom.ts panelSearch): Esc clears what is typed first, and only then reaches the panel or dock
     // around it (live 235391b: a docked list's first Esc closed it with the text in it).
     const input=panelSearch(o.label,o.placeholder||'Search',undefined,'dt-search');input.value=o.value;input.maxLength=120;
@@ -794,7 +794,7 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
   });}
   const root=el('div',{class:'dt-toolbar',role:'group','aria-label':spec.label},savedBtn,...(spec.scope||[]),...parts,...(spec.actions||[]),strip);
   sync();
-  return {root,sync,search,shown:(count,of,noun)=>{drawn=[count,of,noun];paintStrip();}};
+  return {root,sync,search,searchPending:()=>!!timer,shown:(count,of,noun)=>{drawn=[count,of,noun];paintStrip();}};
 }
 
 let tableAccount='';
@@ -1617,14 +1617,15 @@ export function dataTable<T>(spec:TableSpec<T>){
     // What each saved view's relative values mean today (its menu shows the dates or "per viewer").
     void resolveOperands(saved.flatMap(x=>relativeLines(x.definition.conditions)),scope()).then(()=>bar.sync());const named=v.viewId?saved.find(x=>x.id===v.viewId):undefined;
     if(v.viewId&&!named){v.viewId='';draw();return;}
-    const first=!!named&&!v.hydrated;v.hydrated=true;
+    const first=!!named&&!v.hydrated,typing=bar.searchPending();v.hydrated=true;
     // The view's search comes back as saved, its options with it (both or neither: options alone would change a search typed since).
-    if(first&&!v.q&&!normalSearch(v.search_options)){v.q=named!.definition.q||'';v.search_options=normalSearch(named!.definition.search_options);}
+    if(first&&!typing&&!v.q&&!normalSearch(v.search_options)){v.q=named!.definition.q||'';v.search_options=normalSearch(named!.definition.search_options);}
     // The saved view's As of day comes back with it on its first read (a reload); a day changed since stays.
     // …unless the day was changed while the views were on their way (that newer choice stays). A list that reads its
     // rows for the day (spec.asOf) redraws once they are read: drawn now, the day would show over the previous day's rows.
     if(first&&!givenDay&&v.as_of===dayAtLoad&&(named!.definition.as_of||'')!==(v.as_of||'')){setAsOf(named!.definition.as_of||'');if(!spec.asOf)draw();return;}
-    if(searchKey()!==reportedSearch){if(bar.search)bar.search.value=v.q;draw();}else bar.sync();}).catch(()=>undefined);
+    // The toolbar already owns the pending input's redraw.
+    if(!typing&&searchKey()!==reportedSearch){if(bar.search)bar.search.value=v.q;draw();}else bar.sync();}).catch(()=>undefined);
   /** `parts` lets another toolbar (the planner's) offer this table's Group and Sort. */
   /** Every row's id in the order drawn, over all pages (not just the rows on screen), and one row's place in it. */
   const ids=()=>drawnOrder().map(x=>spec.rowId(x.r));

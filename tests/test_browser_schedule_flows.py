@@ -124,13 +124,29 @@ def test_replace_from_a_date_trims_the_published_rota_on_publish(browser, live_s
     context, page = sign_in(browser, live_server, 'coordinator')
     errors = watch(page)
     try:
-        dialog, fit = new_draft(page, 'Replacement rota', '2026-10-10', '2026-10-20')
+        dialog, fit = new_draft(page, 'Replacement rota', '2026-10-09', '2026-10-21')
+        expect(fit).to_contain_text('The draft runs 14 Oct 2026 – 21 Oct 2026.')
         fit.get_by_role('radio', name=re.compile('^Replace from a date')).check()
+        expect(fit).to_contain_text('this draft takes over from 9 Oct 2026.')
+        # A takeover date not chosen by the person is the suggestion, which follows the first day.
+        dialog.get_by_label('First day', exact=True).fill('2026-10-10')
+        expect(fit).to_contain_text('this draft takes over from 10 Oct 2026.')
+        # A chosen one stays when the answer for the dates changed before it is drawn after it (it went back to 10 Oct).
+        held = []
+        overlaps = re.compile(r'.*/api/schedule/overlaps\?starts_on=2026-10-10&ends_on=2026-10-21$')
+        page.route(overlaps, lambda route: held.append(route))
+        dialog.get_by_label('Last day', exact=True).fill('2026-10-20')
+        wait_held(page, held)
         takes_over = fit.get_by_label('Takes over from', exact=True)
         expect(takes_over).to_have_attribute('min', '2026-10-05')
         expect(takes_over).to_have_attribute('max', '2026-10-13')
         takes_over.fill('2026-10-12')
-        expect(fit).to_contain_text('October rota stays in force until 11 Oct 2026; this draft takes over from 12 Oct 2026.')
+        words = 'October rota stays in force until 11 Oct 2026; this draft takes over from 12 Oct 2026.'
+        expect(fit).to_contain_text(words)
+        held.pop().continue_()
+        page.unroute(overlaps)
+        expect(fit).to_contain_text('The draft runs 14 Oct 2026 – 20 Oct 2026.')
+        expect(fit).to_contain_text(words)
         dialog.get_by_role('button', name='Create draft from 12 Oct', exact=True).click()
         expect(dialog).to_have_count(0, timeout=15000)
         settled(page)
