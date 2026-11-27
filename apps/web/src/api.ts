@@ -620,7 +620,7 @@ export function takeUndo():{said:string;done?:string;run:()=>Promise<Undone>}|nu
     try{for(const c of steps){
       requireSession(generation);
       const r:any=await command(c.kind,c.payload,c.target_id??undefined,(c.target_id&&seen.get(c.target_id))||c.expected_revision||undefined);done.push({kind:c.kind,result:r});
-      if(c.kind==='bulk.apply'&&c.payload.undo_of){
+      if(c.kind==='bulk.apply'&&c.payload?.undo_of){
         const pending=r?.items?.[0]?.results?.[0];
         if(awaitingApproval([pending]).length){done.push({kind:'policy.'+pending.approval.action,result:pending});break;}
       }
