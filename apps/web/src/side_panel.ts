@@ -208,7 +208,8 @@ function show(o:DockOptions,how:'within'|'replace'|'back'='replace',to?:Return){
   aside.className=`side-panel dock-panel ${o.className||''}`.trim();aside.setAttribute('aria-labelledby',id);
   // × and Esc close every panel in the slot; Close after a save goes back to a covered page panel.
   const all=()=>{stack=[];const c=covered;covered=null;finish(true);if(c?.dismiss)c.dismiss();else if(c)uncover();};
-  const close=()=>{if(covered?.back){stack=[];finish(false);uncover(true);}else all();},tryClose=()=>{pending=null;g.tryClose();};
+  // A late close (a save's, after its refresh) closes only this panel: once it has gone, another one stays open.
+  const close=()=>{if(open?.aside!==aside)return;if(covered?.back){stack=[];finish(false);uncover(true);}else all();},tryClose=()=>{pending=null;g.tryClose();};
   const prev=stack.at(-1);
   const back=prev?{label:prev.title,go:()=>{pending=()=>{const p=stack.pop()!;show(p.o,'back',p.focus);};g.tryClose();}}
     :covered?.back?{label:covered.label,go:()=>{pending=()=>{finish(false);uncover(true);};g.tryClose();}}:undefined;
