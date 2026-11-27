@@ -73,8 +73,10 @@ def held_for_check(page, words=WAITS, press=False):
     check · m:ss" on one clock, one that ended without a result "Needs a complete check". Returns the tip."""
     submit = submit_of(page)
     expect(submit).to_have_attribute('aria-disabled', 'true', timeout=20000)
-    tip = re.compile('^' + re.escape(words) + (r' · \d+:\d\d$' if words == WAITS else '$'))
+    reason = re.escape(words) + (r' · \d+:\d\d' if words == WAITS else '')
+    tip = re.compile('^' + reason + '$')
     expect(submit).to_have_attribute('data-tip', tip, timeout=20000)
+    expect(submit).to_have_accessible_description(re.compile(reason))
     why = submit.evaluate("b => (b.getAttribute('aria-describedby') || '').split(' ')"
                           ".map(id => document.getElementById(id)).find(n => n?.matches('.why-unavailable'))?.id || ''")
     assert why, "the reason is the held step's description"
