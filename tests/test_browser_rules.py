@@ -214,7 +214,7 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         page.clock.fast_forward(60_000)
         expect(review.get_by_text('Didn’t load in 1:00.', exact=True)).to_be_visible()
         expect(retry).to_be_visible()
-        expect(activate).to_be_disabled()
+        expect(activate).to_be_enabled()
         retry.click()
         expect(review.get_by_text(warning, exact=True)).to_be_visible()
         expect(activate).to_have_accessible_description(warning)
@@ -231,6 +231,52 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         context.close()
     assert any(p['id'] == old['id'] for p in h.get('approver', '/api/policies?status=retired')['policies'])
     assert any(p['id'] == new['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
+
+
+@pytest.mark.parametrize('own', [True, False], ids=['proposer', 'independent'])
+def test_failed_safety_protection_question_only_blocks_the_proposer(browser, live_server, h, own):
+    from .governance_support import identity
+
+    reviewer = identity(h, 'proposing_approver', ['coordinator', 'approver'])
+    h.command('admin', 'self_approval.grant', {'identity_id': reviewer, 'actions': ['rule.activate'],
+        'starts_on': '2020-01-01', 'reason': 'Temporary review cover'})
+    old = h.policy({'kind': 'min_rest', 'hours': 11})
+    new = h.command('proposing_approver', 'policy.create', {
+        'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
+        'starts_on': '2020-01-01',
+        'definition': {'replaces_id': old['id'], 'rule': {'kind': 'min_rest', 'hours': 9}}})['record']
+    role = 'proposing_approver' if own else 'approver'
+    context, page = sign_in(browser, live_server, role)
+
+    def unavailable(route):
+        if route.request.method == 'POST':
+            route.fulfill(status=503, json={'error': {'code': 'UNAVAILABLE', 'message': 'Protection question unavailable'}})
+        else:
+            route.continue_()
+
+    try:
+        page.route(f"**/api/policies/{new['id']}/review", unavailable)
+        navigate(page, 'rules')
+        row = page.locator(f'.rule-item[data-rule-ids~="{new["id"]}"]')
+        row.get_by_role('button', name=re.compile(r'^Review(?: 1)?$')).click()
+        review = page.get_by_role('dialog', name=re.compile(r'^Review '))
+        activate = review.get_by_role('button', name='Activate', exact=True)
+        message = 'Could not check safety protection.'
+        expect(review.get_by_text(message, exact=True)).to_be_visible()
+        expect(review.get_by_role('button', name='Retry', exact=True)).to_be_visible()
+        expect(activate).to_have_accessible_description(message)
+        review.get_by_label('Reason', exact=True).fill('Review the new rest limit')
+        if own:
+            expect(activate).to_be_disabled()
+        else:
+            expect(activate).to_be_enabled()
+            activate.click()
+            expect(review).to_have_count(0)
+    finally:
+        context.close()
+    active = {p['id'] for p in h.get('approver', '/api/policies?status=active')['policies']}
+    assert (old['id'] in active) is own
+    assert (new['id'] in active) is not own
 
 
 def test_override_is_proposed_from_the_rule_form_and_refused_when_not_narrower(browser, live_server, h):
