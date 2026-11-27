@@ -141,8 +141,8 @@ def run_browser_install(tmp_path, *, image="matching", with_debs=True, dpkg_stat
     tar() {{ :; }}
     sudo() {{
       case "$1 $2" in
-        'apt-get install') test "$3 $4 $5 $6" = "-y --no-download --no-install-recommends $RUNNER_TEMP/public-ci-apt/browser.deb" \
-                             && test "$#" = 6 || return 2
+        'apt-get install') test "${{*:3}}" = "-y --no-download --no-remove --no-install-recommends -o Dir::Cache::Archives=$RUNNER_TEMP/public-ci-apt/ $RUNNER_TEMP/public-ci-apt/browser.deb" \
+                             && test "$#" = 9 || return 2
                            echo 'apt-get install'; return {dpkg_status};;
         'tee /etc/apt/apt.conf.d/80-ci-retries') cat;;
         *) return 2;;
@@ -183,7 +183,9 @@ def test_the_offline_set_is_planned_by_apt_not_raw_dpkg():
     script = install_script()
     offline = script[:script.index("for attempt in 1 2 3; do")]
     assert "dpkg -i" not in offline and "--auto-deconfigure" not in offline
-    assert 'sudo apt-get install -y --no-download --no-install-recommends "${debs[@]}"' in offline
+    # The bundle is APT's archive directory for this call, or --no-download would drop every named .deb.
+    assert ('sudo apt-get install -y --no-download --no-remove --no-install-recommends \\\n'
+            '    -o "Dir::Cache::Archives=$apt_bundle/" "${debs[@]}"') in offline
 
 
 @pytest.mark.parametrize("behaviour, repairs, code", [

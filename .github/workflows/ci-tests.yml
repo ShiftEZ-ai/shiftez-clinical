@@ -144,7 +144,9 @@ jobs:
           fallback_reason='empty set'
         # APT plans the whole set before dpkg runs: it orders a paired upgrade (a data package that Breaks the
         # installed runtime package) and refuses an unsatisfiable set untouched, so the online fallback starts clean.
-        elif sudo apt-get install -y --no-download --no-install-recommends "${debs[@]}"; then
+        # APT takes a named .deb as present only inside its archive directory; elsewhere --no-download drops it.
+        elif sudo apt-get install -y --no-download --no-remove --no-install-recommends \
+            -o "Dir::Cache::Archives=$apt_bundle/" "${debs[@]}"; then
           printf '::notice::browser system packages: offline (%s debs, image %s)\n' "${#debs[@]}" "$ImageVersion"
           exit 0
         else
