@@ -938,6 +938,11 @@
       "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
     },
     {
+      "node": "tests/test_undo_single_step.py::test_second_undo_is_refused_not_a_redo",
+      "owner": "maintainer",
+      "reason": "The test is renamed to test_undo_walks_back_available_edits_then_refuses and keeps every assertion."
+    },
+    {
       "node": "tests/test_worker_write_timeouts.py::test_heartbeat_timeouts_cancel_only_near_lease_expiry",
       "owner": "maintainer",
       "reason": "Parametrised over the injected and greedy engines. The injected case keeps every original assertion; the greedy case adds the same heartbeat check for the greedy fallback."
