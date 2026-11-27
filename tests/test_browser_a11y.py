@@ -555,11 +555,22 @@ HIT_AREA = r"""nodes => nodes.map(n => {
   const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
   const box = {left: r.left - x, top: r.top - y, right: r.right + x, bottom: r.bottom + y};
   // A corner with a radius does not take the pointer outside its curve, so each corner is probed on the curve (45 degrees).
-  const shape = grown ? b : getComputedStyle(n), side = Math.min(box.right - box.left, box.bottom - box.top);
-  const inset = v => 1 + Math.ceil((v.endsWith('%') ? parseFloat(v) / 100 * side : parseFloat(v) || 0) * (1 - Math.SQRT1_2));
-  const [tl, tr, br, bl] = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'].map(c => inset(shape[`border${c}Radius`]));
+  const shape = grown ? b : getComputedStyle(n), side = (r => Math.min(r.right - r.left, r.bottom - r.top));
+  const inset = (v, s) => 1 + Math.ceil((v.endsWith('%') ? parseFloat(v) / 100 * s : parseFloat(v) || 0) * (1 - Math.SQRT1_2));
+  const corners = [['TopLeft', box.left, box.top, 1, 1], ['TopRight', box.right, box.top, -1, 1],
+    ['BottomRight', box.right, box.bottom, -1, -1], ['BottomLeft', box.left, box.bottom, 1, -1]]
+    .map(([c, cx, cy, dx, dy]) => { const k = inset(shape[`border${c}Radius`], side(box)); return [c, cx + dx * k, cy + dy * k, dx, dy]; });
+  // A clipping parent (a scroll box) whose own corner with a radius holds this corner shapes it the same way: the probe
+  // moves onto that parent's curve when it lies further in.
+  const onParentCurve = ([c, px, py, dx, dy]) => {
+    const hit = document.elementFromPoint(px, py);
+    if (!hit || hit === n || !hit.contains(n)) return [px, py];
+    const a = hit.getBoundingClientRect(), k = inset(getComputedStyle(hit)[`border${c}Radius`], side(a));
+    const qx = (dx > 0 ? a.left : a.right) + dx * k, qy = (dy > 0 ? a.top : a.bottom) + dy * k;
+    return dx * (qx - px) > 0 && dy * (qy - py) > 0 ? [qx, qy] : [px, py];
+  };
   // What each corner that misses lands on instead, so a failure names the neighbour or parent in the way.
-  const misses = [[box.left + tl, box.top + tl], [box.right - tr, box.top + tr], [box.right - br, box.bottom - br], [box.left + bl, box.bottom - bl]]
+  const misses = corners.map(onParentCurve)
     .map(([px, py]) => [px, py, document.elementFromPoint(px, py)]).filter(([, , hit]) => !hit || !(hit === n || n.contains(hit)))
     .map(([px, py]) => `${Math.round(px)},${Math.round(py)} ` + document.elementsFromPoint(px, py).slice(0, 3)
       .map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].map(c => '.' + c).join('')).join(' < '));
@@ -615,7 +626,7 @@ def test_selection_boxes_switches_links_and_search_reach_the_target_size(browser
         measure(search_box)
         edge = search_box.first.bounding_box()
         assert edge
-        page.mouse.click(edge['x'] + edge['width'] - 2, edge['y'] + 2)
+        page.mouse.click(edge['x'] + edge['width'] - 3, edge['y'] + edge['height'] / 2)
         expect(main.locator('.dt-toolbar .dt-search:visible')).to_be_focused()
         set_layout(page, 'Table')
         table = main.locator('.dt-table')
