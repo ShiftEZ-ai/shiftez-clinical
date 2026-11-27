@@ -557,7 +557,8 @@ HIT_AREA = r"""nodes => nodes.map(n => {
   // What each corner that misses lands on instead, so a failure names the neighbour or parent in the way.
   const misses = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.right - 1, box.bottom - 1], [box.left + 1, box.bottom - 1]]
     .map(([px, py]) => [px, py, document.elementFromPoint(px, py)]).filter(([, , hit]) => !hit || !(hit === n || n.contains(hit)))
-    .map(([px, py, hit]) => `${Math.round(px)},${Math.round(py)} ${hit ? hit.tagName.toLowerCase() + '.' + [...hit.classList].join('.') : 'nothing'}`);
+    .map(([px, py]) => `${Math.round(px)},${Math.round(py)} ` + document.elementsFromPoint(px, py).slice(0, 3)
+      .map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].map(c => '.' + c).join('')).join(' < '));
   const name = n.getAttribute('aria-label') || n.querySelector('[aria-label]')?.getAttribute('aria-label') || n.textContent.trim();
   return {name, width: box.right - box.left, height: box.bottom - box.top, lands: !misses.length, misses};
 })"""
@@ -599,7 +600,7 @@ def test_selection_boxes_switches_links_and_search_reach_the_target_size(browser
         expect(locator.first).to_be_attached()
         found = locator.evaluate_all(HIT_AREA)
         small = [t for t in found if min(t['width'], t['height']) < at_least - 0.01 or not t['lands']]
-        assert found and not small, (viewport['width'], small)
+        assert found and not small, f"{viewport['width']}: " + '; '.join(f"{t['name']} {t['width']:.0f}x{t['height']:.0f} misses {t['misses']}" for t in small)
 
     try:
         navigate(page, 'requests')
