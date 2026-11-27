@@ -2999,6 +2999,11 @@ def create_app(settings: Settings | None = None, engine=None):
             representation = [type or "", status or "", person_id, id, limit, offset, q, sorted(people),
                               sort_by, sort_direction, decided, for_me,
                               collection_filter.model_dump(mode="json") if collection_filter else None]
+            if id:
+                # History permissions changed, and dated programme authority can expire without a write.
+                representation.append("request-history-v2")
+                if actor.permits("programme_lead"):
+                    representation.append(independence.today(db, actor.department_id).isoformat())
             tag = availability.requests_etag(db, actor, representation)
             cached = conditional_response(request, tag)
             if isinstance(cached, Response):
@@ -3211,7 +3216,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             actor = actor_for(request, db)
             row = scoped(db, m.RequestRecord, request_id, actor)
-            require(actor.person_id == row.person_id or availability.may_decide(db, actor, row),
+            require(row.id in availability.readable_request_balance_ids(db, actor, [row.id]),
                     'FORBIDDEN', 'Only the person and permitted decision makers can read this balance', 403)
             return leave_balances.balances(db, actor, row.person_id, request=row) if row.kind == 'leave' else []
 
@@ -4121,6 +4126,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     m.AuditEvent.department_id == actor.department_id,
                     m.AuditEvent.actor_id == m.Identity.id).exists())
                 .order_by(m.Identity.display_name, m.Identity.id).limit(2001))) if people else []
+            audit_log.mask_balance_details(db, actor, page['events'])
             return {**page, "events": audit_log.subjects(db, actor.department_id, page['events']),
                     "offset": offset, "limit": limit,
                     "people": [{"id": i, "display_name": n} for i, n in actors[:2000]],

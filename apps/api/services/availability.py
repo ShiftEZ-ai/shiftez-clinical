@@ -536,6 +536,15 @@ def may_decide(db, actor, row, *, approval_context=None):
     return decision_allowed(db, actor, row, include_independence=False, approval_context=approval_context)
 
 
+def readable_request_balance_ids(db, actor, request_ids):
+    if not request_ids:
+        return set()
+    row = m.RequestRecord
+    may_decide_request = decision_scope(db, actor, row, include_independence=False)
+    return set(db.scalars(select(row.id).where(row.department_id == actor.department_id, row.id.in_(request_ids),
+                                               or_(row.person_id == actor.person_id, may_decide_request))))
+
+
 def owns_request(actor, row):
     """Current submitter or subject ownership, including after an identity is relinked."""
     return (row.created_by == actor.identity_id
@@ -1702,10 +1711,13 @@ def _history(db, actor, source, row, item):
     if source == "availability":
         linked = or_(linked, m.AuditEvent.id.in_(
             _untargeted_recording_events(row.department_id, [row.id]).with_only_columns(m.AuditEvent.id)))
+    # Refused commands stay in the audit trail, outside the request's decision history.
+    recorded = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, linked,
+                                                         m.AuditEvent.action != 'command.refused')
+                              .order_by(m.AuditEvent.created_at, m.AuditEvent.seq)))
+    show_balance = (source == 'request' and any((e.detail or {}).get('leave_balance_overdrawn') for e in recorded)
+                    and row.id in readable_request_balance_ids(db, actor, [row.id]))
     return events + [{"action": e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": "" if e.reason == e.action else e.reason,
                       **({"self_approved": True} if (e.detail or {}).get("self_approved") else {}),
-                      **({"leave_balance_overdrawn": True} if (e.detail or {}).get("leave_balance_overdrawn") else {})}
-                     # A refused command changed nothing: it stays in the audit trail, not in what was done to the request.
-                     for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, linked,
-                                                                    m.AuditEvent.action != 'command.refused')
-                                         .order_by(m.AuditEvent.created_at, m.AuditEvent.seq))]
+                      **({"leave_balance_overdrawn": True} if show_balance and (e.detail or {}).get("leave_balance_overdrawn") else {})}
+                     for e in recorded]

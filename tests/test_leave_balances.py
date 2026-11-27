@@ -1,8 +1,14 @@
 """Leave allowances share decision, withdrawal and Undo across single and batch requests."""
+import json
+from datetime import date
+
+import pytest
 from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from packages.contracts.schemas import PERMISSIONS
+from .governance_support import identity
 from .test_leave_types import request_leave, selected
 
 
@@ -32,6 +38,17 @@ def decide(h, row, decision='approve', role='approver', **kwargs):
     return h.command(role, 'request.decide', {'decision': decision, 'reason': 'Review leave',
                      **({'balance_confirmation': confirmation} if confirmation is not None else {})},
                      row['id'], row['revision'], **kwargs)
+
+
+def cover_leave_with_programme(h, lead):
+    with transaction(h.app.state.engine, write=True) as db:
+        programme = m.Programme(department_id=h.seed['department_id'], name='Fictional owned programme',
+                                starts_on=date(2026, 1, 1), owner_identity_id=lead)
+        db.add(programme)
+        db.flush()
+        db.add(m.ProgrammeMembership(department_id=programme.department_id, programme_id=programme.id,
+                                     person_id=h.seed['people'][0], starts_on=date(2026, 1, 1),
+                                     ends_on=date(2028, 1, 1)))
 
 
 def test_allowance_year_override_carry_and_decision_undo(h):
@@ -78,6 +95,81 @@ def test_negative_confirmation_rechecks_latest_balance_and_audits_approval(h):
         event = db.scalar(select(m.AuditEvent).where(m.AuditEvent.target_id == second['id'],
                                                      m.AuditEvent.action == 'request.decide'))
         assert event.detail['leave_balance_overdrawn'] is True
+
+
+@pytest.mark.parametrize('role,may_read_balance', [
+    ('staff', True), ('admin', True), ('approver', True), ('programme_lead', True), ('coordinator', False),
+])
+def test_request_history_uses_balance_read_permissions(h, role, may_read_balance):
+    if role == 'programme_lead':
+        cover_leave_with_programme(h, identity(h, role, [role]))
+    configure(h, 0)
+    row = request_between(h, '2027-03-01', '2027-03-02')
+    proof = decide(h, row, status=409)['error']['details']['balance_confirmation']
+    decide(h, row, confirmation=proof)
+
+    balances(h, row, role, status=200 if may_read_balance else 403)
+    detail = h.get(role, f'/api/requests/all?id={row["id"]}')
+    assert detail['item']['id'] == row['id']
+    assert detail['item']['stage'] == 'approved'
+    created, decision = detail['history']
+    assert created['action'] == 'created'
+    assert decision['action'] == 'request.decide'
+    assert decision['reason'] == 'Review leave'
+    answer = json.dumps(detail)
+    assert 'balance_confirmation' not in answer
+    assert answer.count('"leave_balance_overdrawn"') == int(may_read_balance)
+    if may_read_balance:
+        assert decision['leave_balance_overdrawn'] is True
+
+
+@pytest.mark.parametrize('role,request_role,may_read_balance', [
+    *((role, None, False) for role in PERMISSIONS['audit.read']),
+    ('auditor', 'staff', True),
+    ('auditor', 'approver', True),
+    ('auditor', 'programme_lead', True),
+    ('auditor', 'programme_lead', False),
+    ('auditor', 'coordinator', False),
+])
+@pytest.mark.parametrize('batch', [False, True], ids=['single', 'batch'])
+def test_audit_history_uses_balance_read_permissions(h, role, request_role, may_read_balance, batch):
+    reader = role
+    if request_role:
+        reader = 'balance-audit-reader'
+        subject = h.seed['people'][0] if request_role == 'staff' else None
+        identifier = identity(h, reader, [role, request_role], person=subject)
+        if request_role == 'programme_lead' and may_read_balance:
+            cover_leave_with_programme(h, identifier)
+    configure(h, 0)
+    row = request_between(h, '2027-03-01', '2027-03-02')
+    if batch:
+        item = {'id': row['id'], 'expected_revision': row['revision']}
+        payload = {'items': [item], 'decision': 'approve', 'reason': 'Review leave'}
+        error = h.command('approver', 'request.decide_many', payload, status=409)['error']
+        item['balance_confirmation'] = error['details']['balance_confirmation']
+        h.command('approver', 'request.decide_many', payload)
+    else:
+        proof = decide(h, row, status=409)['error']['details']['balance_confirmation']
+        decide(h, row, confirmation=proof)
+
+    for folded in ('false', 'true'):
+        audit = h.get(reader, f'/api/audit?target_id={row["id"]}&people=false&fold={folded}')
+        event, = (event for event in audit['events'] if event['action'] == 'request.decide')
+        assert event['target_id'] == row['id']
+        assert event['detail']['receipt_id']
+        answer = json.dumps(audit)
+        assert answer.count('"leave_balance_overdrawn"') == int(may_read_balance)
+        assert answer.count('"balance_confirmation"') == int(may_read_balance and not batch)
+        if may_read_balance:
+            assert event['detail']['leave_balance_overdrawn'] is True
+            if not batch:
+                assert 'balance_confirmation' in event['detail']['payload_fields']
+    with transaction(h.app.state.engine) as db:
+        event = db.scalar(select(m.AuditEvent).where(m.AuditEvent.target_id == row['id'],
+                                                     m.AuditEvent.action == 'request.decide'))
+        assert event.detail['leave_balance_overdrawn'] is True
+        if not batch:
+            assert 'balance_confirmation' in event.detail['payload_fields']
 
 
 def test_batch_confirmation_includes_earlier_rows_and_rolls_back_on_warning(h):
