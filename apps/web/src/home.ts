@@ -153,7 +153,8 @@ function greet(ctx:Context){
 /** Setup progress for those who can act on its next step (UX review H-02): an admin continues it; a coordinator or
  *  approver opens the next step when it is on their own pages (people, rules; announcements and the first rota for a
  *  coordinator). Anyone else sees no card: an admin's step is not their work. A step Needs you already asks for (clinics
- *  without opening hours) is not named again here (H-03); Continue setup still leads to it. */
+ *  without opening hours) is not named again here (H-03); Continue setup still leads to it. When it is the only step
+ *  left and a calendar exists, there is no card: Needs you's Set hours is the one place that offers it. */
 function setupCard(ctx:Context,counts:Record<string,number>,rotas:number|null,admin:boolean,planner:boolean,coordinator:boolean,needs:Set<string>){
   const steps=setupSteps(ctx,ctx.setup||{catalogue:()=>{},page:()=>{}},rotas,counts).filter(s=>!s.optional),done=steps.filter(stepDone).length;
   if(done===steps.length)return null;
@@ -162,6 +163,7 @@ function setupCard(ctx:Context,counts:Record<string,number>,rotas:number|null,ad
   // pages; the first rota is the coordinator's New rota at the top of Home.
   // One line and the step's own button (H-07); the reasons stay in the Setup guide.
   const asked=next.id==='hours'&&needs.has('no_hours');
+  if(asked&&next.count>0&&done===steps.length-1)return null;
   // The first rota opens its form here too (on a phone the top bar has no New rota).
   const action=next.id==='rota'?(coordinator?button('New rota',()=>void workspaceForm(ctx),'secondary'):admin?button('Continue setup',()=>ctx.navigate('configuration/setup'),'secondary'):null)
     :!asked&&next.go&&(admin||next.kind||planner)?button(next.goLabel,next.go,'secondary'):admin?button('Continue setup',()=>ctx.navigate('configuration/setup'),'secondary'):null;
