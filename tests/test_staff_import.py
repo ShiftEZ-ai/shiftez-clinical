@@ -83,7 +83,7 @@ def test_applied_import_cannot_overwrite_later_edits(h, later_edit):
     from apps.api.db import transaction
 
     setup_catalogue(h)
-    sheet = csv_of(row(display_name="Alex Morgan", title="Imported title", rank="Demo learners", rank_from="2026-10-01",
+    sheet = csv_of(row(display_name="Staff 01(test)", title="Imported title", rank="Demo learners", rank_from="2026-10-01",
                        programme="Fellowship", programme_from="2026-10-01", programme_last_day="2027-09-30"))
     batch = apply(h, "coordinator", preview(h, sheet)["batch"])["batch"]
     assert batch["status"] == "applied"
@@ -207,7 +207,7 @@ def test_finished_people_part_preserves_later_edits_and_leaves_credentials_open(
 
     h = request.getfixturevalue(database)
     setup_catalogue(h)
-    reviewed = preview(h, csv_of(row(display_name='Alex Morgan', title='' if zero_change else 'Imported title',
+    reviewed = preview(h, csv_of(row(display_name='Staff 01(test)', title='' if zero_change else 'Imported title',
                                      clinics='Minor injuries', clinics_from='2026-10-01')))
     batch = apply(h, 'coordinator', reviewed['batch'])['batch']
     assert batch['status'] == 'partly_applied'
@@ -237,7 +237,7 @@ def test_finished_people_part_preserves_later_edits_and_leaves_credentials_open(
 
 
 def test_zero_change_credentials_part_is_finished_and_can_be_undone(h):
-    batch = preview(h, csv_of(row(display_name='Alex Morgan', title='Awaiting people part')))['batch']
+    batch = preview(h, csv_of(row(display_name='Staff 01(test)', title='Awaiting people part')))['batch']
     applied = apply(h, 'credentialer', batch)
     assert not any(applied['applied'].values()) and applied['batch']['status'] == 'partly_applied'
     shown = h.get('credentialer', '/api/staff-imports/' + batch['id'])['batch']
@@ -426,7 +426,7 @@ def test_programme_last_day_boundary_is_a_cell_error_and_preserves_the_batch(req
     h = request.getfixturevalue(database)
     h.configure('programmes', {'name': 'Date boundary programme', 'starts_on': '2020-01-01'})
     before = catalogues(h)
-    sheet = csv_of(row(display_name='Alex Morgan', programme='Date boundary programme',
+    sheet = csv_of(row(display_name='Staff 01(test)', programme='Date boundary programme',
                        programme_from=first, programme_last_day=last))
     result = preview(h, sheet)
     entry, = result['rows']
@@ -448,7 +448,7 @@ def test_programme_last_day_boundary_is_a_cell_error_and_preserves_the_batch(req
     assert h.get('coordinator', '/api/staff-imports/' + result['batch']['id'])['batch']['status'] == 'preview'
 
 
-ALEX = row(display_name="Alex Morgan", title="Consultant", rank="Demo learners", rank_from="2026-10-01",
+EXISTING_PERSON = row(display_name="Staff 01(test)", title="Consultant", rank="Demo learners", rank_from="2026-10-01",
            clinics="Continuity clinic; Minor injuries", skills="Demo supervision; Suturing", skill_evidence="Logbook reviewed 2026")
 
 
@@ -503,7 +503,7 @@ def test_import_undo_tag_reconciliation_failure_rolls_back_person_membership_and
     from apps.api.services import tags
     from apps.api.errors import Problem
     h = request.getfixturevalue(database)
-    batch = apply(h, 'coordinator', preview(h, csv_of(row(display_name='Alex Morgan', tags='Rollback label')))['batch'])['batch']
+    batch = apply(h, 'coordinator', preview(h, csv_of(row(display_name='Staff 01(test)', tags='Rollback label')))['batch'])['batch']
     before = catalogues(h)
     saved = h.get('coordinator', '/api/staff-imports/' + batch['id'])
     original = tags.sync_person
@@ -534,9 +534,9 @@ def test_template_and_parsing_are_forgiving_about_headers_but_not_unknown_column
 
 def test_preview_matches_rows_and_reports_errors_per_cell(h):
     setup_catalogue(h)
-    bad = row(display_name="Taylor Noor", rank="Registrar", rank_from="01/10/2026", skills="Suturing", email="not-an-email")
+    bad = row(display_name="Staff 03(test)", rank="Registrar", rank_from="01/10/2026", skills="Suturing", email="not-an-email")
     clash = row(display_name="Someone Else", short_code="NEX")
-    result = preview(h, csv_of(ALEX, NEW, bad, clash))
+    result = preview(h, csv_of(EXISTING_PERSON, NEW, bad, clash))
     alex, new, taylor, other = result["rows"]
     assert alex["person"] == {"id": h.seed["people"][0], "by": "display_name", "action": "update", "changes": {"title": ["", "Consultant"]}}
     assert alex["rank"]["action"] == "add" and len(alex["rank"]["ends"]) == 1  # moving from the seeded rank
@@ -554,7 +554,7 @@ def test_preview_matches_rows_and_reports_errors_per_cell(h):
 
 def test_apply_splits_by_role_is_idempotent_audited_and_undoable(h):
     clinic, skill, programme = setup_catalogue(h)
-    text = csv_of(ALEX, NEW)
+    text = csv_of(EXISTING_PERSON, NEW)
     batch = preview(h, text)["batch"]
     assert preview(h, text)["batch"]["id"] == batch["id"]  # the same sheet reopens its open preview
     h.command("staff", "staff_import.preview", {"source_name": "x", "csv_text": text}, status=403)
@@ -614,7 +614,7 @@ def test_apply_splits_by_role_is_idempotent_audited_and_undoable(h):
 def test_credentialer_first_waits_for_new_people_and_never_self_attests(request, database):
     h = request.getfixturevalue(database)
     setup_catalogue(h)
-    batch = preview(h, csv_of(ALEX, NEW), role="credentialer")["batch"]
+    batch = preview(h, csv_of(EXISTING_PERSON, NEW), role="credentialer")["batch"]
     early = apply(h, "credentialer", batch)
     assert early["applied"]["eligibilities"] == 1 and early["applied"]["waiting_for_people"] == 1
     assert "need a coordinator" in early["message"]
@@ -634,7 +634,7 @@ def test_credentials_followup_only_applies_waiting_rows_and_preserves_ended_cred
 
     h = request.getfixturevalue(database)
     setup_catalogue(h)
-    batch = preview(h, csv_of(ALEX, NEW), role='credentialer')['batch']
+    batch = preview(h, csv_of(EXISTING_PERSON, NEW), role='credentialer')['batch']
     first = apply(h, 'credentialer', batch)['batch']
     entry, = first['applied']['applications']
     assert entry['waiting_rows'] == [3]

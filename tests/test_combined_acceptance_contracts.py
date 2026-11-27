@@ -70,7 +70,7 @@ def test_search_options_filter_real_bulk_rows_before_count_and_page(both):
 def test_session_reference_source_access_for_affected_roles(both, role):
     # The Schedule offers these references to planners; read-only staff never get a directory offer.
     response = both.client(role).get('/api/search/references', params={
-        'collection': 'sessions', 'kind': 'people', 'q': 'Alex', 'limit': 1})
+        'collection': 'sessions', 'kind': 'people', 'q': 'Staff 01', 'limit': 1})
     assert response.status_code == (403 if role == 'staff' else 200), response.text
     if response.status_code == 200:
         assert len(response.json()['items']) <= 1

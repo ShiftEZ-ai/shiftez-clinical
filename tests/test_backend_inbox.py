@@ -102,6 +102,6 @@ def test_delayed_request_notifications_describe_the_event_not_current_state(h):
                                 .order_by(m.Outbox.created_at, m.Outbox.event_key)))
         recipient = db.get(m.Identity, h.seed["identities"]["coordinator"])
         wording = [worker.describe(db, item, None, recipient) for item in events]
-    assert {item[0] for item in wording} == {"New leave request from Alex Morgan", "Alex Morgan's leave request was approved"}
+    assert {item[0] for item in wording} == {"New leave request from Staff 01(test)", "Staff 01(test)'s leave request was approved"}
     assert all("Open Requests for the details." not in item[1] for item in wording)
     assert {item.payload["request_status"] for item in events} == {"submitted", "approved"}

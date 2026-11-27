@@ -43,7 +43,7 @@ def test_multipart_sync_boundaries_allow_other_requests_while_blocked(h, monkeyp
                                      headers=headers, cookies=cookies) as client:
             try:
                 pending = asyncio.create_task(client.post(path, data={'revision': str(value['revision'])} if adding else {},
-                    files={'files': ('thread-check.csv', b'Person,Date,Code\nAlex Morgan,2026-10-04,AM\n', 'text/csv')},
+                    files={'files': ('thread-check.csv', b'Person,Date,Code\nStaff 01(test),2026-10-04,AM\n', 'text/csv')},
                     headers={'idempotency-key': str(uuid.uuid4())}))
                 await asyncio.wait_for(entered.wait(), 5)
                 assert seen and all(thread != loop_thread for thread in seen)

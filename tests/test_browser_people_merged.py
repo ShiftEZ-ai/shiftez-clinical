@@ -514,7 +514,7 @@ def test_collection_search_draws_one_focus_ring(browser, live_server, h):
     try:
         navigate(page, 'people')
         search = page.get_by_label('Search people', exact=True)
-        search.fill('Alex')
+        search.fill('Staff 01')
         expect(search).to_be_focused()
         assert search.evaluate('i => getComputedStyle(i).boxShadow') == 'none'
         assert search.evaluate("i => getComputedStyle(i.closest('.dt-search-wrap')).boxShadow") != 'none'

@@ -25,7 +25,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.auth import PASSWORDS
 from apps.api import models as m
 from apps.api.serialization import record
-from packages.contracts.schemas import AccountInvite, Decision, INSTALLATION_ADMIN_ROLE, PERMISSIONS, TypeDefinition
+from packages.contracts.schemas import AccountInvite, Decision, INSTALLATION_ADMIN_ROLE, PERMISSIONS, ROLE_LABELS, TypeDefinition
 from migrations import safety
 from migrations.source_safety import assigned, preflight_analyzer
 from migrations.sql_safety import CURRENT_SCHEMA, duplicate_precheck_tokens
@@ -183,8 +183,10 @@ def demo_data(db, passwords=None, empty=False):
     from apps.api.services.contacts import seed as seed_contacts
     seed_contacts(db, department.id)
     people = []
-    for name in ("Alex Morgan", "Jordan Lee", "Taylor Noor"):
-        row = m.Person(organisation_id=organisation.id, display_name=name)
+    for number in range(1, 4):
+        # Keep the number with its marker so it is visible in short labels too.
+        label = f"{ROLE_LABELS['staff']} {number:02}(test)"
+        row = m.Person(organisation_id=organisation.id, display_name=label)
         db.add(row); db.flush(); people.append(row)
     identities = {}
     hashes = {}

@@ -422,7 +422,7 @@ export const swapNext=(r:Row,ctx?:Context)=>{
     return r.audience_pending?'Checking eligibility before notifying colleagues'
       :`Waiting for an eligible colleague to ${r.kind==='give'?'accept this duty':'offer a duty in return'}`;
   }
-  // Whose turn it is is the status word ("Your turn", "Waiting for Jordan Lee"): this line names only the step.
+  // Whose turn it is is the status word ("Your turn", "Waiting for Staff 02(test)"): this line names only the step.
   return (({
   offered:r.kind==='give'?'Accept the duty':'Offer a duty in return',
   counteroffered:r.kind==='give'?'Confirm the hand-over':'Confirm the pair',

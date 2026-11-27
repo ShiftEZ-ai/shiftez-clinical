@@ -44,10 +44,10 @@ def score_check_on(h):
     h.server_env = {'ROTA_GENERATION_ENGINE': 'cp_sat'}
     score_checking(h, True)
 DESKTOP = {'width': 1440, 'height': 1000}
-ROWS = [['Alex Morgan', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Jordn Lee', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+ROWS = [['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 02(ttest)', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
         ['Unknown Visitor', '2026-10-06', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Alex Morgan', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00']]
+        ['Staff 01(test)', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00']]
 
 
 def rota_csv(rows):
@@ -123,8 +123,8 @@ def test_coordinator_uploads_checks_saves_and_starts_the_auto_schedule(browser, 
         add.get_by_role('button', name='Add', exact=True).click()
         expect(unknown.locator('.bm-row', has_text='Unknown Visitor')).to_contain_text('Added')
         unsure = main.get_by_role('region', name='Unsure matches')
-        unsure.locator('.bm-row', has_text='Jordn Lee').get_by_role('button', name='Confirm').click()
-        expect(unsure.locator('.bm-row', has_text='Jordn Lee').get_by_role('button', name='Undo')).to_be_visible()
+        unsure.locator('.bm-row', has_text='Staff 02(ttest)').get_by_role('button', name='Confirm').click()
+        expect(unsure.locator('.bm-row', has_text='Staff 02(ttest)').get_by_role('button', name='Undo')).to_be_visible()
         cells = main.get_by_role('region', name='Cells not read clearly')
         cells.get_by_role('button', name='Skip').first.click()
         expect(cells.get_by_role('button', name='Undo').first).to_be_visible()
@@ -320,10 +320,10 @@ def page_extraction(prepared):
     said = {'file_ref': file_ref, 'cell_refs': [ref], 'confidence': 0.95, 'reason': 'Synthetic page reading'}
     value = {'files': [{'file_ref': file_ref, 'group': 'Residents', 'layout': 'sessions_list', 'rows_read': 1, 'confidence': 0.95,
                         'starts_on': '2026-10-04', 'ends_on': '2026-10-05'}],
-             'people': [{'as_written': 'Alex Morgan', **said}],
+             'people': [{'as_written': 'Staff 01(test)', **said}],
              'duty_codes': [{'code': 'Clinical review session', 'kind': 'duty', **said}],
              'clinics': [{'as_written': 'Continuity clinic', **said}],
-             'assignments': [{'person': 'Alex Morgan', 'date': '2026-10-04', 'file_ref': file_ref, 'cell_ref': ref,
+             'assignments': [{'person': 'Staff 01(test)', 'date': '2026-10-04', 'file_ref': file_ref, 'cell_ref': ref,
                               'duty_code': 'Clinical review session', 'clinic': 'Continuity clinic', 'start': '08:00', 'end': '12:00'}],
              'unparsed': [], 'warnings': []}
     return contracts.RotaExtraction.model_validate(value).model_dump(mode='json', exclude_none=True)
@@ -338,7 +338,7 @@ def synthetic_png():
 
 
 @pytest.mark.parametrize('name,mime,make,ref', [
-    ('residents.pdf', 'application/pdf', lambda: synthetic_pdf('Alex Morgan 4 Oct Clinical review session'), 'PDF!P1'),
+    ('residents.pdf', 'application/pdf', lambda: synthetic_pdf('Staff 01(test) 4 Oct Clinical review session'), 'PDF!P1'),
     ('residents.png', 'image/png', synthetic_png, 'Image!1')], ids=['pdf', 'photo'])
 def test_coordinator_sees_where_files_go_before_uploading_and_a_pdf_or_photo_is_read(ai_ready, browser, live_server, h, monkeypatch,
                                                                                        name, mime, make, ref):
@@ -545,8 +545,8 @@ def test_editing_a_provider_keeps_what_was_not_edited(ai_ready, browser, live_se
 def test_a_clinic_added_from_a_past_month_exists_for_that_month(browser, live_server, h):
     """A clinic added in Check starts on the import's earliest day (not today), so the past month's sessions there
     validate; a duty code offers only Match and Leave out."""
-    seeded = seed_upload(h, [['Alex Morgan', '2026-09-10', 'Clinical review session', 'Clinic 9', '08:00', '12:00'],
-                             ['Alex Morgan', '2026-09-17', 'Clinical review session', 'Clinic 9', '08:00', '12:00']])
+    seeded = seed_upload(h, [['Staff 01(test)', '2026-09-10', 'Clinical review session', 'Clinic 9', '08:00', '12:00'],
+                             ['Staff 01(test)', '2026-09-17', 'Clinical review session', 'Clinic 9', '08:00', '12:00']])
     context, page = open_page(browser, live_server, 'coordinator')
     try:
         navigate(page, 'schedule/benchmark/check?import=' + seeded['id'])
@@ -612,19 +612,19 @@ def test_automatic_matches_can_be_reviewed_overridden_and_undone(browser, live_s
         matched = main.locator('.bm-matched')
         matched.get_by_role('button', name='Review').click()
         review = page.get_by_role('region', name='Matched automatically')
-        alex = review.get_by_role('row').filter(has=page.locator('.bm-written', has_text=re.compile('^Alex Morgan$')))
+        alex = review.get_by_role('row').filter(has=page.locator('.bm-written', has_text=re.compile('^Staff 01\\(test\\)$')))
         expect(alex).to_be_visible()
         expect(alex).to_contain_text('%')
         alex.get_by_role('button', name='Leave out').click()
         expect(alex).to_have_count(0)  # it is now a decision of its own
         page.keyboard.press('Escape')
-        decided = main.locator('.bm-row.done', has=page.locator('.bm-written', has_text=re.compile('^Alex Morgan$')))
+        decided = main.locator('.bm-row.done', has=page.locator('.bm-written', has_text=re.compile('^Staff 01\\(test\\)$')))
         expect(decided).to_contain_text('Left out')
         decided.get_by_role('button', name='Undo').click()
         expect(decided).to_have_count(0)
         matched.get_by_role('button', name='Review').click()
         expect(page.get_by_role('region', name='Matched automatically').get_by_role('row')
-               .filter(has=page.locator('.bm-written', has_text=re.compile('^Alex Morgan$')))).to_be_visible()
+               .filter(has=page.locator('.bm-written', has_text=re.compile('^Staff 01\\(test\\)$')))).to_be_visible()
     finally:
         context.close()
 
@@ -633,7 +633,7 @@ def test_a_clinic_added_after_the_import_changed_uses_its_current_dates(browser,
     """The import's period changes after Check opened (elsewhere): Add is refused as stale, both are read again,
     and the second Add starts the clinic on the import's current earliest day."""
     from .test_score_check_frontend_api import change
-    seeded = seed_upload(h, [['Alex Morgan', '2026-10-04', 'Clinical review session', 'Clinic 9', '08:00', '12:00']])
+    seeded = seed_upload(h, [['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Clinic 9', '08:00', '12:00']])
     context, page = open_page(browser, live_server, 'coordinator')
     try:
         navigate(page, 'schedule/benchmark/check?import=' + seeded['id'])
@@ -669,7 +669,7 @@ def test_a_stale_matches_answer_never_replaces_a_newer_one(browser, live_server,
         main.locator('.bm-matched').get_by_role('button', name='Review').click()
         review = page.get_by_role('region', name='Matched automatically')
         row = lambda written: review.get_by_role('row').filter(has=page.locator('.bm-written', has_text=re.compile('^%s$' % re.escape(written))))
-        alex, duty = row('Alex Morgan'), row('Clinical review session')
+        alex, duty = row('Staff 01(test)'), row('Clinical review session')
         expect(alex).to_be_visible()
         expect(duty).to_be_visible()
         held, seen = [], []

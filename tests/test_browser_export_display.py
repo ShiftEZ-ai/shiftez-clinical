@@ -25,7 +25,7 @@ from .test_browser_schedule_team_pills import full_names
 
 from .test_browser import DRAFT_CHIP, draft_chip  # noqa: F401
 pytestmark = pytest.mark.browser
-NAMES = ('Alex Morgan', 'Jordan Lee')
+NAMES = ('Staff 01(test)', 'Staff 02(test)')
 
 
 def format_as(dialog, label):
@@ -200,7 +200,7 @@ def test_multipage_png_saves_only_the_chosen_page_and_keeps_dialog(browser, live
             decoded_png(saved.value, tmp_path, f'page-{number}.png', (1123, 794))
             rendered = page.evaluate('exportImages.at(-1)')
             assert all(word in rendered['text'] for word in head.split())
-            assert any('Alex Morgan' in name for name in rendered['names']) == (number == 1)
+            assert any('Staff 01(test)' in name for name in rendered['names']) == (number == 1)
             expect(dialog).to_be_visible()
             expect(page.get_by_text(f'Page {number} of 2 saved.', exact=True)).to_be_visible()
             expect(dialog.get_by_label('Page to save', exact=True)).to_have_value('2')
@@ -290,7 +290,7 @@ def test_key_repeats_on_every_page_and_goes_with_include_key(browser, live_serve
 
 
 @pytest.mark.parametrize('layout', ['week', 'day', 'people', 'list'])
-@pytest.mark.parametrize('query', ['Alex Morgan', 'No such export person'], ids=['match', 'zero'])
+@pytest.mark.parametrize('query', ['Staff 01(test)', 'No such export person'], ids=['match', 'zero'])
 def test_csv_uses_the_original_dates_filter_and_person_search(browser, live_server, h, tmp_path, layout, query):
     workspace, typ = checked_rota(h)
     # Distinct distractors exercise date, person and clinic. Keep the canonical roster for every command.
