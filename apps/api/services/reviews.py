@@ -285,14 +285,15 @@ def delegation_command(db, actor, command):
     return {"delegation": record(row)}
 
 
-def validate_delegation(db, workspace, step, delegation_id, approved_by):
+def validate_delegation(db, workspace, step, delegation_id, approved_by, *, now=None):
     row = db.get(m.ReviewDelegation, delegation_id)
     snap = workspace.review_snapshot
     require(row is not None and row.department_id == workspace.department_id
             and row.route_id == snap["route_id"] and row.route_revision == snap["route_revision"]
             and row.step_key == step["key"] and row.delegate_id == approved_by,
             "DELEGATION_SCOPE", "Delegation does not cover this reviewer, route version and step", 403)
-    require(not row.revoked and aware(row.starts_at) <= m.now() < aware(row.expires_at),
+    now = m.now() if now is None else now
+    require(not row.revoked and aware(row.starts_at) <= now < aware(row.expires_at),
             "DELEGATION_INACTIVE", "Delegation is expired, not yet effective or revoked", 409)
     require(step["role"] in live_roles(db, row.delegator_id, workspace.department_id)
             and bool(live_roles(db, row.delegate_id, workspace.department_id) & REVIEW_ROLES),
@@ -300,7 +301,7 @@ def validate_delegation(db, workspace, step, delegation_id, approved_by):
     return row
 
 
-def validate_existing(db, workspace, *, current_fingerprint=None):
+def validate_existing(db, workspace, *, current_fingerprint=None, now=None):
     """Check every prior decision, including identity/person separation and revocation."""
     contributors_keys = contributors(db, workspace)
     used = set()
@@ -320,7 +321,7 @@ def validate_existing(db, workspace, *, current_fingerprint=None):
         require(not keys & used, "DUPLICATE_REVIEWER", "Each approval seat must represent a different person", 409)
         used.update(keys)
         if decision.delegation_id:
-            delegation = validate_delegation(db, workspace, step, decision.delegation_id, decision.approved_by)
+            delegation = validate_delegation(db, workspace, step, decision.delegation_id, decision.approved_by, now=now)
             require(delegation.delegator_id == decision.authority_id and decision.authority_role == step["role"],
                     "DELEGATION_SCOPE", "Represented authority changed", 409)
         else:
@@ -407,10 +408,11 @@ def decision_access(db, actor, workspace, progress, *, context=None):
         return {**result, 'decision_reason': 'WORKFLOW_STATE'}
     if progress.get('stale_inputs'):
         return {**result, 'decision_reason': 'STALE_INPUTS'}
+    now = (context or {}).get('now')
     try:
         if workspace.review_snapshot:
             assert_route_current(db, workspace)
-            used = validate_existing(db, workspace, current_fingerprint=workspace.submitted_fingerprint)
+            used = validate_existing(db, workspace, current_fingerprint=workspace.submitted_fingerprint, now=now)
             pending = progress['pending_step']
         else:
             used = set()
@@ -428,7 +430,7 @@ def decision_access(db, actor, workspace, progress, *, context=None):
                     m.ReviewDelegation.route_id == workspace.review_snapshot['route_id'],
                     m.ReviewDelegation.step_key == pending['key'])):
                 try:
-                    validate_delegation(db, workspace, pending, row.id, actor.identity_id)
+                    validate_delegation(db, workspace, pending, row.id, actor.identity_id, now=now)
                     keys = {person_key(db, actor.identity_id), person_key(db, row.delegator_id)}
                     if not keys & used and can_review(db, actor, workspace, authority_id=row.delegator_id, context=context):
                         delegations.append(row.id)

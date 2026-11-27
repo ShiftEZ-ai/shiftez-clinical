@@ -636,6 +636,7 @@ const inflight=new Map<string,Promise<unknown>>();
 // `sessionChanged`), so a late answer can never redraw or report over the page that replaced it. Reads that serve the
 // whole app (the session, lists in memory, the live pulse, inbox checks, sidebar counts) use `background`.
 let pageReads=new AbortController();
+export const pageReadSignal=()=>pageReads.signal;
 // A left page's reads end with PAGE_LEFT wherever they were awaited, including fire-and-forget loads: that is the
 // intended outcome, not an error, so it is never reported as an unhandled rejection. Every other rejection still is.
 if(typeof window!=='undefined')window.addEventListener('unhandledrejection',e=>{if(e.reason instanceof ApiError&&e.reason.code==='PAGE_LEFT')e.preventDefault();});
@@ -657,9 +658,9 @@ export const SLOW_READ_MS=10_000;
 let slowBackground=0;
 export const updatingNow=()=>slowBackground>0&&!ownInFlight&&!confirming;
 const sayUpdating=()=>{if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('reads-updating',{detail:slowBackground>0}));};
-function read<T>(path:string,scope:'page'|'app',quiet=false):Promise<T>{
+function read<T>(path:string,scope:'page'|'app',quiet=false,fresh=false):Promise<T>{
   // A kept reply (keptReads) answers at once: no wait for the person, so never part of the opening's top bar.
-  const shown=scope==='page'?keptReply<T>(path):null;if(shown)return shown;
+  const shown=scope==='page'&&!fresh?keptReply<T>(path):null;if(shown)return shown;
   // The same read already on its way is shared across scopes: a page joins an app read (never aborted); an app read joins
   // a page read and, if that page is left meanwhile, asks again on its own.
   const other=inflight.get((scope==='page'?'app|':'page|')+path);
@@ -674,8 +675,8 @@ function read<T>(path:string,scope:'page'|'app',quiet=false):Promise<T>{
     inflight.set(key,p=waits?track(q):q);}
   return p as Promise<T>;
 }
-/** A page's read; `quiet`: work behind what is already drawn, never shown on the top bar. */
-export const get=<T=any>(path:string,o:{quiet?:boolean}={}):Promise<T>=>read<T>(path,'page',!!o.quiet);
+/** A page's read. Quiet work keeps the top bar settled. A fresh read bypasses kept replies. */
+export const get=<T=any>(path:string,o:{quiet?:boolean;fresh?:boolean}={}):Promise<T>=>read<T>(path,'page',!!o.quiet,!!o.fresh);
 /** A rota's metadata, revision, check summary, health and review state (`?view=compact`, a few KB at department scale):
  *  for a decision, a revision or a fingerprint. Never its sessions or findings: those are the full read (WorkspaceData). */
 type RotaMeta={workspace:Row;current_fingerprint:string;health:Record<string,any>};
