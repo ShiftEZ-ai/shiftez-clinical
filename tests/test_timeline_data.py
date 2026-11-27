@@ -265,19 +265,63 @@ def test_timeline_programme_lead_clips_personal_facts_to_their_membership_author
                ("2026-10-01", "2026-11-01") for item in facts)
 
 
-def test_timeline_filters_do_not_recheck_stale_department_balance_findings(h, monkeypatch):
+@pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize("publication_kind", ["original", "amendment", "replacement", "absence"])
+def test_timeline_filters_do_not_recheck_stale_department_balance_findings(h, monkeypatch, publication_kind):
     from apps.api.services import timeline
 
-    a, b, _ = h.seed["people"]
-    goal = h.policy({"kind": "balance_goal", "metric": "duties", "aim": "equal_share", "period": "rota"}, severity="advisory")
+    a, b, c = h.seed["people"]
+    goal = h.policy({"kind": "balance_goal", "metric": "duties", "aim": "equal_share", "period": "rota",
+                     "tolerance_percent": 0, "tolerance_units": 0}, severity="advisory")
     workspace = h.workspace()
     for day, person in ((4, a), (5, a), (6, a), (7, a), (8, b)):
         workspace = h.shift(workspace, start=f"2026-10-{day:02d}T08:00:00+03:00",
                             end=f"2026-10-{day:02d}T12:00:00+03:00", people=[person])["workspace"]
-    h.publish(workspace)
+    published = h.publish(workspace)
+    if publication_kind == "amendment":
+        amendment = h.workspace(base=published["publication_id"])
+        amendment = h.shift(amendment, start="2026-10-09T08:00:00+03:00",
+                            end="2026-10-09T12:00:00+03:00", people=[a])["workspace"]
+        published = h.publish(amendment)
+    elif publication_kind == "replacement":
+        replacement = h.command("coordinator", "workspace.create", {
+            "name": "Replace part of the issued rota", "starts_on": "2026-10-06", "ends_on": "2026-10-11",
+            "replaces_publication_id": published["publication_id"]})["workspace"]
+        for day, person in ((6, a), (7, a), (8, a), (9, a), (10, b)):
+            replacement = h.shift(replacement, start=f"2026-10-{day:02d}T08:00:00+03:00",
+                                  end=f"2026-10-{day:02d}T12:00:00+03:00", people=[person])["workspace"]
+        published = h.publish(replacement)
+    elif publication_kind == "absence":
+        publication_id = published["publication_id"]
+        snapshot = h.get("coordinator", f"/api/publications/{publication_id}")["snapshot"]
+        duty = next(shift for shift in snapshot["shifts"] if shift["participants"][0]["person_id"] == a)
+        change = h.command("coordinator", "publication.change", {
+            "kind": "replace", "shift_id": duty["id"], "assignment_id": duty["participants"][0]["id"],
+            "person_id": c, "reason": "Arrange cover", "absence_reason": "Sick"}, target=publication_id)
+        submitted = h.command("coordinator", "publication.changes.submit", {"reason": "Review cover"},
+                              target=publication_id, revision=change["workspace"]["revision"])
+        approved = h.lifecycle(submitted["workspace"], "approve", "approver")
+        published = h.lifecycle(approved["workspace"], "publish")
+        with transaction(h.app.state.engine) as db:
+            absence = db.scalar(select(m.Availability).where(m.Availability.person_id == a,
+                                                             m.Availability.kind == "actual_absence"))
+            assert absence is not None
+
+    with transaction(h.app.state.engine) as db:
+        publication = db.get(m.Publication, published["publication_id"])
+        organisation = db.get(m.Organisation, h.seed["organisation_id"])
+        hint = publication.validation["input_manifest"]["dirty_hint"]
+        assert hint["input_revision"] == organisation.input_revision
+        assert hint["availability_revision"] == organisation.availability_revision
+        if publication_kind == "amendment":
+            assert any(f["person_id"] == c and f["rule_id"] == goal["id"]
+                       for f in publication.validation["findings"])
     monkeypatch.setattr(timeline, "evaluate", lambda *a, **kw: pytest.fail("timeline ran validation"))
     current = read(h, person_ids=[a])["people"][0]["conflicts"]
     assert any(finding["rule_id"] == goal["id"] and finding["code"] == "BALANCE_GOAL" for finding in current)
+    if publication_kind == "amendment":
+        inherited = read(h, person_ids=[c])["people"][0]["conflicts"]
+        assert not any(f["rule_id"] == goal["id"] for f in inherited)
 
     h.command("approver", "policy.retire", {"reason": "Retire the old balance goal"}, goal["id"], goal["revision"])
     full = next(person for person in read(h)["people"] if person["id"] == a)["conflicts"]

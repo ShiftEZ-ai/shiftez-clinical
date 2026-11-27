@@ -231,7 +231,9 @@ def _stored_findings(db, actor, start, end, ids, zone):
         if (not currency_match(recorded, current)
                 or manifest.get("components", {}).get("toolchain") != current_toolchain):
             continue
-        for finding in check.get("findings", []):
+        # An amendment retains earlier findings as issued evidence. Its current
+        # stamp covers the findings that the amendment actually checked.
+        for finding in check.get("change_findings", check.get("findings", [])):
             if finding.get("person_id") not in ids:
                 continue
             if finding.get("start") and finding.get("end"):
