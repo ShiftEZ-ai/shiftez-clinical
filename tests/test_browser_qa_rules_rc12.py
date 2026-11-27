@@ -323,6 +323,8 @@ def test_exception_end_and_undo_are_governed_reasoned_and_shown_only_when_allowe
         page.get_by_role('menuitem', name='Undo', exact=True).click()
         reason(page, 'Ended by mistake', 'Undo')
         expect(page.locator('#toast-tray')).to_contain_text('Exception restored.')
+        # The toast follows the command receipt. The dialog closes after the catalogue refresh.
+        expect(page.get_by_role('dialog', name='Restore exception', exact=True)).to_have_count(0)
         restored = exception_row(h, 'auditor', exc)
         assert restored['status'] == 'approved' and restored['approved_by'] == exc['approved_by']
         actions = [e['action'] for e in h.get('auditor', '/api/audit')['events'] if e['target_id'] == exc['id']]

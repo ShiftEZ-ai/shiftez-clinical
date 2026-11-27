@@ -4,6 +4,7 @@ from playwright.sync_api import expect
 from tests.outbox_support import process_one_after_undo as process_one
 from .test_browser import department_tab, browser, live_server, sign_in, navigate, open_config  # noqa: F401
 from .governance_support import identity
+from .test_browser_collection_toolbars import choose_view
 
 pytestmark = pytest.mark.browser
 
@@ -39,6 +40,8 @@ def test_coordinator_announces_to_a_rank_and_only_they_are_told(browser, live_se
         notice = page.locator('.home-notice-list li').filter(has_text='North clinic closed Thursday')
         expect(notice).to_contain_text('Important')
         navigate(page, 'inbox')
+        # Showing the notice on Home marks it read. Check delivery across both read states.
+        choose_view(page.locator('#main'), 'All notifications')
         expect(page.get_by_text('Important: North clinic closed Thursday')).to_be_visible()
     finally:
         context.close()
