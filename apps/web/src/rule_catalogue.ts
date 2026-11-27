@@ -86,7 +86,10 @@ const movedDrafts=new Map<string,Draft>();
  *  redraw that would correct a kept reply waits while there are unsent edits, so it would never come. */
 const ask=<T>(path:string)=>drafts.size?background<T>(path):get<T>(path);
 /** A draft made on another version of this rule (replaced or proposed meanwhile) stops being its draft. */
-function settle(e:Entry){const d=drafts.get(e.id);if(!d||sameBase(e,d)&&!e.proposed)return;discardDraft(e.id);movedDrafts.set(e.id,d);}
+function settle(e:Entry){const d=drafts.get(e.id);if(!d||sameBase(e,d)&&(!e.proposed||withdrawn.has(String(e.proposed.id))))return;discardDraft(e.id);movedDrafts.set(e.id,d);}
+/** Proposals this tab withdrew by Undo: a read begun before the Undo still carries one, and must not set aside the draft
+ *  the Undo brought back. */
+const withdrawn=new Set<string>();
 /** Says the rule changed under an unsent draft and shows that draft against the rule as it is now. */
 export function movedNote(e:Entry,names:Namer,redraw:()=>void):HTMLElement|''{
   const d=movedDrafts.get(e.id);if(!d)return '';
@@ -123,11 +126,11 @@ export const discardDraft=(id:string)=>{drafts.delete(id);draftEntries.delete(id
 /** A proposal's draft as it was proposed (by proposal id): Undo of the proposal (it withdraws it) brings the draft back,
  *  unless the rule has a new draft by then. shortcut: in memory for this tab only, like the drafts themselves. */
 const proposedDrafts=new Map<string,{e:Entry;d:Draft}>();
-onSessionReset(()=>{proposedDrafts.clear();pendingLines.clear();schema=null;});
+onSessionReset(()=>{proposedDrafts.clear();withdrawn.clear();pendingLines.clear();schema=null;});
 export const rememberProposed=(id:string,e:Entry,d:Draft)=>{proposedDrafts.set(id,{e,d});};
 export function restoreProposedDrafts(done:Undone){
   for(const x of done){const id=x.kind==='policy.decline'?String(x.result?.record?.id||''):'',kept=id&&proposedDrafts.get(id);
-    if(!kept)continue;proposedDrafts.delete(id);if(!drafts.has(kept.e.id))keepDraft(kept.e,kept.d);}
+    if(!kept)continue;proposedDrafts.delete(id);withdrawn.add(id);if(!drafts.has(kept.e.id))keepDraft(kept.e,kept.d);}
 }
 /** What a draft changes: lines added, removed or changed, on/off (a rule in force), settings and Balance between people. */
 export function changesIn(e:Entry,d:Draft):number{
@@ -846,7 +849,7 @@ type LeadPlan=Check&{lines:RuleLine[];legacy_lead_conversion:Row|null;difference
  *  Duty type leadership changed meanwhile: the preview reloads and the proposal waits for another look. */
 function convertLeads(e:Entry,names:Namer,refresh:()=>Promise<void>){
   const on=field('Effective from','date',departmentToday(),{required:true});
-  const shown=el('div',{role:'status','aria-live':'polite'});
+  const shown=el('div',{role:'status','aria-live':'polite','aria-label':'Conversion preview'});
   let plan:LeadPlan|null=null,asked=0,error='';
   const load=async()=>{const n=++asked,day=on.input.value;plan=null;error='';shown.replaceChildren(working('Checking…'));
     if(!day){shown.replaceChildren();return;}
