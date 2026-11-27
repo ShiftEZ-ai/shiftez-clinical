@@ -2724,6 +2724,7 @@ export type LeaveBalanceConfiguration = {
 export type LeaveBalanceSettings = {
   "revision"?: number | null;
   "configuration": LeaveBalanceConfiguration;
+  "default_starts_on_min"?: string | null;
 };
 
 export type LeaveBalanceSettingsChange = {
