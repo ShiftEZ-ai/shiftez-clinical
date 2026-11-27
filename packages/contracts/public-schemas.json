@@ -37593,6 +37593,19 @@
       },
       "configuration": {
         "$ref": "#/$defs/LeaveBalanceConfiguration"
+      },
+      "default_starts_on_min": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Default Starts On Min"
       }
     },
     "required": [

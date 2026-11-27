@@ -1,6 +1,6 @@
 """Leave allowances share decision, withdrawal and Undo across single and batch requests."""
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -8,6 +8,7 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts.schemas import PERMISSIONS
+from .clock_support import freeze_clock
 from .governance_support import identity
 from .test_leave_types import request_leave, selected
 
@@ -15,14 +16,14 @@ from .test_leave_types import request_leave, selected
 SETTINGS = 'department.leave_balance_settings'
 
 
-def configure(h, days, *, month=1, carry=0, overrides=()):
+def configure(h, days, *, month=1, day=1, carry=0, overrides=(), status=200):
     leave_type = selected(h)['id']
     previous = h.get('admin', '/api/leave-balance-settings')
-    configuration = {'year_start_month': month, 'year_start_day': 1, 'carry_over_days': carry,
+    configuration = {'year_start_month': month, 'year_start_day': day, 'carry_over_days': carry,
                      'allowances': [{'leave_type_id': leave_type, 'days': days},
                                     *({'leave_type_id': leave_type, **line} for line in overrides)]}
     return h.command('admin', SETTINGS, {'configuration': configuration, 'reason': 'Set annual allowances'},
-                     revision=previous['revision'])
+                     revision=previous['revision'], status=status)
 
 
 def request_between(h, start, end, **kwargs):
@@ -76,6 +77,52 @@ def test_allowance_year_override_carry_and_decision_undo(h):
     assert undo['payload']['configuration'] is None
     h.command('admin', undo['kind'], undo['payload'], revision=undo['expected_revision'])
     assert balances(h, row) == []
+
+
+def test_department_allowance_change_preserves_closed_year_and_carry(h, monkeypatch):
+    before_year_start = freeze_clock(monkeypatch, datetime(2026, 10, 3, 20, 59, 55, tzinfo=timezone.utc))
+    year = {'month': 10, 'day': 4, 'carry': 3}
+    setup = configure(h, 4, **year)
+    earlier = request_between(h, '2026-10-03', '2026-10-04')
+    decide(h, earlier)
+    closed_balance = balances(h, earlier)
+    assert (closed_balance[0]['allowance_days'], closed_balance[0]['used_days']) == (4, 1)
+
+    freeze_clock(monkeypatch, before_year_start + timedelta(seconds=10))
+    undo = setup['undo']
+    expired_undo = h.command('admin', undo['kind'], undo['payload'], revision=undo['expected_revision'], status=409)
+    assert expired_undo['error']['code'] == 'LEAVE_ALLOWANCE_HISTORY'
+    rewrite = configure(h, 8, **year, status=409)
+    assert rewrite['error']['code'] == 'LEAVE_ALLOWANCE_HISTORY'
+    backdate = configure(h, 4, **year, overrides=[{'starts_on': '2025-10-04', 'days': 8}], status=409)
+    assert backdate['error']['code'] == 'LEAVE_ALLOWANCE_HISTORY'
+
+    overrides = [
+        {'starts_on': '2026-10-04', 'days': 8},
+        {'person_id': h.seed['people'][0], 'starts_on': '2027-10-04', 'days': 6},
+    ]
+    configure(h, 4, **year, overrides=overrides)
+    assert balances(h, earlier) == closed_balance
+    later = request_between(h, '2026-10-05', '2026-10-06')
+    new_balance = balances(h, later)[0]
+    assert (new_balance['allowance_days'], new_balance['carried_days'], new_balance['remaining_days']) == (8, 3, 11)
+    individual = request_between(h, '2027-10-05', '2027-10-06')
+    assert balances(h, individual)[0]['allowance_days'] == 6
+
+    overrides[0]['days'] = 9
+    configure(h, 4, **year, overrides=overrides)
+    assert balances(h, earlier) == closed_balance
+
+    for folded in ('false', 'true'):
+        page = h.get('auditor', f'/api/audit?action=department&people=false&fold={folded}')
+        events = [row for row in page['events'] if row['action'] == SETTINGS]
+        assert len(events) == 3
+        for event, before, after in zip(events, (8, 4), (9, 8)):
+            assert event['detail']['leave_allowance_changes'] == [{
+                'leave_type_id': selected(h)['id'], 'leave_type_name': 'Annual',
+                'starts_on': '2026-10-04', 'effective_year_start': '2026-10-04',
+                'before_days': before, 'after_days': after,
+            }]
 
 
 def test_negative_confirmation_rechecks_latest_balance_and_audits_approval(h):
@@ -224,7 +271,7 @@ def test_anonymising_person_scrubs_current_and_undo_allowance(h):
     person_id = h.seed['people'][0]
     override = {'person_id': person_id, 'starts_on': '2027-01-01', 'days': 2}
     configure(h, 4, overrides=[override])
-    change = configure(h, 5, overrides=[override])
+    change = configure(h, 4, overrides=[override, {'starts_on': '2027-01-01', 'days': 5}])
     person = next(row for row in h.get('admin', '/api/catalogues?include=people')['people'] if row['id'] == person_id)
     inactive = h.configure('people', {'display_name': person['display_name'], 'active': False},
                            person_id, person['revision'])['record']
