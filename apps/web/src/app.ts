@@ -2450,7 +2450,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // The open rota's auto-schedule jobs are asked for with its sessions, not after the page is drawn (one round trip
   // less before the Auto-schedule panel can show its setup or a run in progress); the panel takes this read once.
   jobsEarly=planner&&needDraft&&earlyId&&permits(CAPABILITY.COORDINATOR)&&!windowFirst(earlyId)&&!(memo&&lastJobs?.id===earlyId&&lastJobs.activity===seenActivity)
-    ?{id:earlyId,woke:panelWakes,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).catch(()=>null)}:null;
+    ?{id:earlyId,woke:panelWakes,read:get<Row>('/api/jobs?workspace_id='+encodeURIComponent(earlyId)).then(jobs=>({jobs}),error=>({error}))}:null;
   const savedViews=memo?.views?Promise.resolve(memo.views):fetchViews<PlannerSaved>('planner').catch(()=>[] as SavedView<PlannerSaved>[]);
   const listAhead=!memo&&!workspaceListOffset&&ahead?.id===workspaceId&&ahead.epoch===scheduleEpoch?ahead.list:null;
   // An automatic rota choice also writes the address. Wait for the current list instead of choosing from a kept reply.
@@ -3791,7 +3791,7 @@ function fixHealth(id:string,s:FixSummary,data:WorkspaceData|null,w:Row|null|und
   loadWhole?:(replay:()=>void)=>Promise<boolean>,displayData=data){
   // maintenance: with scheduling groups the footer counts the group shown ("Consultants · ⚠ 3 must fix"), the server's per-group
   // numbers; the score is the whole rota's, so it waits for All groups.
-  const g=scopedGroup(id,planningOf(data,fixCache.get(id)?.list));
+  const g=scopedGroup(id,planningOf(data??displayData,fixCache.get(id)?.list));
   // A7: once nothing must be fixed, the ready popover's Score breakdown opens the score's own "Why this score".
   const score=data?.workspace.validation?.score,byId=new Map((data?.shifts||[]).map(x=>[x.id,x]));
   const breakdown=score&&shownScore(score)!=null||loadWhole&&s.score!=null?()=>{
@@ -7702,31 +7702,41 @@ let panelVisibility:(()=>void)|null=null;
  *  started after a return never joins one started before it (readAfresh). */
 let panelWakes=0;document.addEventListener('visibilitychange',()=>{if(!document.hidden){panelWakes++;readAfresh();}});
 /** The open rota's job list, read alongside its sessions by the Schedule (renderSchedule) for the panel's first draw. */
-let jobsEarly:{id:string;read:Promise<Row|null>;woke:number}|null=null;
+let jobsEarly:{id:string;read:Promise<{jobs:Row}|{error:unknown}>;woke:number}|null=null;
 const panelPulse=ownedListener('jobs-changed');
 let panelJob='',releasePanelJob:(()=>void)|null=null;
 function watchPanelJob(id:string){if(id===panelJob)return;releasePanelJob?.();panelJob=id;releasePanelJob=id?watchJob(id):null;}
 /** Re-says whether Run can start when the schedule's selection changes. */
 let autoRunSync:(()=>void)|null=null;
 async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:boolean,reuse:boolean,closePanel?:()=>void){
-  const w=data.workspace,serial=renderSerial;
+  const w=data.workspace;
   if(schedulingSettings.workspace!==w.id){const open=schedulingSettings.open;
     schedulingSettings=schedulingByRota.get(w.id)||{...freshScheduling(w.id,open),...ownSetup(w.id)};schedulingSettings.open=open;schedulingByRota.set(w.id,schedulingSettings);}
   // A queued command may finish after another rota opens. Its continuation belongs to this rota's saved setup.
   const settings=schedulingSettings,st=()=>settings;
   // A view change reuses the jobs just read, unless something moved since (a run someone else started): nothing is
   // polled while no run is going (PL-03), so the department's activity says when to read again.
+  const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
+  const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
+  let reload:(()=>Promise<void>)|undefined;
+  const start=async(first=false)=>{
+  const serial=renderSerial,firstWoke=(first?(reused??prefetched)?.woke:undefined)??panelWakes;
   // The panel's place shows its shape while the jobs are read, never an empty column (FD-03).
   const sk=skeleton('panel','Loading auto-schedule…');target.append(sk);
   // The page swaps in with this skeleton; an open People to schedule builder waits for its new button.
   const peopleKey=peoplePopoverKey(w.id),handover=awaitAdoption(peopleKey);
   try{
-  const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
-  const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
-  let firstWoke=reused?reused.woke:prefetched?prefetched.woke:panelWakes;
-  let initialJobs:Row|null=reused?reused.jobs:prefetched&&await prefetched.read;
-  if(!initialJobs){firstWoke=panelWakes;initialJobs=await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(w.id)).catch(e=>{sk.remove();throw e;});}
-  if(serial!==renderSerial)return;
+  let initialJobs:Row;
+  try{
+    const result=first?(reused?{jobs:reused.jobs}:await prefetched?.read):undefined;
+    if(result&&'error' in result)throw result.error;
+    initialJobs=result?.jobs??await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(w.id));
+  }catch(e){
+    if(serial!==renderSerial||sessionChanged(e)){sk.remove();return;}
+    const retry=readFailed('auto-schedule',e,()=>{retry.remove();return start().catch(reportError);});
+    sk.replaceWith(retry);return;
+  }
+  if(serial!==renderSerial){sk.remove();return;}
   const capability=initialJobs.generation_capability||{},cpSat=capability.engine==='cp_sat',maxDays=Number(capability.max_period_days)||31;
   // An unissued rota runs with the settings captured with it; the rota's job list says them (else the department's).
   const defaults={...capability.default_options,...('generation_defaults' in initialJobs?initialJobs.generation_defaults:me!.department.generation_defaults)} as GenerationOptions;
@@ -8337,8 +8347,11 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   };
   await load(initialJobs,firstWoke);  // the jobs just read above: no second request, unless back on the tab since
   // Opening the panel reads again; a failure says so in the panel (failed), not only in a toast over a skeleton.
-  return ()=>load().catch(failed);
+  reload=()=>load().catch(failed);
   }finally{handover();}
+  };
+  await start(true);
+  return async()=>{await reload?.();};
 }
 
 // Notifications: one item design for the bell menu and the inbox page.

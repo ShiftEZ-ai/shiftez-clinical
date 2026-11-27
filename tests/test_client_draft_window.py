@@ -95,7 +95,7 @@ const result=await readWindow(meta,['2026-10-04','2026-10-10']);console.log(JSON
         assert got['result'] is None
     else:
         assert got['result'] == {'partial': True, 'health': {'fresh': True}, 'shifts': [{'id': 's0'}, {'id': 's1'}],
-                                'workspace': {'id': 'w', 'revision': 3, 'validation': {
+                                'wishes': [], 'workspace': {'id': 'w', 'revision': 3, 'validation': {
                                     'valid': False, 'findings': [{'code': 'OPEN'}], 'coverage': [{'shift_id': 's0'}, {'shift_id': 's1'}]}}}
 
 
