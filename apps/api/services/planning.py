@@ -2314,11 +2314,17 @@ def edit_availability(db, actor, workspace):
     target = undo_target(db, workspace, row) if row is not None else None
     return ({'can_undo': target is not None,
              'undo_edit': describe_undo_target(db, actor, workspace, target, show_name=True)},
-            row is not None and row.undo_of is not None and row.actor_id == actor.identity_id)
+            _has_redo(row, actor.identity_id))
 
 
 def redo_available(db, actor, workspace):
-    return edit_availability(db, actor, workspace)[1]
+    if workspace.status != 'draft' or workspace.archived_at is not None:
+        return False
+    return _has_redo(edit_history_head(db, workspace), actor.identity_id)
+
+
+def _has_redo(row, identity_id):
+    return row is not None and row.undo_of is not None and row.actor_id == identity_id
 
 
 def require_redo_placements(db, actor, workspace, snapshot, current):
