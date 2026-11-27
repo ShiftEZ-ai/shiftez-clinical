@@ -2765,7 +2765,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const bodyWrap=el('div',{class:'planner-body'+(autoChecking&&draft&&!fresh?' is-working':'')});const mainCol=el('div',{class:'planner-main'});bodyWrap.append(mainCol,side);
   let reloadScheduling:(()=>Promise<void>)|undefined;
   if(auto?.classList.contains('auto-button')&&!whole)auto.addEventListener('click',()=>{schedulingSettings.open=true;switchView('week');void redraw();});
-  else if(auto?.classList.contains('auto-button'))auto.addEventListener('click',()=>unpin(()=>{
+  // The top bar is redrawn in place (a rota check landing): a press it replaces mid-way still acts (dom.ts footerAct).
+  else if(auto?.classList.contains('auto-button'))footerAct(auto,'auto-schedule',()=>unpin(()=>{
     // A superseded bar hands the press to the current one; the current bar while its redraw is still being attached
     // (bar swapped in first, body after) toggles its own panel, which then attaches open or closed.
     if(!side.isConnected&&currentAuto()!==auto){currentAuto()?.click();return;}schedulingSettings.open=side.hidden;side.hidden=!schedulingSettings.open;auto!.setAttribute('aria-expanded',String(schedulingSettings.open));if(schedulingSettings.open){closeWeekPanel();side.querySelector<HTMLElement>('summary,button')?.focus({preventScroll:true});
@@ -7934,7 +7935,9 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     // the list is read again once it has ended (or when this panel has none yet).
     const liveId=!firstRead&&st().live&&lastJobs?.id===w.id&&(lastJobs.jobs.jobs as Row[]).some(j=>j.id===st().live)?st().live:'';
     const response:Row=withEnded(firstRead||(liveId?await liveRead(liveId):await get('/api/jobs?workspace_id='+encodeURIComponent(w.id))));
-    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch)return;
+    // A Run press still waiting for the server shows its run starting; a reply read meanwhile has no run in it yet and
+    // must not draw over it ("No auto-schedule runs"). The press reads the jobs again once the server has answered.
+    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch||st().starting)return;
     // Back on the tab since this read started: it may predate what changed (a run started meanwhile). Read again at once,
     // never drawing it: a stale draw is not harmless (a result shown superseded sends the panel back to its setup).
     if(woke!==panelWakes)return load();
@@ -7993,7 +7996,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
     const cached=!liveRunning&&shown&&proposal?.job_id===shown.id&&proposal.session===sessionKey()&&proposal.workspace_revision===w.revision&&proposal.job.revision===shown.revision&&!notCompared(proposal.job)&&proposal.job.input_fingerprint===data.current_fingerprint?proposal.job:null;
     const applied=shown?.status==='applied'&&shown.result?.applied?shown:null;
     const latestRead:Row|null=!liveRunning&&shown?(applied||cached||(shown.kind==='validation'?heldCheck(String(shown.id)):null)||(await get('/api/jobs/'+shown.id)).job):null;
-    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch)return;
+    if(gone()||mine!==loads||applyEpoch!==generationApplyEpoch||st().starting)return;
     // Focus inside the run's progress or result stays on the same control across this redraw (WCAG 2.4.3).
     const had=feedback.contains(document.activeElement)?document.activeElement:null,keep=had?focusSpot(feedback,had):null;
     // Keep Cancel mounted for this run so a status update cannot take away the press or its confirmation.

@@ -41,6 +41,15 @@ def test_run_shows_its_progress_at_once_and_a_second_press_starts_no_second_run(
         expect(page.locator('.app-footer .footer-status > .asl-strip ' + STEP)).to_have_text('1/5 Checking rules', timeout=1000)
         expect(panel.get_by_text('Waiting for the scheduler to start', exact=True)).to_be_visible(timeout=1000)
         expect(run).to_have_count(0)
+        # A jobs read that lands while job.create is held has no run in it yet: the run stays shown as starting, in the
+        # panel and the footer, never "No auto-schedule runs" (issue 1793). Back on the tab, the open panel reads at once.
+        with page.expect_response(lambda r: '/api/jobs?workspace_id=' in r.url) as listed:
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        listed.value.finished()
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => setTimeout(r, 100)))")
+        expect(panel.get_by_text('No auto-schedule runs for this rota yet.', exact=True)).to_have_count(0)
+        expect(panel.get_by_text('Waiting for the scheduler to start', exact=True)).to_be_visible()
+        expect(page.locator('.app-footer .footer-status > .asl-strip ' + STEP)).to_have_text('1/5 Checking rules')
         # Back on What to fill, the way on leads to the run going, not to a second one.
         auto_setup(panel)
         panel.get_by_role('button', name='Show run', exact=True).click()

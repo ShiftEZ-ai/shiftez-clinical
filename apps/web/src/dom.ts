@@ -1557,8 +1557,8 @@ export const buildingPage=(content:HTMLElement|null)=>{
 /** Whether a late answer may still draw into `node`: it is on screen, or in the page being built. Never `isConnected`
  *  alone, which drops an answer that lands before the page is shown; a replaced page's detached nodes stay gone. */
 export const alive=(node:Node|null|undefined)=>!!node&&(node.isConnected||!!pageBuilding?.contains(node));
-/* maintenance: footer controls (rota health, score, overlap, proposal, Needs a check) act through one delegated handler, never
- * a listener of their own. The footer redraws often (a check finishing, a live update, a save): a press that began on a
+/* maintenance: footer controls (rota health, score, overlap, proposal, Needs a check) and the Schedule's Auto-schedule button
+ * act through one delegated handler, never a listener of their own. The footer and the top bar redraw often (a check finishing, a live update, a save): a press that began on a
  * pill the redraw replaced still acts, on the same control (`key`) drawn again under the pointer, whether or not the
  * browser still sends a click; and a control lent to the "+N" list keeps its action. */
 const footerActs=new WeakMap<Element,(e:MouseEvent)=>unknown>();
