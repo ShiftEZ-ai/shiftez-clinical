@@ -75,10 +75,13 @@ def test_locking_is_one_click_with_undo_and_shows_where_it_is(browser, live_serv
         held = []
         draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
         page.route(draft, lambda route: held.append(route))
+        more = bar.get_by_role('button', name=re.compile('More'))
+        # The focus has moved from the tick to More, as a keyboard user's does: a pulse waits while a field has focus
+        # (app.ts readerBusy), so the refresh starts only now.
+        more.focus()
         reconnect(page)
         wait_held(page, held)
         before_menu = bar.get_attribute('data-bar')
-        more = bar.get_by_role('button', name=re.compile('More'))
         more.click()
         item = page.get_by_role('menuitem', name='Lock', exact=True)
         expect(item).to_be_visible()
