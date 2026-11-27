@@ -1375,7 +1375,7 @@ const SESSION_MOVED=(day:string)=>`This session moved to ${day}`,SESSION_REMOVED
  *  background check (keptReads) resolves it again against the fresh replies, and so does any later draw of its rota
  *  that finds it on another day or gone (F7: the fresh rota may arrive only with a live update), so a session moved or
  *  removed elsewhere is said there. */
-let shiftLink:{id:string;serial:number;rota:string;day:string}|null=null;
+let shiftLink:{id:string;serial:number;rota:string;day:string;person:string}|null=null;
 function navigate(target:string){
   if(!leaving(()=>navigate(target),pageName(target)))return;
   const from=pageStep();setRoute(target);applyScheduleRoute();
@@ -1837,7 +1837,8 @@ async function renderPage(live=false){
       // A linked session is marked only after mounting; explicit detail links use the existing planner panel.
       if(view==='schedule'&&!schedSubPage()&&routeShift){const id=routeShift;requestAnimationFrame(()=>{
         if(serial===renderSerial&&routeShift===id){routeShift='';const at=scheduleCache.drafts.get(workspaceId)?.shifts.find(s=>String(s.id)===id);
-          shiftLink={id,serial,rota:workspaceId,day:at?toLocal(at.start,zone()).slice(0,10):''};markShift(id,routePerson);routePerson='';
+          const person=routePerson||(shiftLink?.id===id?shiftLink.person:'');
+          shiftLink={id,serial,rota:workspaceId,day:at?toLocal(at.start,zone()).slice(0,10):'',person};markShift(id,person);routePerson='';
           // Settled: the link leaves the address (replaced, never a new entry), so Back or a reload does not replay it.
           if(routeQuery.get('panel')!=='session'){routeQuery.delete('shift');writeRoute();}
           const s=routeQuery.get('panel')==='session'?scheduleCache.drafts.get(workspaceId)?.shifts.find(s=>String(s.id)===id):undefined;if(s)openSession(s);}
@@ -2883,7 +2884,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   // G-05: on a draft (Home › Duties during approved leave), that session's replacement list for that person (the
   // assignment, or the person), their chip marked and focused.
   if(replaceAsk&&shiftAsk&&draft&&whole){const s=whole.shifts.find(x=>String(x.id)===shiftAsk),a=(s?.participants as Row[]|undefined)?.find(p=>p.id===replaceAsk||p.person_id===replaceAsk);
-    routeQuery.delete('replace');if(s&&a){queueFill(w!.id,String(s.id),String(a.id));routePerson=String(a.person_id);}}
+    routeQuery.delete('replace');if(s&&a){queueFill(w!.id,String(s.id),String(a.id),undefined,undefined,/* focusSearch */false);routePerson=String(a.person_id);}}
   else if(replaceAsk&&shiftAsk&&pubHooks){const s=pubHooks.sessions().find(x=>String(x.id)===shiftAsk);
     if(s||++replaceMisses>1){routeQuery.delete('replace');replaceMisses=0;}
     if(s&&changeable(s)){replaceNext(String(s.id),replaceAsk);queueMicrotask(()=>readOnly(s));}else if(!s&&!routeQuery.has('replace'))notify('That duty is not on this week of the published rota.','warning');}
