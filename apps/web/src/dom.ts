@@ -1232,6 +1232,17 @@ export function dropHoverCard(){
 }
 /** Data the open card was waiting for has arrived (e.g. the planner's rule map): build its content again in place. */
 export function refreshHoverCard(){if(hoverNode?.isConnected)hoverRedraw?.();}
+/** Where a mouse rests: a redraw under it (a live refresh, a save, a check landing) brings back the card it dropped (SI-49),
+ *  only on the replacement for the same thing (its rule target or name); something else now under the pointer stays bare. */
+let pointer:{x:number;y:number}|null=null;
+const hoverKey=(n:HTMLElement)=>n.dataset.rk||n.getAttribute('aria-label')||'';
+/** Called before a redraw replaces the hovered element; the function it returns runs once the new one is drawn. */
+export function keepHover(){
+  const key=hoverTarget&&!helpFromFocus?hoverKey(hoverTarget):'';
+  return ()=>{if(!key||!pointer||hoverNode)return;
+    const at=document.elementFromPoint(pointer.x,pointer.y),now=hoverContent(at);
+    if(now&&now.target!==hoverTarget&&hoverKey(now.target)===key)at!.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:pointer.x,clientY:pointer.y}));};
+}
 /** Hover/focus card for dense grids. Content is built lazily; never steals focus. */
 export function hoverCard(target:HTMLElement,build:()=>Node[],delay=280){
   hoverCards.set(target,{build,delay});
@@ -1322,6 +1333,7 @@ let tooltipsInstalled=false;
 /** One hover/focus lifecycle for labels, compact controls and lazy cards, including elements added by later pages. */
 export function enhanceTooltips(){
   if(tooltipsInstalled)return;tooltipsInstalled=true;
+  document.addEventListener('pointermove',e=>{pointer=e.pointerType==='mouse'?{x:e.clientX,y:e.clientY}:null;},{passive:true});
   // Focus keeps help only when focus is what shows it: keyboard focus, or an explanation-only button. A control focused by
   // its own click keeps hover help only under the pointer, so help never opens or stays after the pointer has left.
   const focusHolds=()=>{const a=document.activeElement;return !!hoverTarget&&!!a&&hoverTarget.contains(a)&&(a.matches(':focus-visible')||hoverTarget.matches('button[data-help]'));};
