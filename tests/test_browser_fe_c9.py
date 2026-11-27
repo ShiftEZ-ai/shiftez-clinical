@@ -426,7 +426,7 @@ def test_a_returned_rota_has_its_row_on_the_coordinators_home(browser, live_serv
 
     def home(body):
         body['attention'] = [{'key': 'returned', 'count': 1, 'sample': [{'rota_id': w['id'], 'rota_name': w['name'], 'returned_at': '2026-11-04T23:00:00+00:00',
-                                                                           'by': 'Fictional approver', 'reason': 'Ask Taylor first'}]}]
+                                                                           'by': 'Fictional approver', 'reason': 'Ask Staff 03 first'}]}]
     context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
     try:
         json_route(page, '**/api/home', home)
@@ -434,7 +434,7 @@ def test_a_returned_rota_has_its_row_on_the_coordinators_home(browser, live_serv
         expect_loaded(page, 'home')
         row = page.locator('[data-need=returned]')
         expect(row).to_contain_text('Returned to you')
-        expect(row).to_contain_text('FE-C9 returned rota · Fictional approver · “Ask Taylor first”')
+        expect(row).to_contain_text('FE-C9 returned rota · Fictional approver · “Ask Staff 03 first”')
         row.get_by_role('button', name='Open', exact=True).click()
         expect_loaded(page, 'schedule')
         expect(page).to_have_url(re.compile(r'edit=' + re.escape(w['id'])))

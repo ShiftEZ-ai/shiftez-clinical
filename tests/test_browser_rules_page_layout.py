@@ -282,7 +282,7 @@ def test_rules_page_pills_follow_condition_fields(browser, live_server, h):
         assert not re.search(r'\brp (?:place|group|all)\b', rank_pill.get_attribute('class') or '')
         expect(item.locator('.rt-ln-who').filter(has_text='Exception pill programme').locator('.rp.group')).to_have_count(1)
         expect(item.locator('.rt-ln-who').filter(has_text='Exception pill capability').locator('.rp.group')).to_have_count(1)
-        expect(item.locator('.rt-ln-who').filter(has_text='Alex Morgan').locator('.rp.person')).to_have_count(1)
+        expect(item.locator('.rt-ln-who').filter(has_text='Staff 01(test)').locator('.rp.person')).to_have_count(1)
         assert item.locator('.rt-ln-who .rp.all').count() >= 1
         expect(item.locator('.rt-ln-who').filter(has_text='#Exception pill tag').locator('.tag-ref')).to_have_count(1)
         duty_pill = item.locator('.rt-lines .rt-wh .rp.dotted')
@@ -290,7 +290,7 @@ def test_rules_page_pills_follow_condition_fields(browser, live_server, h):
         expect(duty_pill).to_contain_text(duty_name)
         expect(duty_pill.locator('.lg-swatch[class*="duty-"]')).to_have_count(1)
         assert 'brown' not in (duty_pill.get_attribute('class') or '')
-        usual_pill = item.locator('.rt-lines .rt-wh .rp.person').filter(has_text='Jordan Lee')
+        usual_pill = item.locator('.rt-lines .rt-wh .rp.person').filter(has_text='Staff 02(test)')
         expect(usual_pill).to_have_class(re.compile(r'\brp person\b'))
         expect(page.locator('.view-legend')).not_to_contain_text('Duty type')
     finally:

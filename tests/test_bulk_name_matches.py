@@ -99,7 +99,7 @@ def test_child_line_matches_include_ids_beyond_the_first_hundred_sample_rows(h):
     with transaction(h.app.state.engine, write=True) as db:
         db.add_all(m.Eligibility(department_id=h.seed["department_id"], person_id=first,
             service_id=h.seed["services"][0], starts_on=date(2030, 1, 1)) for _ in range(120))
-    result = resolve(h, {"collection": "eligibilities", "names": ["Alex Morgan"]})
+    result = resolve(h, {"collection": "eligibilities", "names": ["Staff 01(test)"]})
     assert result["count"] > 120 and len(result["sample"]) == 100
     assert len(set(result["matches"][0]["ids"])) == result["count"]
     assert {row["id"] for row in result["sample"]} < set(result["matches"][0]["ids"])
@@ -108,7 +108,7 @@ def test_child_line_matches_include_ids_beyond_the_first_hundred_sample_rows(h):
 @pytest.mark.parametrize("criteria", ["filter", "conditions", "parent", "exclude"])
 def test_matches_respect_filters_parents_and_exclusions_without_adding_explicit_ticks(h, criteria):
     first, second = h.seed["people"][:2]
-    selection = {"collection": "eligibilities", "names": ["Alex Morgan"]}
+    selection = {"collection": "eligibilities", "names": ["Staff 01(test)"]}
     all_rows = resolve(h, {"collection": "eligibilities"})["sample"]
     first_ids = {row["id"] for row in all_rows if row["person_id"] == first}
     explicit = next(row["id"] for row in all_rows if row["person_id"] == second)
@@ -122,7 +122,7 @@ def test_matches_respect_filters_parents_and_exclusions_without_adding_explicit_
     else:
         selection["exclude_ids"] = list(first_ids)
     result = resolve(h, selection)
-    assert result["matches"] == [{"line": "Alex Morgan", "ids": []}]
+    assert result["matches"] == [{"line": "Staff 01(test)", "ids": []}]
     assert {row["id"] for row in result["sample"]} == {explicit}
 
 
@@ -164,7 +164,7 @@ def test_excessive_child_match_expansion_is_a_clear_api_refusal(h):
         db.add(m.Eligibility(department_id=h.seed["department_id"], person_id=h.seed["people"][0],
             service_id=h.seed["services"][0], starts_on=date(2030, 1, 1)))
     response = h.client("coordinator").post("/api/bulk/resolve", json={
-        "collection": "eligibilities", "names": ["Alex Morgan"] * bulk.MAX_CANDIDATES})
+        "collection": "eligibilities", "names": ["Staff 01(test)"] * bulk.MAX_CANDIDATES})
     assert response.status_code == 422, response.text
     assert response.json()["error"]["code"] == "BULK_SELECTION_LIMIT"
     assert response.json()["error"]["message"] == "More than 5,000 matching record IDs; narrow the pasted list"

@@ -611,12 +611,10 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     coverage, desired_coverage, diagnostic_minima, coverage_score_rows = [], [], [], []
     staffing_targets = [] if relative_fair_share else None
     staffing_choices = []
+    staffing_limits = {}
     capped = False
-    cross_duty_demand = (relative_fair_share or bool(mode_balance)) and any(
-        rule['kind'] == 'team_lead_requirement'
-        or rule['kind'] == 'block_quota' and rule['comparison'] != 'maximum'
-        or (options.scoring.weights.fairness > 0 and rule['kind'] == 'balance_goal'
-            and rule.get('aim') in {'target', 'min_per_pair'})
+    fixed_goal_demand = (relative_fair_share or bool(mode_balance)) and options.scoring.weights.fairness > 0 and any(
+        rule['kind'] == 'balance_goal' and rule.get('aim') in {'target', 'min_per_pair'}
         for rule in (p['definition']['rule'] for p in data['policies']))
     coverage_floor_rows = []
     diagnostic_domains = {}
@@ -1009,9 +1007,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     # Team lead: a variable only for people allowed to lead throughout the duty. Existing leads are hints
     # (or constants when kept as they are); fixed people and fixed leads never change; without a lead
     # setting the existing flag rides along with the person.
-    lead_terms, lead_vars = {}, {}
+    lead_terms, lead_vars, lead_demand = {}, {}, set()
     for shift in shifts:
         sid, lead = shift['id'], leadership.summary(data, shift)
+        if lead and lead['minimum']:
+            lead_demand.add(sid)
         control.check()
         start, end = aware(shift['start']), aware(shift['end'])
         for pid in by_shift[sid]:
@@ -1220,7 +1220,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         supervision = definition.get('supervision')
         mutable_people = [pid for pid in by_shift[sid] if (sid, pid) in decisions] if relative_fair_share or mode_balance else []
         whole_duty = bool(mutable_people) and all(presence(sid, pid) == [(start, end)] for pid in mutable_people)
-        can_cap = (whole_duty and not cross_duty_demand and not supervision and not definition.get('lead')
+        can_cap = (whole_duty and not fixed_goal_demand and not supervision and sid not in lead_demand
+                   and not definition.get('lead')
                    and not is_open_extra_cover(definition) and all(not r['capabilities'] for r in definition['requirements']))
         places_to_fill = 0
         maximum_places = len(mutable_people)
@@ -1566,8 +1567,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 policy_applies(data, policy, pid, shift, start, end) for policy in mode_balance for pid in mutable_people)):
             # A mutable whole duty fills all its staffed intervals. Cover needed in
             # any interval may require a place even if another is already staffed.
-            model.add(sum(choices[sid, pid] for pid in mutable_people) <= places_to_fill).with_name('duty:' + sid)
-            capped = True
+            staffing_limits[sid] = ([choices[sid, pid] for pid in mutable_people], places_to_fill)
         elif relative_fair_share and not can_cap and (not whole_duty or maximum_places > places_to_fill):
             staffing_choices.extend(choices[sid, pid] for pid in mutable_people)
 
@@ -1580,13 +1580,22 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     add_workload_limits(model, data, by_person, pairings, penalise)
     control.check()
     from .cp_sat_quotas import add_quotas
+    quota_demand = set()
     issues = add_quotas(model, data, by_person, penalise, diagnostic_proposal=diagnostic_proposal, leads=lead_terms,
                         score_items=None if feasibility_only else quota_items,
                         score_strengths=quota_strengths, target_group=fill_priority.target if fill_priority.enabled else None, strict_minima=strict_constraints,
                         diagnostic_domains=diagnostic_domains if not feasibility_only else None,
-                        staffing_targets=staffing_targets if options.scoring.weights.rules else None)
+                        staffing_targets=staffing_targets if options.scoring.weights.rules else None,
+                        staffing_demand=quota_demand if staffing_limits else None)
     if issues:
         return {**result, 'status': 'invalid_inputs', 'issues': issues}
+    # A quota's actual candidate contributions decide where it can need an extra place.
+    for sid, (mutable_choices, limit) in staffing_limits.items():
+        if sid not in quota_demand:
+            model.add(sum(mutable_choices) <= limit).with_name('duty:' + sid)
+            capped = True
+        elif relative_fair_share:
+            staffing_choices.extend(mutable_choices)
     control.check()
     components = {}
     score_baseline = {}

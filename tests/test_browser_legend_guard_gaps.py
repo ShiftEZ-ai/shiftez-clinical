@@ -16,14 +16,14 @@ DESKTOP = {'width': 1440, 'height': 900}
 
 
 def test_exception_forks_are_entries_of_the_views_key(browser, live_server, h):
-    """Jordan's own number in the weekly duty limit draws an exception fork on their Week chip: it is stamped as the
+    """Staff 02's own number in the weekly duty limit draws an exception fork on their Week chip: it is stamped as the
     Week key's "exception" entry (the same entry as the rules panel's), never left bare or put in a second key."""
     w, _ = rota(h)
     context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
     try:
         open_planner(page, w)
         page.locator('.wk-day').nth(1).hover()  # the rule map is read on the first hover or focus
-        fork = page.locator('#schedule-view .pchip').filter(has_text='Jordan').locator('.rk-mark')
+        fork = page.locator('#schedule-view .pchip').filter(has_text='Staff 02').locator('.rk-mark')
         expect(fork).to_be_attached()
         assert fork.first.get_attribute('data-lg', timeout=5000).split(':')[-1] == 'exception'
         page.mouse.move(1, 1)
@@ -39,7 +39,7 @@ def test_the_session_panels_rule_rows_are_keyed(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'coordinator', DESKTOP)
     try:
         open_planner(page, w)
-        page.locator('#schedule-view .pchip').filter(has_text='Jordan').click()
+        page.locator('#schedule-view .pchip').filter(has_text='Staff 02').click()
         panel = page.locator('.wk-panel')
         expect(rule_row(panel, 'Weekly duty limit')).to_be_visible()  # the row says a sentence; its rule is data-rk-name
         names = assert_legend_matches(page, root='.wk-panel')

@@ -78,7 +78,7 @@ def department_swap_audiences(scale_harness, request):
             db.add_all(m.PublicationPerson(publication_id=publication.id, person_id=person_id) for person_id in people)
             publication_id = publication.id
 
-        # Every blocked exchange recipient has ten valid future return duties to exhaust; one remains eligible.
+        # Protected time on the offered duty blocks each recipient before any return duty is tried; one remains eligible.
         h.policy({'kind': 'restriction', 'weekdays': [6], 'start_time': '08:00', 'end_time': '12:00'},
                  {'person_ids': people[1:-1]})
         preparations, policy_groups = [], []

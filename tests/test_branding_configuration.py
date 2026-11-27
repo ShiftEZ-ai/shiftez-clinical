@@ -253,11 +253,31 @@ def test_disabling_the_last_installation_admin_is_refused(h):
     reason = {'reason': 'Transfer installation administration'}
     h.command('operator', 'role.grant', {'identity_id': identity_id, 'role': s.INSTALLATION_ADMIN_ROLE,
         'starts_on': '2020-01-01', **reason})
+    h.command('operator', 'role.grant', {'identity_id': h.seed['identities']['admin'],
+        'role': s.INSTALLATION_ADMIN_ROLE, 'starts_on': '2020-01-01',
+        'ends_on': (date.today() + timedelta(days=30)).isoformat(), **reason})
 
     refused = h.command('admin', 'identity.disable', reason, identity_id, 1, status=409)
 
     assert refused['error']['code'] == 'LAST_INSTALLATION_ADMIN'
     assert h.get('staff', '/api/admin/branding')['can_edit']
+
+
+def test_disabling_an_installation_admin_requires_installation_authority(h):
+    role = s.INSTALLATION_ADMIN_ROLE
+    reason = {'reason': 'Transfer installation administration'}
+    grant = {'role': role, 'starts_on': '2020-01-01', **reason}
+    staff, coordinator, admin = (h.seed['identities'][name] for name in ('staff', 'coordinator', 'admin'))
+    for identity_id in (staff, coordinator):
+        h.command('operator', 'role.grant', {**grant, 'identity_id': identity_id})
+
+    error = h.command('admin', 'identity.disable', reason, staff, 1, status=403)['error']
+    assert error['code'] == 'FORBIDDEN'
+    assert s.ROLE_LABELS[role] in error['message']
+    assert h.get('staff', '/api/admin/branding')['can_edit']
+
+    h.command('operator', 'role.grant', {**grant, 'identity_id': admin})
+    assert h.command('admin', 'identity.disable', reason, staff, 1)['record']['disabled']
 
 
 @pytest.mark.usefixtures('branding_editor')
@@ -278,6 +298,8 @@ def test_concurrent_revoke_and_disable_preserve_installation_admin(pg):
         'starts_on': '2020-01-01', **reason})['record']
     h.command('operator', 'role.grant', {'identity_id': coordinator, 'role': role,
         'starts_on': '2020-01-01', **reason})
+    h.command('operator', 'role.grant', {'identity_id': h.seed['identities']['admin'], 'role': role,
+        'starts_on': '2020-01-01', 'ends_on': (date.today() + timedelta(days=30)).isoformat(), **reason})
     h.client('operator')
     h.client('admin')
     ready = Barrier(2)

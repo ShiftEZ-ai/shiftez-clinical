@@ -150,9 +150,9 @@ def test_a_refused_published_change_is_said_in_its_panel_with_try_again(browser,
         fake = FailingChanges(h, fail)
         fake.install(page)
         panel = open_session(page, h, tomorrow)
-        panel.get_by_role('button', name='Change Alex Morgan on this session').click()
+        panel.get_by_role('button', name='Change Staff 01(test) on this session').click()
         page.get_by_role('menuitem', name='Replace…').click()
-        panel.get_by_role('button', name='Assign Taylor Noor').click()
+        panel.get_by_role('button', name='Assign Staff 03(test)').click()
         if fail == 'publication.change':
             expect(panel.locator('.notice.error')).to_contain_text('This change was not made. The system is busy')
             panel.get_by_role('button', name='Try again').click()
@@ -271,7 +271,7 @@ def test_the_approver_sees_what_an_amendment_changes(browser, live_server, h):
         open_rota(page, w['id'])
         page.get_by_role('button', name='Approve rota').click()
         changes = page.get_by_role('dialog').get_by_role('region', name='What changes')
-        expect(changes).to_contain_text('Alex Morgan → Jordan')
+        expect(changes).to_contain_text('Staff 01(test) → Staff 02')
         shot(page, 'approver-what-changes')
     finally:
         context.close()
@@ -366,8 +366,8 @@ def test_a_staff_cant_make_it_reaches_the_coordinators_home_and_opens_replace(br
         fake = FakeChanges(h)
         fake.install(page)
         session = next(s for s in fake.shifts if s['start'].startswith(tomorrow.isoformat()))
-        who = next(p for p in session['participants'] if p['person_id'] == h.seed['people'][0])  # Alex Morgan
-        item = {'key': 'absence_reported', 'count': 1, 'sample': [{'request_id': 'r1', 'person_id': who['person_id'], 'person': 'Alex Morgan',
+        who = next(p for p in session['participants'] if p['person_id'] == h.seed['people'][0])  # Staff 01(test)
+        item = {'key': 'absence_reported', 'count': 1, 'sample': [{'request_id': 'r1', 'person_id': who['person_id'], 'person': 'Staff 01(test)',
                 'start': session['start'], 'end': session['end'], 'status': 'approved',
                 'replace_action': {'key': 'amend_publication', 'publication_id': 'p', 'shift_id': session['id'], 'assignment_id': who['id']}}]}
 
@@ -381,10 +381,10 @@ def test_a_staff_cant_make_it_reaches_the_coordinators_home_and_opens_replace(br
         navigate(page, 'home')
         row = page.locator('#main .home-needs-list li[data-need=absence_reported]')
         expect(row).to_contain_text(ABSENCE_REPORT_LABEL)
-        expect(row).to_contain_text('Alex Morgan')
+        expect(row).to_contain_text('Staff 01(test)')
         expect(row).to_contain_text('needs cover')
         row.get_by_role('button', name='Replace').click()
-        expect(page.locator('.dock-panel').get_by_role('heading', name='Replace Alex Morgan')).to_be_visible()
+        expect(page.locator('.dock-panel').get_by_role('heading', name='Replace Staff 01(test)')).to_be_visible()
         shot(page, 'home-cant-make-it-replace')
     finally:
         context.close()

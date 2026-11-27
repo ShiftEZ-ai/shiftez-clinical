@@ -26,13 +26,13 @@ def mandatory(n):
 
 
 def lines_of_every_kind(h):
-    """Duties per month: everyone 1 – 20, Alex ≤ 10 (inheriting the minimum and the rank's target, ↰), the demo rank → 8 advisory, one
+    """Duties per month: everyone 1 – 20, Staff 01 ≤ 10 (inheriting the minimum and the rank's target, ↰), the demo rank → 8 advisory, one
     clinic ≤ 15 and #exceptional_trainee ≤ 6 (a tag chip names itself)."""
     a = h.seed['people'][0]
     tag = tag_people(h, 'exceptional_trainee', [a])
     who = lambda field, v: {'conditions': [{'field': field, 'values': [v]}]}  # noqa: E731
     lines = [line({'min': mandatory(1), 'max': mandatory(20)}, note='Everyone line'),
-             line({'max': mandatory(10)}, who=who('person_ids', a), note='Alex line'),
+             line({'max': mandatory(10)}, who=who('person_ids', a), note='Staff 01 line'),
              line({'target': {'value': 8, 'level': 'medium'}}, who=who('category_ids', h.seed['category']), note='Rank line'),
              line({'max': mandatory(15)}, where=who('service_ids', h.seed['services'][0]), note='Clinic line'),
              line({'max': mandatory(6)}, who=who('person_ids', tag), note='Tag line')]
@@ -57,8 +57,8 @@ def test_the_rules_list_keys_every_mark_its_lines_draw(browser, live_server, h):
         toggle = main.get_by_role('button', name='Duties per month lines')
         toggle.click()
         expect(main.locator('li.rt-ln')).to_have_count(5)
-        # Alex is of the demo rank: the minimum (Everyone) and the target (the rank line) come from broader lines.
-        expect(main.locator('li.rt-ln').filter(has_text='Alex Morgan').locator('.rc-inh')).to_have_count(2)
+        # Staff 01 is of the demo rank: the minimum (Everyone) and the target (the rank line) come from broader lines.
+        expect(main.locator('li.rt-ln').filter(has_text='Staff 01(test)').locator('.rc-inh')).to_have_count(2)
         expect(main.locator('.rt > .view-legend')).to_be_visible()  # after the table it explains
         assert_legend_matches(page, root='#main', expect_marks=['numbers', *LINE_MARKS])
         no_footer_key(page)
@@ -88,22 +88,22 @@ def test_a_rule_page_and_its_waiting_proposal_key_their_marks(browser, live_serv
         context.close()
     # A change waiting for approval: its line changes read min – max → target.
     b = h.seed['people'][1]
-    more = lines + [line({'min': mandatory(2), 'max': mandatory(4)}, who={'conditions': [{'field': 'person_ids', 'values': [b]}]}, note='Jordan line')]
+    more = lines + [line({'min': mandatory(2), 'max': mandatory(4)}, who={'conditions': [{'field': 'person_ids', 'values': [b]}]}, note='Staff 02 line')]
     check = h.client('coordinator').post('/api/rules/catalogue/duties_per_month/check', json={'lines': more}).json()
     h.command('coordinator', 'rule.propose', {'catalogue_id': 'duties_per_month', 'expected_policy_id': rule['id'], 'expected_revision': rule['revision'],
-                                              'lines': more, 'acknowledged_overlaps': [o['line_id'] for o in check['overlaps']], 'reason': 'Jordan range'})
+                                              'lines': more, 'acknowledged_overlaps': [o['line_id'] for o in check['overlaps']], 'reason': 'Staff 02 range'})
     context, page = sign_in(browser, live_server, 'approver')
     try:
         navigate(page, 'rules/duties_per_month')
         main = page.locator('#main')
-        expect(main.locator('.rc-waiting .rc-prop-table')).to_contain_text('Jordan')
+        expect(main.locator('.rc-waiting .rc-prop-table')).to_contain_text('Staff 02')
         assert_legend_matches(page, root='#main', expect_marks=['numbers', 'mandatory', 'person'])
     finally:
         context.close()
 
 
 def test_the_checks_page_keys_its_leave_pill(browser, live_server, h):
-    w, _ = conflicted(h)  # Alex on leave (type "Annual") over two of his duties
+    w, _ = conflicted(h)  # Staff 01 on leave (type "Annual") over two of his duties
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, f'schedule/issues?draft={w["id"]}&view=checks')

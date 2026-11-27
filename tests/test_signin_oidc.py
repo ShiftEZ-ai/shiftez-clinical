@@ -474,7 +474,7 @@ def test_runtime_never_falls_back_to_issuer_subject_username_or_email_matching(h
     with transaction(h.app.state.engine, write=True) as db:
         identity = db.get(m.Identity, h.seed["identities"]["admin"])
         identity.issuer, identity.subject = provider.settings.oidc_issuer, provider.claims["sub"]
-    with pytest.raises(Problem, match="add your hospital sign-in"), transaction(h.app.state.engine, write=True) as db:
+    with pytest.raises(Problem, match="add your institutional sign-in"), transaction(h.app.state.engine, write=True) as db:
         oidc.finish_flow(db, provider.settings, {**provider.claims, "preferred_username": "admin", "email": "admin@hospital.test"})
 
 

@@ -70,6 +70,7 @@ def test_startup_recovers_only_owned_jobs_immediately_and_fences_previous_attemp
 
 def test_main_recovers_owned_work_once_per_successful_start(monkeypatch):
     monkeypatch.setenv('ROTA_ENV', 'test')
+    monkeypatch.setenv('ROTA_SOLVER_WORKERS', '1')
     monkeypatch.setattr('sys.argv', ['worker'])
     monkeypatch.setattr(worker, 'configure_logging', lambda: None)
     monkeypatch.setattr(worker, 'make_engine', lambda *a, **k: object())

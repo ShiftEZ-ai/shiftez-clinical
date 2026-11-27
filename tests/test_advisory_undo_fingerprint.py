@@ -117,11 +117,20 @@ def test_metadata_undo_selects_latest_edit_even_when_timestamps_tie_and_never_re
                            current['id'], current['revision'])['workspace']
         assert undone['accepted_issues'] == first['accepted_issues']
         assert undone['content_revision'] == workspace['content_revision']
-        refused = h.command('coordinator', 'workspace.undo', {'reason': 'An undo is never redone'},
-                            undone['id'], undone['revision'], status=409)
-        assert refused['error']['code'] == 'NO_UNDO'
         assert h.detail(undone)['current_fingerprint'] == before['current_fingerprint']
         assert h.detail(undone)['shifts'] == before['shifts']
+        stale = h.command('coordinator', 'workspace.undo',
+                          {'reason': 'Undo from the old message', 'undo_of': current['undo_change_id']},
+                          undone['id'], undone['revision'], status=409)
+        assert stale['error']['code'] == 'STALE_UNDO'
+        assert h.detail(undone)['workspace']['revision'] == undone['revision']
+    earlier = h.command('coordinator', 'workspace.undo',
+                        {'reason': 'Undo the earlier acceptance', 'undo_of': first['undo_change_id']},
+                        undone['id'], undone['revision'])['workspace']
+    assert earlier['accepted_issues'] == before['workspace']['accepted_issues']
+    after = h.detail(earlier)
+    assert after['current_fingerprint'] == before['current_fingerprint']
+    assert after['shifts'] == before['shifts']
 
 
 def test_advisory_undo_does_not_unapply_an_applied_proposal(h):

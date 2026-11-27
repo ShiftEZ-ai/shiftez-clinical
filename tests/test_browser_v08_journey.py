@@ -113,7 +113,7 @@ def test_v08_journey_across_roles(browser, cp_server, h):
             form.get_by_label('Maximum duties', exact=True).fill('3')
             for field, names in (('Rank', ['Demo practitioners']), ('Skill', ['Demo independent practice']), ('Programme', ['FM residency']),
                                  ('Rotation type', ['Urgent care block']), ('Cohort', ['Year 2 residents']), ('Tag', ['#Night']),
-                                 ('Person', ['Alex Morgan']), ('Clinic', ['Continuity clinic', 'Review clinic']),
+                                 ('Person', ['Staff 01(test)']), ('Clinic', ['Continuity clinic', 'Review clinic']),
                                  ('Location', ['North consulting room', 'South consulting room']), ('Duty type', ['Clinical review session'])):
                 condition(form, field, names)
             form.get_by_label('Joiner', exact=True).first.select_option(label='Or')  # the level's joiner: any one of them matches
@@ -260,8 +260,8 @@ def test_v08_journey_across_roles(browser, cp_server, h):
         goals = page.locator('[data-section=goals] .fx-goal')
         expect(goals).to_have_count(2)  # authored duties goal plus seeded workload goal
         expect(goals.filter(has_text='Journey fair duties')).to_contain_text('Journey fair duties')
-        page.locator('[data-section=distribution]').get_by_role('button', name=re.compile('^Alex Morgan: ')).click()
-        drill = page.get_by_role('region', name='Duties · Alex Morgan')
+        page.locator('[data-section=distribution]').get_by_role('button', name=re.compile('^Staff 01\\(test\\): ')).click()
+        drill = page.get_by_role('region', name='Duties · Staff 01(test)')
         expect(drill.locator('tbody tr')).to_have_count(len(worked))
         drill.get_by_role('button', name='Close panel').click()
         # Every session has one person: nobody worked together, and the heatmap says so instead of a grid of zeros.

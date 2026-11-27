@@ -85,7 +85,7 @@ def test_month_lanes_name_each_clinic_in_full_and_people_by_short_name(browser, 
             label = head.locator(".clamp-2")
             expect(label).to_have_attribute("title", name)
             assert label.evaluate("n => n.scrollHeight <= n.clientHeight + 1"), name  # the whole name fits its two lines
-        expect(grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · ")).first.locator(".pchip").first).to_contain_text("A. Morgan")
+        expect(grid.get_by_role("gridcell", name=re.compile(r"^4 Oct 2026 · ")).first.locator(".pchip").first).to_contain_text("S. 01(test)")
     finally:
         context.close()
 

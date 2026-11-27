@@ -23,7 +23,7 @@ def current_batch(h, batch):
 
 
 def resolved_import(h, typ=None):
-    batch = csv_upload(h, [['Alex Morgan', '2026-10-04', typ or 'Clinical review session',
+    batch = csv_upload(h, [['Staff 01(test)', '2026-10-04', typ or 'Clinical review session',
         'Continuity clinic', '08:00', '12:00']], starts_on='2026-10-04', ends_on='2026-10-11')['batch']
     return decide(h, batch, gap_for(batch, 'Continuity clinic'), 'confirm', location_id=h.seed['locations'][0])
 
@@ -31,8 +31,8 @@ def resolved_import(h, typ=None):
 def stored_evidence(h, monkeypatch, format='csv', *, unclear=2):
     """Synthetic OCR preserves real declarations, validation and ordinary draft writers."""
     batch = csv_upload(h, [
-        ['Alex Morgan', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Alex Morgan', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
     ], starts_on='2026-10-04', ends_on='2026-10-11')['batch']
     with transaction(h.app.state.engine, write=True) as db:
         source = db.get(m.ImportSource, batch['files'][0]['id'])
@@ -88,7 +88,7 @@ def test_correcting_two_items_on_one_page_preserves_neighbours_and_undo_is_local
     decisions = []
     for index, cell in enumerate(cells):
         gap = next(g for g in batch['gaps'] if g['id'] == cell['id'])
-        assignment = {**cell['reading_context'], 'person': 'Alex Morgan', 'date': f'2026-10-0{index + 6}',
+        assignment = {**cell['reading_context'], 'person': 'Staff 01(test)', 'date': f'2026-10-0{index + 6}',
             'duty_code': 'Clinical review session', 'clinic': 'Continuity clinic', 'start': '08:00', 'end': '12:00'}
         batch = decide(h, batch, gap, 'resolve', replacement=assignment)
         decisions.append(next(g for g in batch['gaps'] if g['id'] == cell['id'])['decision']['id'])
@@ -108,7 +108,7 @@ def test_ambiguous_tabular_cell_never_applies_its_original_assignment_without_a_
     batch, check = stored_evidence(h, monkeypatch, unclear=1)
     cell, = [item for item in check['items'] if item['section'] == 'cell']
     if action != 'undecided':
-        replacement = ({**cell['reading_context'], 'person': 'Alex Morgan', 'date': '2026-10-04',
+        replacement = ({**cell['reading_context'], 'person': 'Staff 01(test)', 'date': '2026-10-04',
             'duty_code': 'Clinical review session', 'clinic': 'Continuity clinic', 'start': '13:00', 'end': '17:00'}
             if action == 'resolve' else None)
         batch = decide(h, batch, next(g for g in batch['gaps'] if g['id'] == cell['id']), action,
@@ -125,10 +125,10 @@ def test_ambiguous_tabular_cell_never_applies_its_original_assignment_without_a_
 
 def test_editing_period_requires_new_missing_staff_acknowledgements(h):
     batch = acknowledge_missing(h, resolved_import(h))
-    previous = gap_for(batch, 'Taylor Noor', 'missing')
+    previous = gap_for(batch, 'Staff 03(test)', 'missing')
     assert previous['decision']['action'] == 'acknowledge' and batch['can_save']
     batch = change(h, batch, 'update', starts_on='2026-10-04', ends_on='2026-10-12')['batch']
-    current = gap_for(batch, 'Taylor Noor', 'missing')
+    current = gap_for(batch, 'Staff 03(test)', 'missing')
     assert current['id'] != previous['id'] and current.get('decision') is None
     assert batch['counts']['missing'] > 0 and batch['can_save'] is False
     assert change(h, batch, 'save', status=409)['error']['code'] in {'IMPORT_ALARMS', 'IMPORT_CHECK_CHANGED'}
@@ -197,7 +197,7 @@ def test_leaving_out_the_only_duty_code_or_clinic_marks_its_staff_missing_and_un
     assert not any(g['kind'] == 'missing' and g['suggested_target_id'] == h.seed['people'][0] for g in batch['gaps'])
     batch = decide(h, batch, gap_for(batch, label), 'exclude')
     excluded = gap_for(batch, label)['decision']
-    missing = gap_for(batch, 'Alex Morgan', 'missing')
+    missing = gap_for(batch, 'Staff 01(test)', 'missing')
     assert missing['suggested_target_id'] == h.seed['people'][0]
     assert missing.get('decision') is None and batch['can_save'] is False
     batch = change(h, batch, 'undo', decision_id=excluded['id'])['batch']

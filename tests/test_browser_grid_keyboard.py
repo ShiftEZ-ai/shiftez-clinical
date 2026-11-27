@@ -82,6 +82,80 @@ def test_tab_enters_the_schedule_grid_at_a_cell_and_a_grip_keeps_its_focus(brows
         context.close()
 
 
+@pytest.mark.parametrize('width,head', [(390, 180), (900, 480)])  # wide enough that the days scroll under the column
+def test_an_arrow_move_lands_beside_a_resized_people_name_column(browser, live_server, h, width, head):
+    """WCAG 2.4.11 Focus Not Obscured: an arrow move to a chip that sits under the sticky name column scrolls it out
+    beside the column, at the width the view resized the column to (the roving grid scrolls its target into view;
+    CSS Scroll Snap 1: scroll-margin applies to scrolling into view)."""
+    from .test_browser_schedule import october, show
+    _, d = october(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
+    try:
+        page.emulate_media(reduced_motion='reduce')
+        show(page, f"schedule/people/2026-10-14?edit={d['id']}")
+        people = page.get_by_role('grid', name='Duties by person and day', exact=True)
+        expect(people.locator('button.pg-chip').first).to_be_visible()
+        # The width a resize writes (planner_week.ts scheduleWidths). The leftmost chip with a grid item after it in its
+        # row is put wholly under the right part of the column, and that next item (in view) takes focus.
+        under, edge = people.evaluate("""(g, head) => {
+          g.style.setProperty('--sched-head', head + 'px');
+          const s = g.parentElement, box = n => n.getBoundingClientRect();
+          const edge = box(g.querySelector('.pg-head>.pg-name')).right;
+          const items = [...g.querySelectorAll('button,a[href],input,select,textarea,[tabindex]')].filter(n =>
+            !n.classList.contains('dt-resize') && !n.closest('.wk-more,[hidden]') && !n.matches(':disabled') && n.getClientRects().length > 0);
+          const after = c => items.filter(n => { const r = box(n); return r.left >= c.right - 1 && r.top < c.bottom - 2 && r.bottom > c.top + 2; })
+            .sort((a, b) => box(a).left - box(b).left)[0];
+          const chip = items.filter(n => n.matches('button.pg-chip') && after(box(n))).sort((a, b) => box(a).left - box(b).left)[0];
+          s.scrollLeft += box(chip).right - (edge - 4);
+          const c = box(chip);
+          window.__target = chip;
+          after(c).focus({preventScroll: true});
+          return [c.right, edge];
+        }""", head)
+        assert under < edge, (under, edge)  # the chip starts wholly under the column
+        page.keyboard.press('ArrowLeft')
+        moved, beside = people.evaluate("""g => [document.activeElement === window.__target,
+          window.__target.getBoundingClientRect().left - g.querySelector('.pg-head>.pg-name').getBoundingClientRect().right]""")
+        assert moved
+        assert beside >= -1, beside
+    finally:
+        context.close()
+
+
+def test_tab_reveals_a_covered_people_grid_stop(browser, live_server, h):
+    """WCAG 2.4.11: Tab returns to the same duty and reveals it beside the sticky name column."""
+    from .test_browser_schedule import october, show
+
+    _, draft = october(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': 900, 'height': 900})
+    try:
+        page.emulate_media(reduced_motion='reduce')
+        show(page, f"schedule/people/2026-10-14?edit={draft['id']}&range=month")
+        grid = page.get_by_role('grid', name='Duties by person and day', exact=True)
+        stop = grid.locator('[data-day="2026-10-14"] button.pg-chip')
+        expect(stop).to_be_visible()
+        expect(grid.locator('[tabindex="0"]')).to_have_count(1)
+        stop.focus()
+        expect(stop).to_have_attribute('tabindex', '0')
+        page.locator('.planner-toolbar').get_by_role('button').last.focus()
+        covered = stop.evaluate("""chip => {
+          const grid = chip.closest('.people-grid');
+          grid.style.setProperty('--sched-date', '56px');
+          const scroller = grid.parentElement;
+          const name = grid.querySelector('.pg-head>.pg-name');
+          scroller.scrollLeft += chip.getBoundingClientRect().right - name.getBoundingClientRect().right + 8;
+          return chip.getBoundingClientRect().right < name.getBoundingClientRect().right;
+        }""")
+        assert covered
+        tab_into(page, grid)
+        expect(stop).to_be_focused()
+        clear = stop.evaluate("""chip => chip.getBoundingClientRect().left >=
+          chip.closest('.people-grid').querySelector('.pg-head>.pg-name').getBoundingClientRect().right - 1""")
+        assert clear
+    finally:
+        context.close()
+
+
 def test_schedule_names_its_places_published_panel_list_table_and_new_range(browser, live_server, h):
     """maintenance: a Week name says the place; the published session panel is a named region; a step of the period
     navigator says the new range politely; the List table has a caption."""
@@ -92,7 +166,7 @@ def test_schedule_names_its_places_published_panel_list_table_and_new_range(brow
     try:
         show(page, f"schedule/week/2026-10-14?edit={d['id']}")
         grid = page.get_by_role('region', name='Week view').get_by_role('grid')
-        chip = grid.get_by_role('button', name=re.compile(r'^Jordan Lee, Clinical review session, .+, 12 Oct 2026 08:00.12:00, published, read-only$'))
+        chip = grid.get_by_role('button', name=re.compile(r'^Staff 02\(test\), Clinical review session, .+, 12 Oct 2026 08:00.12:00, published, read-only$'))
         place = chip.get_attribute('aria-label').split(', ')[2]
         assert place and place != '12 Oct 2026'
         chip.click()

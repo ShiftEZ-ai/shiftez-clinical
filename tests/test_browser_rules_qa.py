@@ -89,7 +89,7 @@ def test_a_read_only_line_panel_keeps_its_titles_clear(browser, live_server, h):
     context, page = sign_in(browser, live_server, 'auditor')
     try:
         navigate(page, 'rules/duties_per_month')
-        page.locator('#main tr[data-row]').filter(has_text='Alex Morgan').locator('td[data-col="who"]').click()
+        page.locator('#main tr[data-row]').filter(has_text='Staff 01(test)').locator('td[data-col="who"]').click()
         panel = page.locator('.rc-line-panel')
         expect(panel.locator('.rc-lp-title').first).to_be_visible()
         expect(panel.locator('.cond-fact').first).to_be_visible()

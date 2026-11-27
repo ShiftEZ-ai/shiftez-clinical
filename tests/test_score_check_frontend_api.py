@@ -21,7 +21,7 @@ def dto(value):
 
 
 def upload(h, rows=None, *, role='coordinator', status=200, key=None):
-    rows = rows or [['Alex Morgan', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00']]
+    rows = rows or [['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00']]
     out = io.StringIO()
     writer = csv.writer(out)
     writer.writerow(['Group', 'Residents'])
@@ -116,10 +116,10 @@ def test_import_source_remove_restore_discard_preserve_raw_evidence_and_revision
 
 def test_frontend_check_flattens_confident_unknown_unsure_and_cells_and_can_undo(h):
     value = upload(h, [
-        ['Alex Morgan', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Jordn Lee', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 02(ttest)', '2026-10-05', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
         ['Unknown Visitor', '2026-10-06', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Alex Morgan', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
     ])
     result = check(h, value)
     assert s.ImportCheck.model_validate(result).matched == 2
@@ -128,7 +128,7 @@ def test_frontend_check_flattens_confident_unknown_unsure_and_cells_and_can_undo
     assert all(value['sources'][0]['file_name'] in item['detail'] for item in result['items'] if item['section'] != 'missing')
     assert all(item['reading_context']['cell_ref'] in item['detail'] for item in result['items'] if item['section'] == 'cell')
     unsure = next(item for item in result['items'] if item['section'] == 'unsure' and item['kind'] == 'person')
-    assert unsure['as_written'] == 'Jordn Lee' and unsure['suggested']['label'] == 'Jordan Lee'
+    assert unsure['as_written'] == 'Staff 02(ttest)' and unsure['suggested']['label'] == 'Staff 02(test)'
     result = decide(h, value, unsure, {'kind': 'confirm', 'target_id': h.seed['people'][0]})
     chosen = next(item for item in result['items'] if item['id'] == unsure['id'])
     assert chosen['decision']['kind'] == 'match'
@@ -197,7 +197,7 @@ def test_frontend_add_files_is_revision_checked_and_upload_replays_one_receipt(h
     key = str(uuid.uuid4())
     value = upload(h, key=key)
     assert upload(h, key=key) == value
-    content = b'Person,Date,Code,Clinic,Start,End\nJordan Lee,2026-10-05,Clinical review session,Continuity clinic,08:00,12:00\n'
+    content = b'Person,Date,Code,Clinic,Start,End\nStaff 02(test),2026-10-05,Clinical review session,Continuity clinic,08:00,12:00\n'
     client = h.client('coordinator')
     url = '/api/score-imports/' + value['id'] + '/sources'
     assert client.post(url, files={'files': ('fellows.csv', content, 'text/csv')},
@@ -231,7 +231,7 @@ def test_frontend_profile_requires_fresh_consent_and_affects_only_future_files(h
     client = h.client('coordinator')
     response = client.post('/api/score-imports/' + value['id'] + '/sources',
         data={'revision': str(value['revision']), 'profile_revision': str(configured['revision']), 'privacy_acknowledged': 'true'},
-        files={'files': ('next.csv', b'Person,Date,Code\nAlex Morgan,2026-10-05,AM\n', 'text/csv')},
+        files={'files': ('next.csv', b'Person,Date,Code\nStaff 01(test),2026-10-05,AM\n', 'text/csv')},
         headers={'idempotency-key': str(uuid.uuid4())})
     assert response.status_code == 409, response.text
     assert change(h, value, 'profile', profile_id=None)['profile_id'] is None
@@ -240,7 +240,7 @@ def test_frontend_profile_requires_fresh_consent_and_affects_only_future_files(h
 def test_frontend_decisions_require_valid_catalogue_values_and_explicit_cell_reading(h):
     value = upload(h, [
         ['Unknown Visitor', '2026-10-04', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
-        ['Alex Morgan', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
+        ['Staff 01(test)', 'soon', 'Clinical review session', 'Continuity clinic', '08:00', '12:00'],
     ])
     result = check(h, value)
     unknown = next(item for item in result['items'] if item['section'] == 'unknown')
@@ -254,7 +254,7 @@ def test_frontend_decisions_require_valid_catalogue_values_and_explicit_cell_rea
     value = current(h, value)
     cell = next(item for item in check(h, value)['items'] if item['section'] == 'cell')
     decide(h, value, cell, {'kind': 'confirm', 'target_id': h.seed['people'][0]}, status=422)
-    reading = {**cell['reading_context'], 'person': 'Alex Morgan',
+    reading = {**cell['reading_context'], 'person': 'Staff 01(test)',
         'date': '2026-10-04', 'duty_code': 'Clinical review session', 'clinic': 'Continuity clinic',
         'start': '13:00', 'end': '17:00'}
     result = decide(h, value, cell, {'kind': 'confirm', 'reading': reading})
@@ -263,7 +263,7 @@ def test_frontend_decisions_require_valid_catalogue_values_and_explicit_cell_rea
 
 
 def test_frontend_clinic_match_requires_a_scoped_location(h):
-    value = upload(h, [['Alex Morgan', '2026-10-04', 'Clinical review session', 'Unknown clinic', '08:00', '12:00']])
+    value = upload(h, [['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Unknown clinic', '08:00', '12:00']])
     item = next(item for item in check(h, value)['items'] if item['kind'] == 'clinic')
     decision = {'kind': 'match', 'target_id': h.seed['services'][0]}
     assert decide(h, value, item, decision, status=422)['error']['code'] == 'IMPORT_LOCATION'
@@ -272,7 +272,7 @@ def test_frontend_clinic_match_requires_a_scoped_location(h):
 
 
 def test_coordinator_can_add_a_clinic_through_check_and_undo_it(h):
-    value = upload(h, [['Alex Morgan', '2026-10-04', 'Clinical review session', 'Unknown clinic', '08:00', '12:00']])
+    value = upload(h, [['Staff 01(test)', '2026-10-04', 'Clinical review session', 'Unknown clinic', '08:00', '12:00']])
     item = next(item for item in check(h, value)['items'] if item['kind'] == 'clinic')
     result = decide(h, value, item, {'kind': 'add', 'value': {'name': 'Unknown clinic', 'starts_on': '2026-10-01'},
         'location_id': h.seed['locations'][0]})
@@ -289,7 +289,7 @@ def test_coordinator_can_add_a_clinic_through_check_and_undo_it(h):
 
 @pytest.mark.parametrize('legacy', [False, True], ids=['canonical', 'legacy-core'])
 def test_unknown_duty_codes_cannot_create_duty_types_from_check(h, legacy):
-    value = upload(h, [['Alex Morgan', '2026-10-04', 'Unknown rota code', 'Continuity clinic', '08:00', '12:00']])
+    value = upload(h, [['Staff 01(test)', '2026-10-04', 'Unknown rota code', 'Continuity clinic', '08:00', '12:00']])
     item = next(item for item in check(h, value)['items'] if item['kind'] == 'duty_code')
     with transaction(h.app.state.engine) as db:
         before = list(db.scalars(select(m.AssignmentType.id)))

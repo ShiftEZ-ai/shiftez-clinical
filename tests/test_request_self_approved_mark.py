@@ -1,11 +1,15 @@
 """A decision a person makes on their own request under a self-approval permission is marked on the request itself:
 its row and the decision in its history say Self-approved, as the audit log already does. An independent decision is not."""
 import pytest
+from sqlalchemy import select
 
+from apps.api import models as m
+from apps.api.db import transaction
 from apps.api.services import workspace_access
 from .governance_support import identity
 from .test_availability_patterns import pattern
 from .test_request_decide_many import request_row
+from .test_rotation_leave_policy import END, START, resident
 
 GRANT = {'actions': ['request.decide'], 'starts_on': '2026-01-01', 'ends_on': '2027-01-01',
          'reason': 'Synthetic bounded self-decision permission'}
@@ -39,6 +43,37 @@ def test_an_independent_decision_is_not_marked(h):
     assert 'self_approved' not in detail['item']  # an independent decision leaves the item as it always was
     assert not any(e.get('self_approved') for e in detail['history'])
     assert 'self_approved' not in listed(h, 'coordinator', row['id'])
+
+
+def test_own_leave_checks_permission_before_returning_rotation_conflicts(h):
+    resident(h, 'not_allowed')
+    person = h.seed['people'][0]
+    identity(h, 'leave_coordinator', ['coordinator'], person=person)
+    refused = h.command('leave_coordinator', 'availability.record', {
+        'person_id': person, 'kind': 'recorded_leave', 'start': START, 'end': END,
+        'private_reason': 'Synthetic leave request',
+    }, status=403)
+    assert refused['error']['code'] == 'SELF_APPROVAL'
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_own_leave_requiring_rotation_approval_does_not_record_an_approval(h):
+    resident(h, 'needs_approval')
+    person = h.seed['people'][0]
+    coordinator = identity(h, 'leave_coordinator', ['coordinator'], person=person)
+    h.command('admin', 'self_approval.grant', {'identity_id': coordinator, **GRANT})
+    saved = h.command('leave_coordinator', 'availability.record', {
+        'person_id': person, 'kind': 'recorded_leave', 'start': START, 'end': END,
+        'private_reason': 'Synthetic leave request',
+    })
+    assert saved['approval_required'] and saved['record']['status'] == 'submitted'
+    assert 'self_approved' not in saved['record']
+    event, = (e for e in h.get('auditor', '/api/audit')['events']
+              if e['detail'].get('receipt_id') == saved['receipt_id'])
+    assert 'self_approved' not in event['detail']
+    with transaction(h.app.state.engine) as db:
+        assert db.scalar(select(m.Outbox.id).where(m.Outbox.kind == 'self_approval')) is None
+        assert db.scalar(select(m.Availability.id).where(m.Availability.person_id == person)) is None
 
 
 @pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)

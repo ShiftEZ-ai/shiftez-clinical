@@ -99,11 +99,11 @@ def test_timeline_sort_orders_people_within_a_group(browser, live_server, h):
         close_popover(page)
         grid = page.get_by_role('region', name='Timeline view').get_by_role('grid', name=re.compile('^Timeline, '))
         names = grid.locator('.pg-row:not(.pg-head):not(.pg-group):not(.tl-cover) .pg-name strong')
-        expect(names).to_have_text(['Alex Morgan', 'Jordan Lee', 'Taylor Noor'])
+        expect(names).to_have_text(['Staff 01(test)', 'Staff 02(test)', 'Staff 03(test)'])
         sort = toolbar(bar, 'Sort')
         expect(sort.get_by_role('menuitemradio')).to_have_text(['Name', 'Hours, most first', 'Short code'])
         sort.get_by_role('menuitemradio', name='Hours, most first').click()
-        expect(names).to_have_text(['Taylor Noor', 'Alex Morgan', 'Jordan Lee'])
+        expect(names).to_have_text(['Staff 03(test)', 'Staff 01(test)', 'Staff 02(test)'])
         expect(bar.get_by_role('button', name='Sort: Hours, most first', exact=True)).to_be_visible()
     finally:
         context.close()

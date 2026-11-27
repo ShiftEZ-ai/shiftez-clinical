@@ -71,7 +71,7 @@ def test_exchange_eligibility_stops_when_the_colleague_cannot_take_the_offered_d
         db.get(m.Organisation, h.seed['organisation_id']).availability_revision += 1
     trials.clear()
     result = h.get('staff', path)['recipients'][0]
-    assert result['eligible'] is False and [f['code'] for f in result['findings']] == ['UNAVAILABLE']
+    assert result['eligible'] is False and [f['code'] for f in result['findings']] == ['COLLEAGUE_NOT_FREE']
     assert len(trials) == 1
 
 

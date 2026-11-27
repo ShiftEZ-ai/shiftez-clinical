@@ -68,7 +68,7 @@ def test_dashboard_draws_every_section_and_drills_down(browser, live_server, h):
         goals = section(page, 'goals')
         expect(goals.locator('.fx-goal')).to_have_count(2)  # authored duties goal plus seeded workload goal
         dist = section(page, 'distribution')
-        alex = dist.get_by_role('button', name=re.compile('^Alex Morgan: 3 duties'))
+        alex = dist.get_by_role('button', name=re.compile('^Staff 01\\(test\\): 3 duties'))
         expect(alex).to_be_visible()
         # Sort (the toolbar's) orders the list at once, without reloading the dashboard.
         page.get_by_role('button', name='Sort', exact=True).click()
@@ -77,42 +77,42 @@ def test_dashboard_draws_every_section_and_drills_down(browser, live_server, h):
         names = dist.locator('.fx-drow .fx-name').all_text_contents()
         assert names == sorted(names), names
         # The toolbar's people search narrows the list at once.
-        page.get_by_label('Find a person', exact=True).fill('alex')
+        page.get_by_label('Find a person', exact=True).fill('staff 01')
         expect(dist.locator('.fx-drow')).to_have_count(1)
         page.get_by_label('Find a person', exact=True).fill('')
         expect(dist.locator('.fx-drow')).to_have_count(len(names))
         alex.click()
-        drill = page.get_by_role('region', name='Duties · Alex Morgan')
+        drill = page.get_by_role('region', name='Duties · Staff 01(test)')
         expect(drill.locator('section.fx-drill')).to_have_count(2)
         expect(drill.locator('tbody tr')).to_have_count(3)
         drill.get_by_role('button', name='Close panel').click()
         # Any measure, same chart: hours, then overtime (only Alex).
         page.get_by_label('Measure', exact=True).select_option('hours')
-        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Alex Morgan: 12 h'))).to_be_visible()
+        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Staff 01\\(test\\): 12 h'))).to_be_visible()
         trends = section(page, 'trends')
         trends.get_by_role('button', name=re.compile('^Oct 2026: 1 overtime duties')).click()
         who = page.get_by_role('region', name=re.compile(r'^Overtime duties · 2026-10'))  # a docked panel (C26, bc24d200e)
-        who.get_by_role('button', name=re.compile('Alex Morgan')).click()
-        expect(page.get_by_role('region', name='Overtime duties · Alex Morgan').locator('tbody tr')).to_have_count(1)
+        who.get_by_role('button', name=re.compile('Staff 01\\(test\\)')).click()
+        expect(page.get_by_role('region', name='Overtime duties · Staff 01(test)').locator('tbody tr')).to_have_count(1)
         page.keyboard.press('Escape')
         # Exposure: numbers in the cells; arrow keys move; Enter opens the sessions together.
         heat = section(page, 'exposure').locator('table.fx-heat')
-        cell = heat.get_by_role('button', name='Alex Morgan with Jordan Lee: 2')
+        cell = heat.get_by_role('button', name='Staff 01(test) with Staff 02(test): 2')
         expect(cell).to_have_text('2')
         heat.locator('td[tabindex="0"]').focus()
         page.keyboard.press('ArrowRight')
         expect(heat.locator('td[data-i="0"][data-j="1"]')).to_be_focused()
         cell.click()
-        expect(page.get_by_role('region', name='Duties shared with a partner · Alex Morgan with Jordan Lee').locator('tbody tr')).to_have_count(2)
+        expect(page.get_by_role('region', name='Duties shared with a partner · Staff 01(test) with Staff 02(test)').locator('tbody tr')).to_have_count(2)
         page.keyboard.press('Escape')
         # Filter people with the shared condition builder.
         page.get_by_role('button', name='Filter', exact=True).click()
         pop = page.get_by_role('dialog', name='Filter')
-        condition(pop, 'Person', ['Jordan Lee'])
+        condition(pop, 'Person', ['Staff 02(test)'])
         # Live, like every collection's Filter: no Apply button; the dashboard follows while the popover stays open.
         expect(pop.get_by_role('button', name='Apply')).to_have_count(0)
         expect(section(page, 'distribution').locator('.fx-drow')).to_have_count(1)
-        expect(page.locator('.fx-scope')).to_contain_text('Jordan Lee')
+        expect(page.locator('.fx-scope')).to_contain_text('Staff 02(test)')
         expect(pop).to_be_visible()
         page.keyboard.press('Escape')
         expect(page.get_by_role('button', name='Filter (1 active)', exact=True)).to_be_visible()
@@ -138,7 +138,7 @@ def test_workload_goal_person_opens_its_counted_sessions(browser, live_server, h
         workload = section(page, 'goals').locator('.fx-goal').filter(has_text='Workload')
         expect(workload).to_contain_text('outside the band')
         with page.expect_response(lambda r: '/api/fairness/sessions?' in r.url and 'metric=workload' in r.url) as response:
-            workload.get_by_role('button', name=re.compile('^Alex Morgan')).click()
+            workload.get_by_role('button', name=re.compile('^Staff 01\\(test\\)')).click()
         assert response.value.status == 200, response.value.text()
         query = parse_qs(urlsplit(response.value.url).query)
         assert query['workspace_id'] == [w['id']] and query['goal_id']
@@ -148,7 +148,7 @@ def test_workload_goal_person_opens_its_counted_sessions(browser, live_server, h
         assert result['metric'] == 'hours' and result['unit'] == 'h'
         [pub] = result['publications']
         assert pub['publication_id'] == publication['publication_id'] and pub['value'] == 16
-        drill = page.get_by_role('region', name='Workload · Alex Morgan')
+        drill = page.get_by_role('region', name='Workload · Staff 01(test)')
         expect(drill.locator('tbody tr')).to_have_count(4)
         expect(drill).to_contain_text('16 h')
     finally:
@@ -176,18 +176,18 @@ def test_person_trend_lines_work_groups_and_locations(browser, live_server, h):
         # The people are the shared key's entries (dom.ts legend, LegendUse): each line stamped, each entry usable.
         names = assert_legend_matches(page, root='[data-section=people]')
         assert sum(n.startswith('p:') for n in names) == 3, names
-        legend = people.locator('.view-legend').get_by_role('button', name=re.compile('^Alex Morgan: 3 duties'))
+        legend = people.locator('.view-legend').get_by_role('button', name=re.compile('^Staff 01\\(test\\): 3 duties'))
         legend.hover()
         expect(people.locator('svg.fx-focus')).to_have_count(1)
         legend.click()
-        expect(page.get_by_role('region', name='Duties · Alex Morgan').locator('tbody tr')).to_have_count(3)
+        expect(page.get_by_role('region', name='Duties · Staff 01(test)').locator('tbody tr')).to_have_count(3)
         page.keyboard.press('Escape')
         people.locator('summary', has_text='as a table').click()
         expect(people.locator('.fx-table tbody tr')).to_have_count(3)
         # Choose whose lines: the shared condition builder.
         people.get_by_role('button', name=re.compile('^People: furthest from share')).click()
         pop = page.get_by_role('dialog', name='People to draw')
-        condition(pop, 'Person', ['Alex Morgan', 'Jordan Lee'])
+        condition(pop, 'Person', ['Staff 01(test)', 'Staff 02(test)'])
         pop.get_by_role('button', name='Apply').click()
         people = section(page, 'people')
         expect(people.locator('.fx-series')).to_have_count(2)
@@ -413,7 +413,7 @@ def test_checked_draft_and_modern_fair_share_appear_only_after_publication(brows
         october(page)
         expect(dashboard.get_by_role('heading', name='Nothing published yet', exact=True)).to_have_count(0)
         expect(section(page, 'goals').locator('.fx-goal')).to_have_count(1)
-        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Alex Morgan: 1 dut'))).to_be_visible()
+        expect(section(page, 'distribution').get_by_role('button', name=re.compile('^Staff 01\\(test\\): 1 dut'))).to_be_visible()
         if role == 'coordinator':
             # One published rota: no one-dot chart and no key for it (QA-043), its score and band in words instead.
             score = section(page, 'score')
@@ -423,7 +423,7 @@ def test_checked_draft_and_modern_fair_share_appear_only_after_publication(brows
         else:
             expect(dashboard.locator('[data-section=score]')).to_have_count(0)
             expect(section(page, 'distribution').locator('.fx-drow')).to_have_count(1)
-            expect(section(page, 'goals')).not_to_contain_text('Jordan Lee')
+            expect(section(page, 'goals')).not_to_contain_text('Staff 02(test)')
     finally:
         context.close()
 
@@ -587,7 +587,7 @@ def test_heatmap_numbers_are_legible_in_both_themes(browser, live_server, h):
     try:
         navigate(page,'insights/fairness')
         october(page)
-        cell = section(page, 'exposure').get_by_role('button', name='Alex Morgan with Jordan Lee: 2')
+        cell = section(page, 'exposure').get_by_role('button', name='Staff 01(test) with Staff 02(test): 2')
         for scheme in ('light', 'dark'):
             page.emulate_media(color_scheme=scheme)
             ratios = cell.evaluate(CONTRAST)
@@ -614,8 +614,8 @@ def test_auditors_and_programme_leads_read_everyone_and_the_wishes(browser, live
         expect(section(page, 'goals').locator('.fx-goal')).to_have_count(2)  # authored duties goal plus seeded workload goal
         dist = section(page, 'distribution')
         expect(dist.locator('.fx-drow')).to_have_count(3)
-        dist.get_by_role('button', name=re.compile('^Alex Morgan: 3 duties')).click()
-        drill = page.get_by_role('region', name='Duties · Alex Morgan')
+        dist.get_by_role('button', name=re.compile('^Staff 01\\(test\\): 3 duties')).click()
+        drill = page.get_by_role('region', name='Duties · Staff 01(test)')
         expect(drill.locator('tbody tr')).to_have_count(3)
         # Both read the Schedule, so both can open the published rota behind a duty.
         expect(drill.get_by_role('button', name='Open rota')).to_have_count(2)
@@ -646,8 +646,8 @@ def test_overtime_shares_and_workload_show_the_hours_each_person_offered(browser
         table = section(page, 'distribution').locator('details.fx-table')
         table.locator('summary').click()
         expect(table.locator('th')).to_contain_text(['Person', 'Overtime offered (h)'])
-        expect(table.locator('tr').filter(has_text='Alex Morgan').locator('td').nth(1)).to_have_text('4')
-        expect(table.locator('tr').filter(has_text='Jordan Lee').locator('td').nth(1)).to_have_text('8')
+        expect(table.locator('tr').filter(has_text='Staff 01(test)').locator('td').nth(1)).to_have_text('4')
+        expect(table.locator('tr').filter(has_text='Staff 02(test)').locator('td').nth(1)).to_have_text('8')
         page.get_by_label('Measure', exact=True).select_option('duties')
         table = section(page, 'distribution').locator('details.fx-table')
         table.locator('summary').click()  # built when opened (perf PI-4)
@@ -655,7 +655,7 @@ def test_overtime_shares_and_workload_show_the_hours_each_person_offered(browser
         navigate(page, 'insights/workload')
         workload = page.locator('#main table')
         expect(workload.get_by_role('columnheader', name=re.compile('Overtime offered'))).to_be_visible()
-        expect(workload.locator('tr').filter(has_text='Jordan Lee')).to_contain_text('8')
+        expect(workload.locator('tr').filter(has_text='Staff 02(test)')).to_contain_text('8')
     finally:
         context.close()
     context, page = sign_in(browser, live_server, 'staff')  # Alex: their own line, not a table
@@ -678,8 +678,8 @@ def test_charts_and_rows_stay_legible_beside_the_drill_panel(browser, live_serve
         navigate(page,'insights/fairness')
         october(page)
         dist = section(page, 'distribution')
-        dist.get_by_role('button', name=re.compile('^Alex Morgan: 3 duties')).click()
-        drill = page.get_by_role('region', name='Duties · Alex Morgan')
+        dist.get_by_role('button', name=re.compile('^Staff 01\\(test\\): 3 duties')).click()
+        drill = page.get_by_role('region', name='Duties · Staff 01(test)')
         expect(drill.locator('tbody tr')).to_have_count(3)
         expect(drill.locator('section.fx-drill').first.locator('thead th')).to_have_text(['Day', 'Time', 'Duty'])
         expect(drill.locator('tbody tr').first.locator('td').nth(1)).to_have_text(re.compile(r'^\d\d:\d\d–\d\d:\d\d$'))
@@ -723,7 +723,7 @@ def test_find_reuses_the_drawn_rows(browser, live_server, h):
         dist = section(page, 'distribution')
         expect(dist.locator('.fx-drow')).to_have_count(3)
         dist.locator('.fx-drow').evaluate_all('rows => rows.forEach(r => { r.__kept = true; })')
-        page.get_by_label('Find a person', exact=True).fill('alex')
+        page.get_by_label('Find a person', exact=True).fill('staff 01')
         expect(dist.locator('.fx-drow')).to_have_count(1)
         page.get_by_label('Find a person', exact=True).fill('')
         expect(dist.locator('.fx-drow')).to_have_count(3)
