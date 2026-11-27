@@ -4,7 +4,7 @@ import {isolate,el,button,field,select,note,empty,badge,armed,notify,roleLabel,g
 import {readFailed,holdsLists,alive} from './dom.js';  // a failed read: refused (403) or an error with Retry (maintenance)
 import {get,command,newest,sessionChanged,sessionKey,ApiError} from './api.js';
 import {MEASURES} from './fairness.js';
-import type {PersonRotations,PersonAccounts,PersonAuthActivity,PersonAvailability,PersonFairness,PersonFairnessBucket,PersonScore,PersonScoreRota,PersonSession,PersonSessions,PersonWorkload} from './generated.js';
+import type {CalendarResponse,PersonRotations,PersonAccounts,PersonAuthActivity,PersonAvailability,PersonFairness,PersonFairnessBucket,PersonScore,PersonScoreRota,PersonSession,PersonSessions,PersonWorkload} from './generated.js';
 import {skeleton,observeSize} from './loading.js';
 import {dateRange} from './date_picker.js';
 import {addDays} from './planner_logic.js';
@@ -333,7 +333,7 @@ function personAccess(ctx:Context,p:Row,mine:boolean):HTMLElement{
 }
 
 const showDay=(ctx:Context,day:string,id:string)=>ctx.navigate(`schedule/week/${day}?edit=none&person=${encodeURIComponent(id)}`);
-type Calendar={events:Row[];programme_calendar:Row[];pair_names:Record<string,string>};
+type CalendarEntry=CalendarResponse['events'][number];
 /** Published duties and time away (/api/calendar, which applies the leave-reason setting), rotations, attachments and
  *  academic dates in one chosen period of up to 31 days. */
 function personWork(ctx:Context,p:Row,calendar:boolean):HTMLElement{
@@ -341,7 +341,7 @@ function personWork(ctx:Context,p:Row,calendar:boolean):HTMLElement{
   const first=field('From','date',start,{required:true}),last=field('Through','date',addDays(addDays(start,32).slice(0,7)+'-01',-1),{required:true});
   const range=dateRange('Dates',first,last,{maxDays:31});range.dataset.lookup='';
   const out=el('div',{class:'ph'}),box=el('div',{class:'ph'},range,out);
-  const read=newest((path:string)=>get<Calendar>(path)),name=(kind:string,id:string)=>labelOf(ctx.catalogues[kind]?.find(r=>r.id===id));
+  const read=newest((path:string)=>get<CalendarResponse>(path)),name=(kind:string,id:string)=>labelOf(ctx.catalogues[kind]?.find(r=>r.id===id));
   const manage=permits(ctx,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.PROGRAMME_LEAD);
   const open=(kind:string,r:Row,label:string):Child=>manage?button(label,()=>catalogueForm(ctx,kind,r),'link-button'):label;
   const who=(id:string,label:string)=>personLink(id,label,ctx.navigate);
@@ -360,15 +360,16 @@ function personWork(ctx:Context,p:Row,calendar:boolean):HTMLElement{
       if(data){
         // Rotations are listed once, from their own records below (with cohort, mentor and availability).
         const events=data.events.filter(r=>r.person_id===p.id&&r.kind!=='rotation');
-        const where=(r:Row)=>[...(r.services||[]).map((s:Row)=>s.name),r.location_name].filter(Boolean).join(' · ');
-        const pairs=(r:Row)=>[...(r.supervisor_person_id?[[r.supervisor_person_id,'with']]:[]),...(r.trainee_ids||[]).map((id:string)=>[id,'supervising'])];
-        if(events.length)sections.push(el('section',{class:'ph-section'},el('h3',{},'Duties and time away'),dataTable<Row>({id:'person-work',noun:['record','records'],rows:events,rowId:r=>r.kind+':'+r.id,toolbar:false,
+        const where=(r:CalendarEntry)=>r.kind==='duty'?[...(r.services||[]).map(s=>s.name),r.location_name].filter(Boolean).join(' · '):'';
+        const pairs=(r:CalendarEntry)=>r.kind==='duty'?[...(r.supervisor_person_id?[[r.supervisor_person_id,'with']]:[]),...(r.trainee_ids||[]).map(id=>[id,'supervising'])]:[];
+        const reason=(r:CalendarEntry)=>r.kind==='availability'?r.note:null;
+        if(events.length)sections.push(el('section',{class:'ph-section'},el('h3',{},'Duties and time away'),dataTable<CalendarEntry>({id:'person-work',noun:['record','records'],rows:events,rowId:r=>r.kind+':'+r.id,toolbar:false,
           resultScope:()=>[p.id,from,end].join('|'),
           columns:[{key:'when',label:'When',sort:r=>String(r.start),cell:r=>dateUnits([formatDate(r.start,zone)+' '+formatTime(r.start,zone),'– '+(toLocal(r.end,zone).slice(0,10)===toLocal(r.start,zone).slice(0,10)?'':formatDate(r.end,zone)+' ')+formatTime(r.end,zone)])},
             // Where and with whom read under what it is; an absence's note shows only when the leave setting allows it.
-            {key:'what',label:'What',text:r=>[r.label,where(r),r.note].join(' '),cell:r=>{const w=where(r),with_=pairs(r);
+            {key:'what',label:'What',text:r=>[r.label,where(r),reason(r)].join(' '),cell:r=>{const w=where(r),with_=pairs(r),note=reason(r);
               return el('span',{class:'ph-what'},String(r.label),w||with_.length?el('small',{class:'muted'},w,...with_.flatMap(([id,label],i)=>[w||i?' · ':'',label+' ',who(id,data.pair_names[id]||'Person')])):'',
-                r.note?el('small',{class:'muted'},r.note):'');}}],
+                note?el('small',{class:'muted'},note):'');}}],
           rowButtons:r=>r.kind==='duty'?[button('Show in Schedule',()=>showDay(ctx,toLocal(r.start,zone).slice(0,10),p.id),'ghost small')]:[]}).root));
         const academic=data.programme_calendar;
         if(academic.length)sections.push(profileSection('Academic calendar','',el('ul',{class:'ph-rows'},...academic.map(r=>profileRow(r.name,r.programme_name,dates(r),'')))));

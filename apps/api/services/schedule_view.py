@@ -458,7 +458,7 @@ def publication_session_flags(db, actor, publication, shifts, zone):
     return [row for row in projected if row['id'] in ids]
 
 
-def sessions(db, actor, start, end, exclude=(), if_none_match=None, collection_filter=None):
+def sessions(db, actor, start, end, exclude=(), if_none_match=None, collection_filter=None, *, session_id=None):
     """Published sessions in force overlapping [start, end), with their stored coverage and findings (planners) and the
     people, places and clinics they name. Staff: only their own duties. Returns (ETag, body), body None when unchanged."""
     planner = actor.permits(*PERMISSIONS['schedule.read_team'])
@@ -483,12 +483,15 @@ def sessions(db, actor, start, end, exclude=(), if_none_match=None, collection_f
         shifts.extend(shift for shift in peer_shifts if shift['id'] not in visible_ids)
     shifts = [shift for shift in session_overlap_flags(db, actor, shifts, zone, team=planner)
               if shift['id'] in visible_ids]
+    if session_id is not None:
+        shifts = [shift for shift in shifts if shift['id'] == session_id]
     # Source warnings and the rendered duties share one current overlap evaluation, before display filtering.
     rows = operational_sources(db, actor, rows, zone, start, end, shifts=shifts, flagged=True)
     tag = etag("sessions", start, end, actor.identity_id, actor.person_id, sorted(actor.roles), planner, zone, organisation.input_revision,
                organisation.availability_revision, department.leave_reason_display,
                m.now().astimezone(ZoneInfo(zone)).date().isoformat(),
-               sorted(exclude), [(s["id"], v, (s.get("operational") or {}).get("fingerprint")) for s, _, v in rows], events, markers, filtering['signature'])
+               sorted(exclude), [(s["id"], v, (s.get("operational") or {}).get("fingerprint")) for s, _, v in rows],
+               events, markers, filtering['signature'], *([session_id] if session_id is not None else []))
     if if_none_match == tag:
         return tag, None
     _prepare_collection_data(db, actor, shifts, filtering)

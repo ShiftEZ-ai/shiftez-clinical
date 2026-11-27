@@ -17,7 +17,7 @@ import {teamView} from './team_view.js';
 import {personPill} from './person_pill.js';
 import {personLink,nameText,personName} from './person_label.js';
 import {isClosed,addDays} from './planner_logic.js';
-import {CONTENT_PAGE_SIZE,ABSENCE_REPORTER_CATEGORIES,ABSENCE_REPORT_LABEL,type PublishedOperationalAction} from './generated.js';
+import {CONTENT_PAGE_SIZE,ABSENCE_REPORTER_CATEGORIES,ABSENCE_REPORT_LABEL,type PublishedOperationalAction,type DepartmentContentPage,type RequestListPage} from './generated.js';
 import {canCreateRequest,factWords,requestTitle,requestWhen,requestStageWord,isAbsenceReport,withdrawReport,withdrawRequest} from './requests.js';
 import {reportAbsence,absenceWords,absenceCategoryWord} from './published_changes_api.js';
 import {SUPERSEDED} from './planning_context.js';
@@ -764,7 +764,7 @@ function acknowledgeNotice(item:Row,after=()=>{}){
 function noticesCard(pending:(rows:Row[])=>void){
   const node:HTMLElement=card('notices','Notices',async()=>{
     // One page of the server's largest size: Home shows four, but every pending acknowledgement and "Show all" need the rest.
-    const items=(await get<{items:Row[]}>(`/api/content?page_size=${CONTENT_PAGE_SIZE}`)).items;
+    const items=(await get<DepartmentContentPage>(`/api/content?page_size=${CONTENT_PAGE_SIZE}`)).items;
     node.hidden=!items.length;
     const waiting=()=>pending(items.filter(item=>item.acknowledgement_required&&!item.receipt?.acknowledged_at));waiting();
     // Notices that must be acknowledged come first (the API orders them); the badge says which ask for it (H-17).
@@ -810,7 +810,7 @@ function expiringCard(ctx:Context,today:string){
 function decidedCard(ctx:Context){
   const zone=ctx.me.organisation.timezone;
   return card('decided','Decided requests',async()=>{
-    const page=await get<{items:Row[]}>('/api/requests/all?type=leave,other&status=approved,declined&sort_by=decided&sort_direction=desc&limit=20');
+    const page=await get<RequestListPage>('/api/requests/all?type=leave,other&status=approved,declined&sort_by=decided&sort_direction=desc&limit=20');
     const decided=page.items.filter(r=>r.source==='request'&&r.decided_by).slice(0,5);
     if(!decided.length)return [emptyLine('No recent decisions to show.',null,'home-none')];
     return [el('ul',{class:'home-request-list'},...decided.map(r=>el('li',{},needText([...(r.person_name?[nameText(r.person_id,r.person_name),' · ']:[]),requestTitle(r)],requestWhen(r,zone),{cls:'muted'}),statusBadge(r.stage,requestStageWord(r,ctx)))))];

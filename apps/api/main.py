@@ -1041,7 +1041,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     return
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
-    @app.get("/api/calendar")
+    @app.get("/api/calendar", response_model=s.CalendarResponse, response_model_exclude_unset=True)
     def calendar_view(request: Request, start: s.date, end: s.date, workspace_id: str | None = None,
                       programme_id: str | None = None, category_id: str | None = None, person_id: str | None = None,
                       service_id: str | None = None, location_id: str | None = None, mode: str | None = None):
@@ -1051,6 +1051,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             value = calendar(db, actor, start, end, workspace_id, programme_id, category_id, person_id,
                              service_id, location_id, mode)
+            # The body-hash ETag uses the original JSON encoding. Validate before returning the prebuilt response.
+            s.CalendarResponse.model_validate(value)
             return conditional_json(request, value, actor)
 
     @app.get("/api/schedule/overlaps")
@@ -1092,24 +1094,26 @@ def create_app(settings: Settings | None = None, engine=None):
         response.headers["ETag"] = tag
         return body
 
-    @app.get("/api/schedule/sessions")
+    @app.get("/api/schedule/sessions", response_model=s.ScheduleWindow, response_model_exclude_unset=True)
     def schedule_sessions(request: Request, response: Response, start: s.date, end: s.date, exclude: str | None = None,
-                          collection_filter: s.CollectionFilter = Depends(parse_collection_filter("schedule"))):
+                          session_id: s.ID | None = None, collection_filter: s.CollectionFilter = Depends(parse_collection_filter("schedule"))):
         """Published sessions in force in a window (the layer under a draft, or the published schedule); staff: own duties.
-        `exclude`: publication or rota ids to leave out (the rota a draft amends)."""
+        `exclude`: publication or rota ids to leave out (the rota a draft amends).
+        `session_id`: keep only the matching visible session in the window."""
         from .services import schedule_view
         with transaction(engine) as db:
             actor = actor_for(request, db)
             require_role(actor, "staff", *s.PERMISSIONS['schedule.read_team'])
             require(start < end and (end - start).days <= 92, "VALUE_INVALID", "Ask for 1 to 92 days (end is the day after the last)")
             tag, body = schedule_view.sessions(db, actor, start, end, {i for i in (exclude or "").split(",") if i},
-                                               request.headers.get("if-none-match"), collection_filter=collection_filter)
+                                               request.headers.get("if-none-match"), collection_filter=collection_filter,
+                                               session_id=session_id)
         if body is None:
             return Response(status_code=304, headers={"ETag": tag})
         response.headers["ETag"] = tag
         return body
 
-    @app.get("/api/content")
+    @app.get("/api/content", response_model=s.DepartmentContentPage, response_model_exclude_unset=True)
     def department_content(request: Request, page: int = Query(default=1, ge=1, le=100000),
                            page_size: int = Query(default=4, ge=1, le=s.CONTENT_PAGE_SIZE)):
         from zoneinfo import ZoneInfo
@@ -1632,7 +1636,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with transaction(engine) as db:
             return profile(db, actor_for(request, db))
 
-    @app.get("/api/directory")
+    @app.get("/api/directory", response_model=s.DirectoryResponse, response_model_exclude_unset=True)
     def directory(request: Request):
         """Active people, with the same field visibility as the people catalogue."""
         with transaction(engine) as db:
@@ -2979,7 +2983,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             return availability.list_requests(db, actor, status)
 
-    @app.get("/api/requests/all")
+    @app.get("/api/requests/all", response_model=s.RequestListPage | s.RequestListDetail,
+             response_model_exclude_unset=True)
     def requests_all(request: Request, response: Response, type: str | None = Query(None, pattern="^(leave|weekly|wish|swap|other)(,(leave|weekly|wish|swap|other))*$"),
                      status: str | None = Query(None, pattern="^(waiting|reply|accepted|open|approved|declined|withdrawn|expired)(,(waiting|reply|accepted|open|approved|declined|withdrawn|expired))*$"),
                      person_id: str | None = None, id: str | None = None,

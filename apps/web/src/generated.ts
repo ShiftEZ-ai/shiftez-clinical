@@ -880,6 +880,48 @@ export type BulkWhere = {
   "filters"?: Record<string, unknown>;
 };
 
+export type CalendarAvailability = {
+  "id": string;
+  "person_id": string;
+  "label": string;
+  "start": string;
+  "end": string;
+  "state": string;
+  "kind": "availability";
+  "counts_as_unavailable": boolean;
+  "leave_type_id"?: string | null;
+  "leave_type_name"?: string | null;
+  "absence_reason"?: string | null;
+  "note"?: string | null;
+  "document_reference"?: string | null;
+  "leave"?: ScheduleReadLeave | null;
+};
+
+export type CalendarDuty = {
+  "id": string;
+  "person_id": string;
+  "label": string;
+  "start": string;
+  "end": string;
+  "state": string;
+  "kind": "duty";
+  "colour": string;
+  "source_id": string;
+  "shift_id": string;
+  "service_ids": Array<string>;
+  "location_id": string;
+  "location_name": string;
+  "services": Array<CalendarService>;
+  "participation": string;
+  "supervisor_person_id": string | null;
+  "rank": string;
+  "trainee_ids": Array<string>;
+  "supervisor_not_on_session": boolean;
+  "pair_ranks": Record<string, string>;
+  "team_lead": boolean;
+  "overtime": boolean;
+};
+
 export type CalendarFeedSettingsInput = {
   "hidden_event_type_ids"?: Array<string>;
 };
@@ -888,6 +930,75 @@ export type CalendarOverride = {
   "on": string;
   "label": string;
   "windows"?: Array<OpeningWindow>;
+};
+
+export type CalendarPerson = {
+  "id": string;
+  "display_name": string;
+};
+
+export type CalendarProgrammeEntry = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id": string;
+  "programme_id": string;
+  "programme_name": string;
+  "name": string;
+  "description": string;
+  "kind": string;
+  "starts_on": string;
+  "ends_on": string;
+  "confirmed_members"?: number | null;
+};
+
+export type CalendarResponse = {
+  "starts_on": string;
+  "ends_on": string;
+  "timezone": string;
+  "people": Array<CalendarPerson>;
+  "pair_names": Record<string, string>;
+  "events": Array<CalendarDuty | CalendarRotation | CalendarAvailability>;
+  "sessions": Array<CalendarSession>;
+  "date_set_markers": Record<string, Array<DateSetMarker>>;
+  "programme_calendar": Array<CalendarProgrammeEntry>;
+  "team_view": boolean;
+  "input_revision": number;
+  "availability_revision": number;
+};
+
+export type CalendarRotation = {
+  "id": string;
+  "person_id": string;
+  "label": string;
+  "start": string;
+  "end": string;
+  "state": string;
+  "kind": "rotation";
+};
+
+export type CalendarService = {
+  "id": string;
+  "name": string;
+  "mode": string;
+};
+
+export type CalendarSession = {
+  "shift_id": string;
+  "source_id": string;
+  "state": string;
+  "label": string;
+  "start": string;
+  "end": string;
+  "location_id": string;
+  "location_name": string;
+  "services": Array<CalendarService>;
+  "assigned_people": number;
+  "cancelled": boolean;
+  "cancellation_reason": string | null;
+  "closed": boolean | null;
+  "closure_reason": string | null;
+  "double_booking_conflicts"?: Array<ScheduleReadOverlap>;
 };
 
 export type CapabilityClause = {
@@ -1345,6 +1456,13 @@ export type DeclinedWish = {
   "reasons": Array<WishReason>;
 };
 
+export type DepartmentContentCounts = {
+  "audience": number;
+  "delivered": number;
+  "read": number;
+  "acknowledged": number;
+};
+
 export type DepartmentContentInput = {
   "starts_on": string;
   "ends_on"?: string | null;
@@ -1359,6 +1477,54 @@ export type DepartmentContentInput = {
   "also_email"?: boolean | null;
   "email_sender"?: "smtp" | "microsoft" | null;
   "email_sender_identity_id"?: string | null;
+};
+
+export type DepartmentContentItem = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id": string;
+  "name": string;
+  "description": string;
+  "kind": "announcement" | "link";
+  "url": string;
+  "starts_on": string;
+  "ends_on": string | null;
+  "active": boolean;
+  "audience": Record<string, unknown>;
+  "importance": "normal" | "important" | "must_acknowledge";
+  "sent_outbox_id": string | null;
+  "receipts_checked_on": string | null;
+  "last_reminded_at": string | null;
+  "reminder_empty_checked_on": string | null;
+  "also_email": boolean | null;
+  "email_sender": string | null;
+  "email_sender_identity_id": string | null;
+  "receipt": DepartmentContentReceipt | null;
+  "acknowledgement_required": boolean;
+  "receipts"?: DepartmentContentCounts | null;
+};
+
+export type DepartmentContentPage = {
+  "items": Array<DepartmentContentItem>;
+  "page": number;
+  "page_size": number;
+  "total": number;
+};
+
+export type DepartmentContentReceipt = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "content_id": string | null;
+  "event_occurrence_id": string | null;
+  "identity_id": string;
+  "person_id": string | null;
+  "delivered_at": string | null;
+  "read_at": string | null;
+  "acknowledged_at": string | null;
+  "response": string | null;
+  "responded_at": string | null;
 };
 
 export type DepartmentContentSeen = {
@@ -1433,6 +1599,39 @@ export type DepartmentSettingsInput = {
   "event_horizon_days"?: number | null;
   "event_receipt_window_days"?: number | null;
   "reason": string;
+};
+
+export type DirectoryContact = {
+  "id"?: string | null;
+  "revision"?: number | null;
+  "contact_type_id": string;
+  "name": string;
+  "kind": string;
+  "icon": string;
+  "sort_order": number;
+  "value": string;
+  "dial_target"?: string | null;
+  "can_edit": boolean;
+  "legacy_field"?: string | null;
+};
+
+export type DirectoryPerson = {
+  "id": string;
+  "display_name": string;
+  "given_name": string;
+  "family_name": string;
+  "title": string;
+  "directory_section": string;
+  "directory_order": number;
+  "contacts"?: Array<DirectoryContact> | null;
+  "work_phone"?: string | null;
+  "work_extension"?: string | null;
+  "work_email"?: string | null;
+  "pager"?: string | null;
+};
+
+export type DirectoryResponse = {
+  "people": Array<DirectoryPerson>;
 };
 
 export type DisplaySettingsInput = {
@@ -3533,6 +3732,49 @@ export type PersonRecordWorkspace = {
   "ends_on": string;
 };
 
+export type PersonRequestItem = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id": string;
+  "person_id": string;
+  "person_name": string;
+  "stage": string;
+  "status"?: string | null;
+  "decided_at": string | null;
+  "self_approved"?: boolean;
+  "impact"?: Array<RequestImpact>;
+  "impact_count"?: number;
+  "schedule_impact"?: RequestScheduleImpact | null;
+  "source": "request";
+  "type": "leave" | "other";
+  "kind": string;
+  "leave_type_id": string | null;
+  "leave_type_name": string;
+  "counts_as_unavailable": boolean;
+  "overtime": Record<string, unknown> | null;
+  "start": string;
+  "end": string;
+  "private_reason"?: string | null;
+  "created_by": string;
+  "decided_by": string | null;
+  "decision_reason": string | null;
+  "workspace_id"?: string | null;
+  "rotation_id": string | null;
+  "details": Record<string, unknown> | null;
+  "rota_status": string | null;
+  "can_decide": boolean;
+  "record_id"?: string | null;
+  "record_revision"?: number | null;
+  "record_retracted"?: boolean | null;
+  "can_withdraw_approved_leave"?: boolean | null;
+  "summary"?: string | null;
+  "absence_progress"?: string | null;
+  "assignment_id"?: string | null;
+  "absence_category"?: string | null;
+  "note"?: string | null;
+};
+
 export type PersonRotations = {
   "rotations": Array<RotationRecord>;
 };
@@ -4000,6 +4242,83 @@ export type PublishedOperationalWarning = {
   "action"?: PublishedOperationalAction | null;
 };
 
+export type PublishedScheduleParticipant = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "shift_id": string;
+  "person_id": string;
+  "start": string;
+  "end": string;
+  "participation": "staff" | "trainee" | "supervisor";
+  "overtime": boolean;
+  "fixed": boolean;
+  "source": string | null;
+  "source_run_id": string | null;
+  "source_actor_id": string | null;
+  "source_at": string | null;
+  "override_reason": string | null;
+  "supervisor_person_id": string | null;
+  "team_lead": boolean;
+  "segments": Array<ScheduleReadSegment>;
+  "rank": string;
+};
+
+export type PublishedScheduleShift = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "workspace_id": string;
+  "publication_id": string;
+  "lineage_id": string | null;
+  "assignment_type_id": string;
+  "type_revision": number;
+  "type_snapshot": Record<string, unknown>;
+  "location_id": string;
+  "start": string;
+  "end": string;
+  "cancelled": boolean;
+  "cancellation_reason": string | null;
+  "locked": boolean;
+  "attributes": Record<string, unknown>;
+  "series_id": string | null;
+  "series_revision": number | null;
+  "series_snapshot"?: Record<string, unknown> | null;
+  "occurrence_on": string | null;
+  "series_modified": boolean;
+  "template_skipped"?: Array<Record<string, unknown>> | null;
+  "service_ids": Array<string>;
+  "participants": Array<PublishedScheduleParticipant>;
+  "closed"?: boolean | null;
+  "closure_reason"?: string | null;
+  "series_state_frozen"?: boolean;
+  "usual_assignee_unavailability"?: Array<Record<string, unknown>> | null;
+  "double_booking_conflicts"?: Array<ScheduleReadOverlap>;
+  "absence_reports": Array<PublishedAbsenceReport>;
+  "staffing"?: PublishedScheduleStaffing | null;
+};
+
+export type PublishedScheduleSource = {
+  "id": string;
+  "kind": "published";
+  "workspace_id": string;
+  "name": string;
+  "status": "published";
+  "starts_on": string;
+  "ends_on": string;
+  "in_force_until": string;
+  "sequence": number;
+  "checked": boolean;
+  "base_publication_id": string | null;
+  "replaces_publication_id": string | null;
+  "operational": PublishedOperationalSummary;
+};
+
+export type PublishedScheduleStaffing = {
+  "on_duty": number;
+  "places_open": number;
+};
+
 export type PublishedScheduleSummary = {
   "sessions_with_gaps": number;
   "blocking": number;
@@ -4183,6 +4502,37 @@ export type ReadingContext = {
   "cell_ref": string;
 };
 
+export type RecordedAvailabilityItem = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id": string;
+  "person_id": string;
+  "person_name": string;
+  "stage": string;
+  "status"?: string | null;
+  "decided_at": string | null;
+  "self_approved"?: boolean;
+  "impact"?: Array<RequestImpact>;
+  "impact_count"?: number;
+  "schedule_impact"?: RequestScheduleImpact | null;
+  "source": "availability";
+  "type": "leave" | "weekly";
+  "kind": string;
+  "start": string;
+  "end": string;
+  "leave_type": string;
+  "leave_type_id": string | null;
+  "leave_type_name": string;
+  "manual_type_override": boolean;
+  "counts_as_unavailable": boolean;
+  "private_reason"?: string | null;
+  "recorded_by": string;
+  "created_by": string;
+  "request_id": string | null;
+  "retracted": boolean;
+};
+
 export type ReferenceRotaPreview = {
   "workspace_id": string;
   "reference_import_id": string;
@@ -4240,6 +4590,54 @@ export type RequestEditUndo = {
   "receipt_id": string;
 };
 
+export type RequestHistoryItem = {
+  "action": string;
+  "at": string;
+  "actor": string;
+  "reason": string;
+  "self_approved"?: boolean;
+  "leave_balance_overdrawn"?: boolean;
+};
+
+export type RequestImpact = {
+  "day": string;
+  "type": string;
+  "publication_id": string;
+};
+
+export type RequestImpactDuty = {
+  "assignment_id": string;
+  "day": string;
+  "start": string;
+  "end": string;
+  "type": string;
+  "status": string;
+  "publication_id"?: string | null;
+  "workspace_id"?: string | null;
+  "rota_name"?: string | null;
+};
+
+export type RequestListCounts = {
+  "to_decide": number;
+  "stages": Record<string, number>;
+};
+
+export type RequestListDetail = {
+  "item": PersonRequestItem | RecordedAvailabilityItem | WeeklyRequestItem | WishRequestItem | SwapRequestItem | SchedulingFactRequestItem;
+  "history": Array<RequestHistoryItem>;
+  "fact"?: Record<string, unknown> | null;
+};
+
+export type RequestListPage = {
+  "items": Array<PersonRequestItem | RecordedAvailabilityItem | WeeklyRequestItem | WishRequestItem | SwapRequestItem | SchedulingFactRequestItem>;
+  "total": number;
+  "limit": number;
+  "offset": number;
+  "has_more": boolean;
+  "counts": RequestListCounts;
+  "wishes": RequestWishPoints | null;
+};
+
 export type RequestManyDecision = {
   "note"?: string | null;
   "reason"?: string;
@@ -4252,9 +4650,25 @@ export type RequestRotaLink = {
   "workspace_id": string | null;
 };
 
+export type RequestScheduleImpact = {
+  "count": number;
+  "published_count": number;
+  "draft_count": number;
+  "duties": Array<RequestImpactDuty>;
+};
+
 export type RequestUndo = {
   "reason": string;
   "batch_id"?: string | null;
+};
+
+export type RequestWishPoints = {
+  "budget_points": number;
+  "period": string;
+  "start"?: string;
+  "end"?: string;
+  "used"?: number;
+  "multiplier"?: number;
 };
 
 export type RequiredWhen = {
@@ -4911,6 +5325,13 @@ export type RunLength = {
   "maximum"?: number | null;
 };
 
+export type ScheduleContactLabel = {
+  "id": string;
+  "display_name": string;
+  "short_code": string;
+  "pager"?: string | null;
+};
+
 export type ScheduleEventRow = {
   "id": string;
   "revision": number;
@@ -4943,6 +5364,50 @@ export type ScheduleParticipant = {
   "override_reason": string | null;
   "rank"?: string;
   "wish_effects"?: Array<Record<string, unknown>>;
+};
+
+export type SchedulePlace = {
+  "id": string;
+  "name": string;
+};
+
+export type ScheduleReadLeave = {
+  "type": string;
+  "starts_on": string;
+  "ends_on": string;
+  "note"?: string | null;
+};
+
+export type ScheduleReadOverlap = {
+  "code": "TIME_OVERLAP" | "UNAVAILABLE" | "EXTERNAL_ROTATION";
+  "date": string;
+  "start": string;
+  "end": string;
+  "person_id": string;
+  "person_name": string;
+  "shift_id": string;
+  "workspace_id"?: string | null;
+  "series_id"?: string | null;
+  "occurrence_on"?: string | null;
+  "session_name": string;
+  "clinic_ids": Array<string>;
+  "clinic_names": Array<string>;
+  "other_shift_id"?: string | null;
+  "other_workspace_id"?: string | null;
+  "other_series_id"?: string | null;
+  "other_occurrence_on"?: string | null;
+  "other_session_name"?: string | null;
+  "other_clinic_ids"?: Array<string>;
+  "other_clinic_names"?: Array<string>;
+  "availability_id"?: string | null;
+  "label"?: string | null;
+  "leave"?: ScheduleReadLeave | null;
+  "cancel_actions"?: Array<OverlapCancelAction>;
+};
+
+export type ScheduleReadSegment = {
+  "start": string;
+  "end": string;
 };
 
 export type ScheduleScore = {
@@ -4984,6 +5449,22 @@ export type ScheduleSession = {
   "usual_assignee_unavailability"?: Array<Record<string, unknown>>;
   "double_booking_conflicts"?: Array<SeriesOverlapConflict>;
   "absence_reports"?: Array<PublishedAbsenceReport>;
+};
+
+export type ScheduleWindow = {
+  "starts_on": string;
+  "ends_on": string;
+  "timezone": string;
+  "sources": Array<PublishedScheduleSource>;
+  "shifts": Array<PublishedScheduleShift>;
+  "coverage": Array<CoverageInterval>;
+  "findings": Array<Record<string, unknown>>;
+  "events": Array<ScheduleEventRow>;
+  "summary"?: PublishedScheduleSummary | null;
+  "people": Record<string, ScheduleContactLabel>;
+  "locations": Record<string, SchedulePlace>;
+  "services": Record<string, SchedulePlace>;
+  "date_set_markers": Record<string, Array<DateSetMarker>>;
 };
 
 export type SchedulingFactApproval = {
@@ -5030,6 +5511,39 @@ export type SchedulingFactInput = {
   "on"?: boolean;
   "replaces_id"?: string | null;
   "expected_revision"?: number | null;
+};
+
+export type SchedulingFactRequestItem = {
+  "id": string;
+  "revision": number;
+  "source"?: "scheduling_fact";
+  "type"?: "other";
+  "stage"?: "waiting" | "approved" | "declined" | "withdrawn";
+  "status"?: "proposed" | "active" | "declined" | "retired";
+  "kind": "workload" | "target" | "overtime_offer" | "protected_time";
+  "title": string;
+  "catalogue_id": string;
+  "person_id": string | null;
+  "person_name": string | null;
+  "calendar_entry_id": string | null;
+  "calendar_entry_name": string | null;
+  "proposed_by": string;
+  "proposer_name": string;
+  "proposed_at": string;
+  "decided_at": string | null;
+  "starts_on": string | null;
+  "ends_on": string | null;
+  "start_time": string | null;
+  "end_time": string | null;
+  "weekdays": Array<number>;
+  "numbers": Record<string, LineNumber>;
+  "measure"?: "duties" | "session_units" | "scheduled_hours" | "reserved_hours" | "workload_credit" | "training_credit" | "lead_turns" | null;
+  "period"?: WorkloadPeriod | null;
+  "goal_measure"?: "duties" | "hours" | "session_units" | "weekends" | "overtime_duties" | "overtime_hours" | "lead_turns" | "supervision" | "pair_exposure" | "workload" | null;
+  "goal_period"?: BalanceGoalPeriod | null;
+  "link_target": string;
+  "can_decide": boolean;
+  "self_approved"?: boolean;
 };
 
 export type Scope = {
@@ -5864,6 +6378,63 @@ export type SwapPrepareInput = {
   "urgency"?: "routine" | "urgent";
 };
 
+export type SwapRequestDuty = {
+  "assignment_id": string;
+  "person_id": string;
+  "start": string;
+  "end": string;
+  "type": string;
+  "location": string;
+  "publication_id": string;
+  "person"?: string | null;
+  "participation"?: string | null;
+  "overtime"?: boolean | null;
+  "segments"?: Array<ScheduleReadSegment>;
+  "publication_sequence"?: number | null;
+};
+
+export type SwapRequestItem = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id"?: string | null;
+  "person_id": string;
+  "person_name": string;
+  "stage": string;
+  "status"?: string | null;
+  "decided_at": string | null;
+  "self_approved"?: boolean;
+  "source": "swap";
+  "type": "swap";
+  "kind": string;
+  "open_offer": boolean;
+  "publication_id": string;
+  "proposer_id"?: string | null;
+  "proposer_person_id": string;
+  "recipient_person_id": string | null;
+  "recipient_id"?: string | null;
+  "first_assignment_id"?: string | null;
+  "second_assignment_id": string | null;
+  "expires_at": string;
+  "reason"?: string | null;
+  "counteroffered_at"?: string | null;
+  "confirmed_at"?: string | null;
+  "workspace_id"?: string | null;
+  "result_publication_id"?: string | null;
+  "reopened_from_id"?: string | null;
+  "effective_status": string;
+  "proposer_name": string;
+  "recipient_name": string | null;
+  "offered_assignment": SwapRequestDuty | null;
+  "counteroffered_assignment": SwapRequestDuty | null;
+  "audience_pending": boolean;
+  "audience_failed"?: boolean | null;
+  "audience_count"?: number | null;
+  "no_eligible_recipients"?: boolean | null;
+  "no_eligible_recipients_reason"?: string | null;
+  "delivery_status"?: string | null;
+};
+
 export type SystemStatusFiles = {
   "health": string | null;
   "alerts": Array<string>;
@@ -6231,6 +6802,33 @@ export type WeekendShape = {
   "weekend_days"?: number;
 };
 
+export type WeeklyRequestItem = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id": string;
+  "person_id": string;
+  "person_name": string;
+  "stage": string;
+  "status"?: string | null;
+  "decided_at": string | null;
+  "self_approved"?: boolean;
+  "impact"?: Array<RequestImpact>;
+  "impact_count"?: number;
+  "schedule_impact"?: RequestScheduleImpact | null;
+  "source": "pattern";
+  "type": "weekly";
+  "weekdays": Array<number>;
+  "start_time": string;
+  "end_time": string;
+  "starts_on": string;
+  "ends_on": string | null;
+  "note": string;
+  "created_by": string;
+  "decided_by": string | null;
+  "can_decide": boolean;
+};
+
 export type WhereaboutsSettings = {
   "area_share"?: number;
   "max_areas"?: number;
@@ -6365,6 +6963,37 @@ export type WishRepeat = {
   "starts_on": string;
   "ends_on"?: string | null;
   "number"?: number | null;
+};
+
+export type WishRequestItem = {
+  "id": string;
+  "revision": number;
+  "created_at": string;
+  "department_id": string;
+  "person_id": string;
+  "person_name": string;
+  "stage": string;
+  "status"?: string | null;
+  "decided_at": string | null;
+  "self_approved"?: boolean;
+  "source": "wish";
+  "type": "wish";
+  "kind": string;
+  "first_day": string;
+  "last_day": string;
+  "assignment_type_id": string | null;
+  "duty_type": string;
+  "limit": number | null;
+  "weekend_start": number | null;
+  "weekend_days": number | null;
+  "points": number;
+  "repeat": Record<string, unknown> | null;
+  "note": string;
+  "outcome": string | null;
+  "outcome_reasons": Array<Record<string, unknown>> | null;
+  "publication_id": string | null;
+  "created_by": string;
+  "locked"?: boolean | null;
 };
 
 export type WishSettings = {

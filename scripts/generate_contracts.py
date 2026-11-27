@@ -72,6 +72,8 @@ CLASSES += [s.ScoreImport, s.ImportCheck, s.ImportMatch, s.ImportMatches, s.Benc
             s.AiSettings, s.AiEnabledInput, s.ScoreProviderChoice, s.ScoreProviderChoices]
 CLASSES += [s.PublicationChangeInput, s.PublicationChangeUndo, s.PublicationChangesSubmit, s.AbsenceReportInput, s.AbsenceReportSettingsInput, s.OwnAbsenceReportSummary]
 CLASSES += [s.PublicationAudiencePreview]
+CLASSES += [s.CalendarResponse, s.ScheduleWindow, s.DepartmentContentPage, s.RequestListPage,
+            s.RequestListDetail, s.DirectoryResponse]
 for collection in s.BULK_COLLECTIONS.values():
     cls = getattr(s, collection['schema']) if collection['schema'] else None
     if cls is not None and cls not in CLASSES:
