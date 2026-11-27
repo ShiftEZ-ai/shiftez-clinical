@@ -2842,12 +2842,21 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         sequence = (db.scalar(select(func.max(m.Publication.sequence)).where(m.Publication.department_id == actor.department_id)) or 0) + 1
         workspace.status = "published"
         workspace.revision += 1
+        snapshot = publication_snapshot(db, workspace, result, own_shifts=own, data=acquired)
+        if not (workspace.base_publication_id or workspace.replaces_publication_id):
+            from apps.api.db import bump_snapshot_input_revisions
+            # The publication is an input even when the rota's status change is local.
+            # The insert listener shares this transaction's revision bump.
+            bump_snapshot_input_revisions(db, (actor.organisation_id,))
+            organisation = db.get(m.Organisation, actor.organisation_id)
+            manifest = result['input_manifest']
+            result['input_manifest'] = {**manifest, 'dirty_hint': {
+                **manifest['dirty_hint'], 'input_revision': organisation.input_revision}}
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
                                     effective_until=effective_until, calendar_lineage=True,
-                                    snapshot=publication_snapshot(db, workspace, result, own_shifts=own, data=acquired),
-                                    validation=result, fingerprint=fp)
+                                    snapshot=snapshot, validation=result, fingerprint=fp)
         db.add(publication)
         db.flush()
         for person_id in sorted({a["person_id"] for s in publication.snapshot["shifts"] for a in s["participants"] if a.get("person_id")}):
