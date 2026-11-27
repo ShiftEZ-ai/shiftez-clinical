@@ -143,7 +143,7 @@ def test_a_self_approver_can_add_but_cannot_reduce_protected_time(h, source, cha
     username = "protection_author"
     author = identity(h, username, ["coordinator", "approver"], person=person)
     h.command("admin", "self_approval.grant", {"identity_id": author, "actions": ["rule.activate"],
-        "starts_on": "2020-01-01", "reason": "Temporary review cover"})
+        "starts_on": "2020-01-01", "no_end_date": True, "reason": "Synthetic review cover"})
     subject = {"person_id": person} if source == "person" else {"calendar_entry_id": calendar_entry(h)["id"]}
     line = {"id": str(uuid.uuid4()), "weekdays": [1], "start_time": "09:00", "end_time": "11:00",
             "starts_on": "2026-10-04", "ends_on": "2026-10-11",
@@ -181,7 +181,8 @@ def test_ordinary_personal_workload_changes_keep_audited_self_approval(h):
     username = "workload_author"
     author = identity(h, username, ["coordinator", "approver"], person=person)
     permission = h.command("admin", "self_approval.grant", {"identity_id": author,
-        "actions": ["rule.activate"], "starts_on": "2020-01-01", "reason": "Temporary review cover"})["permission"]
+        "actions": ["rule.activate"], "starts_on": "2020-01-01", "no_end_date": True,
+        "reason": "Synthetic review cover"})["permission"]
     current = decide(h, h.command("coordinator", "person.workload.propose", workload(h, 2))["fact"])["fact"]
     pending = replace(h, current, maximum=4)
     revised = decide(h, pending, role=username)["fact"]
