@@ -11,7 +11,7 @@ export function previewFindings(ctx:Context,findings:Row[],shiftIds:string[]){
   const relevant=findings.filter(f=>shiftIds.includes(f.shift_id)),other=findings.filter(f=>!shiftIds.includes(f.shift_id));
   const rows=(items:Row[])=>table(['Person','When','Issue'],items.map(f=>[
     f.person_id?fullNameOf(ctx.catalogues.people.find(p=>p.id===f.person_id)):'Rota',
-    f.start?dateUnits([formatDate(f.start,ctx.me.organisation.timezone),'· '+formatTime(f.start,ctx.me.organisation.timezone)]):'Period rule',
+    f.start?dateUnits([formatDate(f.start,ctx.me.organisation.timezone)+' '+formatTime(f.start,ctx.me.organisation.timezone)]):'Period rule',
     (f.severity==='error'?LEVEL_WORDS.must:LEVEL_WORDS.could)+': '+[f.message,findingNumbers(f)].filter(Boolean).join(' · ')]));
   // Both shown under their own heading: the checks on the sessions changed first, then the rest of the rota's.
   return el('div',{},relevant.length?el('section',{class:'preview-findings'},el('h4',{},`Checks for changed sessions · ${relevant.length}`),rows(relevant)):null,
@@ -28,10 +28,12 @@ export function draftImpact(form:HTMLFormElement,ctx:Context,read:()=>Command|Pr
   const output=el('div',{class:'span-2','aria-live':'polite'});
   let captured='',fingerprint='',epoch=0,running:Promise<void>|null=null,saving=false;
   // H-03: the values the server refused (a swap that would double-book someone). Asking again gives the same answer, so
-  // Save sends nothing and says so at the button, in the server's words (the form's error line, focus kept on Save);
-  // changed values clear it.
-  let refused='',refusal='';
-  const stillRefused=(now:string)=>{if(refused===now)throw new Error(`Not saved: ${refusal}`);};
+  // Save sends nothing and brings the refusal already shown back into view, said again to a screen reader (the same alert,
+  // inserted anew), never a second copy (an empty message: the form adds none). Changed values clear it.
+  let refused='';
+  const stillRefused=(now:string)=>{if(refused!==now)return;
+    const said=output.querySelector('[role=alert]');if(said)output.prepend(said);
+    output.scrollIntoView({block:'nearest'});throw new Error('');};
   const describe=(row:Row|null)=>{
     if(!row)return 'None';
     const zone=ctx.me.organisation.timezone;
@@ -70,7 +72,7 @@ export function draftImpact(form:HTMLFormElement,ctx:Context,read:()=>Command|Pr
       // D65: a refusal sends only the findings the change introduced (no detail.overlap): when none names a changed session
       // itself (the clash sits on the other duty of the person moved), they are still the change's own checks.
       const ids=focus(),near=findings.filter(f=>ids.includes(f.shift_id)||ids.includes(f.detail?.overlap?.other_shift_id)),touching=near.length?near:findings;
-      if(said){refused=body;refusal=(error as Error).message;}  // "Not saved: <server words>" at Save (rotacoord)
+      if(said)refused=body;
       // The server's refusal as sent (it names the blocker first); who and when are in the checks under it.
       output.replaceChildren(note((error as Error).message,'error',error),...saveWithout(error),...(touching.length?[previewFindings(ctx,touching,touching.map(f=>f.shift_id))]:[]));}
   }
