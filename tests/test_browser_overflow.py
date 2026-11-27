@@ -32,6 +32,7 @@ ALLOW = {
     **dict.fromkeys(('button.health-pill', 'button.rp', '.dt-chip', '.iss-chip', 'button.iss-mark'),
                     'on a phone its 44 px target is a centred invisible ::after (app.css › Touch targets), not drawn'),
     '.app-footer :is(button,a[href])': 'on a phone its 44 px target is a centred invisible ::after (the footer stays one line)',
+    'input.switch': 'its 24 px target (44 px on a phone) is a centred invisible ::before; ::after is the knob',
 }
 LONG = "Dr Luca Irwin synthetic overflow fixture synthetic overflow fixture synthetic overflow fixture"
 ARABIC = 'د. عبدالودود بن النخلي بن عبدالقهار الرملي'

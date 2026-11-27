@@ -554,10 +554,12 @@ HIT_AREA = r"""nodes => nodes.map(n => {
   const grown = b.content !== 'none' && b.position === 'absolute';
   const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
   const box = {left: r.left - x, top: r.top - y, right: r.right + x, bottom: r.bottom + y};
-  const lands = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.right - 1, box.bottom - 1], [box.left + 1, box.bottom - 1]]
-    .every(([px, py]) => { const hit = document.elementFromPoint(px, py); return !!hit && (hit === n || n.contains(hit)); });
+  // What each corner that misses lands on instead, so a failure names the neighbour or parent in the way.
+  const misses = [[box.left + 1, box.top + 1], [box.right - 1, box.top + 1], [box.right - 1, box.bottom - 1], [box.left + 1, box.bottom - 1]]
+    .map(([px, py]) => [px, py, document.elementFromPoint(px, py)]).filter(([, , hit]) => !hit || !(hit === n || n.contains(hit)))
+    .map(([px, py, hit]) => `${Math.round(px)},${Math.round(py)} ${hit ? hit.tagName.toLowerCase() + '.' + [...hit.classList].join('.') : 'nothing'}`);
   const name = n.getAttribute('aria-label') || n.querySelector('[aria-label]')?.getAttribute('aria-label') || n.textContent.trim();
-  return {name, width: box.right - box.left, height: box.bottom - box.top, lands};
+  return {name, width: box.right - box.left, height: box.bottom - box.top, lands: !misses.length, misses};
 })"""
 # The Rules list's row and head, a line, a line panel's reach links and the legend's "+N", built as the client builds
 # them (rules_tree.ts, rule_catalogue.ts, rule_line_reach.ts, dom.ts legend), in #main so the work container applies.
