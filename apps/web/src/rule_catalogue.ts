@@ -848,7 +848,7 @@ type LeadPlan=Check&{lines:RuleLine[];legacy_lead_conversion:Row|null;difference
  *  Duty type leadership changed meanwhile: the preview reloads and the proposal waits for another look. */
 function convertLeads(e:Entry,names:Namer,refresh:()=>Promise<void>){
   const on=field('Effective from','date',departmentToday(),{required:true});
-  const shown=el('div',{role:'status','aria-live':'polite'});
+  const shown=el('div',{role:'status','aria-live':'polite','aria-label':'Conversion preview'});
   let plan:LeadPlan|null=null,asked=0,error='';
   const load=async()=>{const n=++asked,day=on.input.value;plan=null;error='';shown.replaceChildren(working('Checking…'));
     if(!day){shown.replaceChildren();return;}

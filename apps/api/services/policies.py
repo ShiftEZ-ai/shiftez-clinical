@@ -20,7 +20,7 @@ from packages.domain.rule_serialization import stored_definition
 from apps.api import models as m
 from apps.api.auth import require_catalogue_read, require_permission, require_role, person_access, current_roles
 from apps.api.errors import require
-from apps.api.serialization import CHECK_SUMMARY, record, json_value
+from apps.api.serialization import CHECK_SUMMARY, record, records_many, json_value
 from apps.api.snapshots import (DomainSnapshot, domain_snapshot, fingerprint, feasibility_fingerprints,
                                 snapshot_hash, snapshot_inputs, tag_data)
 from .common import scoped, expected, bump_inputs, history, history_many, history_version
@@ -363,12 +363,14 @@ def people_data(db, actor, day, *, last=None):
     last = last or day + timedelta(days=1)
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
-    rows = lambda cls: [record(r) for r in db.scalars(select(cls).where(cls.department_id == actor.department_id))]
+    # Dated person records come period-bounded (rotations through the ORM for their mentor); catalogues in one read.
     data = DomainSnapshot({"organisation": {"timezone": zone}, **period_records(db, department.id, day, last)})
-    for name, cls in {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
-                      "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
-                      "services": m.Service, "locations": m.Location}.items():
-        data[name] = {r["id"]: r for r in rows(cls)}
+    keyed = {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
+             "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
+             "services": m.Service, "locations": m.Location}
+    rows = records_many(db, {name: (cls, cls.department_id == actor.department_id) for name, cls in keyed.items()})
+    for name in keyed:
+        data[name] = {r["id"]: r for r in rows[name]}
     first_membership = {}
     for row in data["memberships"]:
         first = max(day, date.fromisoformat(row["starts_on"]))
