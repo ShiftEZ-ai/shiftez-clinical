@@ -45,7 +45,7 @@ def test_the_approver_reads_an_amendments_changes_reason_and_note_where_they_dec
         # The review strip: what changes, was → now with the coordinator's reason.
         strip = page.locator('.review-strip')
         changes = strip.get_by_role('region', name='What changes')
-        expect(changes).to_contain_text('Jordan Lee → Taylor Noor')
+        expect(changes).to_contain_text('Staff 02(test) → Staff 03(test)')
         expect(changes).to_contain_text('· sick')
         # The changed session is marked on the grid (the person who joins it), on the change's week.
         expect(page.locator('#schedule-view .pchip.pc-changed').first).to_be_visible()
@@ -53,7 +53,7 @@ def test_the_approver_reads_an_amendments_changes_reason_and_note_where_they_dec
         # An amendment is approved as its changes: "Approve changes" (SWEEP-2, 281cc5c36).
         page.get_by_role('button', name='Approve changes', exact=True).click()
         dialog = page.get_by_role('dialog', name='Approve changes')
-        expect(dialog.get_by_role('region', name='What changes')).to_contain_text('Jordan Lee → Taylor Noor')
+        expect(dialog.get_by_role('region', name='What changes')).to_contain_text('Staff 02(test) → Staff 03(test)')
         expect(dialog).to_contain_text('Only the changes rechecked')
         # ME-27: one unit: the Fix list's causes, never the checks' count.
         expect(dialog).not_to_contain_text('sessions ·')

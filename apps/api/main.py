@@ -60,7 +60,7 @@ from .snapshots import (domain_snapshot,
 from .services.common import CATALOGUES, scoped, expected
 from .services.access import SWAP_AUTOMATION_ISSUER
 from .services.schedule import in_force_snapshot
-from .services.planning import health, redo_available, allowed_actions
+from .services.planning import health, edit_availability, allowed_actions
 from .services import schedule
 from .services.policies import policy_impact, check_policy, duplicate_groups, policy_reach, rules_for_person
 from packages.domain.solver_rules import capability_catalogue, generation_manifest
@@ -198,7 +198,6 @@ def create_app(settings: Settings | None = None, engine=None):
         import asyncio
         import threading
         from . import live
-        settings.warn_default_generation_engine()
         live.configure(settings)
         live.attach(asyncio.get_running_loop())
         live.listen(settings.database_url)
@@ -704,12 +703,15 @@ def create_app(settings: Settings | None = None, engine=None):
                 "Too many password attempts; wait a few minutes and try again")
         from .services import accounts
 
+        outcome = {}
         def operation(db):
             # A concurrent disable or reset can make this session unusable while the account lock is contended.
             account = accounts.lock_link_account(db, identity_id) if identity_id else None
             actor = actor_for(request, db, write=True)
-            return accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account)
-        return liveness_write(engine, operation, context={"route": "auth.password_change"})
+            # The scanner treats this response as a password and follows the shared return value to worker logs (issue 1642).
+            outcome.update(accounts.change_password(db, actor, data, settings, request.state.correlation_id, account=account))
+        liveness_write(engine, operation, context={"route": "auth.password_change"})
+        return outcome
 
     @app.get("/auth/start")
     def oidc_start(request: Request, next: str = "", identifier: str = Query(default="", max_length=255), remember_me: bool = False):
@@ -1900,7 +1902,7 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             row = swaps.get_scoped(db, actor, swap_id)
             return {"swap": swaps.projection(db, row, actor=actor),
-                    "events": [record(event) for event in swaps.events_for(db, actor, row)]}
+                    "events": swaps.events_for(db, actor, row)}
 
     @app.get("/api/planner/views")
     def planner_views(request: Request):
@@ -2610,7 +2612,9 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.workspace_access import access_record
             from .services.rota_summary import workspace_validation, current_check
             from .workspace_baselines import attach as attach_baseline
+            can_undo, can_redo = edit_availability(db, actor, workspace) if actor.permits("coordinator") else (False, False)
             data = {"workspace": {**attach_baseline(db, workspace, record(workspace)),
+                                  "can_undo": can_undo,
                                   "name": visible_rota_name(db, actor, workspace.id, workspace.name),
                                   "publication_id": publication_id,
                                   "allowed_actions": allowed_actions(db, actor, workspace, historical=historical,
@@ -2623,7 +2627,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     # SW3-A-10: on the period's integrated rota only its Rota Coordinator adds or removes a fixed assignment.
                     "can_change_fixed": actor.permits("coordinator") and unrestricted(db, actor, access_record(db, workspace)),
                     # SW3-A-06: the viewer's own Undo can be redone (the planner then offers Redo beside Undo).
-                    "can_redo": actor.permits("coordinator") and redo_available(db, actor, workspace),
+                    "can_redo": can_redo,
                     "swap_id": db.scalar(select(m.SwapRequest.id).where(m.SwapRequest.workspace_id == workspace.id)),
                     "approvals": [record(a) for a in db.scalars(select(m.Approval).where(m.Approval.workspace_id == workspace.id))]}
             from .services.people import with_adjustment_names
@@ -2997,6 +3001,11 @@ def create_app(settings: Settings | None = None, engine=None):
             representation = [type or "", status or "", person_id, id, limit, offset, q, sorted(people),
                               sort_by, sort_direction, decided, for_me,
                               collection_filter.model_dump(mode="json") if collection_filter else None]
+            if id:
+                # History permissions changed, and dated programme authority can expire without a write.
+                representation.append("request-history-v2")
+                if actor.permits("programme_lead"):
+                    representation.append(independence.today(db, actor.department_id).isoformat())
             tag = availability.requests_etag(db, actor, representation)
             cached = conditional_response(request, tag)
             if isinstance(cached, Response):
@@ -3189,6 +3198,35 @@ def create_app(settings: Settings | None = None, engine=None):
     def timeline_preview(value: s.TimelineRotationInput, request: Request):
         from .services.timeline_commands import preview
         return retry_write(engine, lambda db: preview(db, actor_for(request, db, write=True), value))
+
+    @app.get('/api/leave-balance-settings', response_model=s.LeaveBalanceSettings)
+    def leave_balance_settings(request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            return leave_balances.settings(db, actor_for(request, db))
+
+    @app.get('/api/my-leave-balances', response_model=list[s.LeaveBalance])
+    def my_leave_balances(request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            actor = actor_for(request, db)
+            return leave_balances.balances(db, actor, actor.person_id) if actor.person_id else []
+
+    @app.get('/api/requests/{request_id}/leave-balances', response_model=list[s.LeaveBalance])
+    def request_leave_balances(request_id: s.ID, request: Request):
+        from .services import leave_balances
+        with transaction(engine) as db:
+            actor = actor_for(request, db)
+            row = scoped(db, m.RequestRecord, request_id, actor)
+            require(row.id in availability.readable_request_balance_ids(db, actor, [row.id]),
+                    'FORBIDDEN', 'Only the person and permitted decision makers can read this balance', 403)
+            return leave_balances.balances(db, actor, row.person_id, request=row) if row.kind == 'leave' else []
+
+    @app.post("/api/rotation-board/reference-preview", response_model=s.ReferenceRotationReview)
+    def reference_rotation_preview(value: s.ReferenceRotationImport, request: Request):
+        from .services.training import reference_rotation_import
+        with transaction(engine) as db:
+            return reference_rotation_import(db, actor_for(request, db, write=True), value, preview=True)
 
     @app.get("/api/rotation-board", response_model=s.RotationBoard)
     def rotation_board(request: Request, start: s.date, end: s.date, programme_id: s.ID | None = None):
@@ -3882,7 +3920,8 @@ def create_app(settings: Settings | None = None, engine=None):
             actor = actor_for(request, db)
             require_role(actor, "coordinator")
             return {"imports": [reference_receipt(db, source) for source in db.scalars(
-                select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id)
+                select(m.ReferenceImport).where(m.ReferenceImport.department_id == actor.department_id,
+                    func.coalesce(m.ReferenceImport.manifest['format'].as_string(), '') != s.ROTATION_REFERENCE_FORMAT)
                 .order_by(m.ReferenceImport.created_at.desc(), m.ReferenceImport.seq.desc()).limit(10))]}
 
     @app.get("/api/staff-imports")
@@ -4096,6 +4135,7 @@ def create_app(settings: Settings | None = None, engine=None):
                     m.AuditEvent.department_id == actor.department_id,
                     m.AuditEvent.actor_id == m.Identity.id).exists())
                 .order_by(m.Identity.display_name, m.Identity.id).limit(2001))) if people else []
+            audit_log.mask_balance_details(db, actor, page['events'])
             return {**page, "events": audit_log.subjects(db, actor.department_id, page['events']),
                     "offset": offset, "limit": limit,
                     "people": [{"id": i, "display_name": n} for i, n in actors[:2000]],

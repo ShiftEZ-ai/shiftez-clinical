@@ -48,5 +48,39 @@ def check_leadership(data, ids, spec):
         draft = feasible(data, solve(data, seed))
         flags = [p for p in shift(draft, sid)['participants'] if p.get('team_lead')]
         assert len(flags) == 1 and flags[0]['person_id'] in {ids['p0'], ids['p1']}
-    return {'assertions': {'boundary_min', 'boundary_max', 'continuity', 'counterfactual', 'seed_robustness'},
-            'bindings': {'lead': len(minimum) + len(maximum) + len(whole)}}
+
+    concurrent = expected['concurrent_leaders']
+    members = [ids[key] for key in concurrent['duties']]
+    shared = copy.deepcopy(at)
+    for shift_id, people in zip(members, concurrent['assignments'], strict=True):
+        place(shared, shift_id, [{'person_id': ids[person], 'team_lead': lead} for person, lead in people])
+    assert evaluate(shared)['valid']
+
+    separate = copy.deepcopy(shared)
+    policy = next(p for p in separate['policies'] if p['id'] == rid)
+    [line] = [row for row in policy['definition']['rule']['lines']
+              if row['settings']['team_lead_requirement'].get('count_scope') == 'concurrent_duties']
+    line['settings']['team_lead_requirement']['count_scope'] = 'duty'
+    separate_gaps = lead_errors(separate)
+    [gap] = separate_gaps
+    assert (gap['code'], gap['shift_id'], gap['detail']['available']) == (
+        concurrent['gap_code'], ids[concurrent['unled_duty']], 0)
+
+    excess = copy.deepcopy(shared)
+    shift(excess, ids[concurrent['unled_duty']])['participants'][0]['team_lead'] = True
+    excess_gaps = lead_errors(excess)
+    [gap] = excess_gaps
+    assert gap['code'] == concurrent['gap_code']
+    assert gap['detail']['scheduled'] == 2
+    assert set(gap['detail']['affected_shift_ids']) == set(members)
+
+    editable = copy.deepcopy(data)
+    for shift_id in members:
+        shift(editable, shift_id)['participants'] = []
+    for seed in expected['seed_robustness']['seeds']:
+        candidate = feasible(editable, solve(editable, seed))
+        assert sum(bool(p.get('team_lead')) for shift_id in members
+                   for p in shift(candidate, shift_id)['participants']) == 1
+    return {'assertions': {'boundary_min', 'boundary_max', 'continuity', 'counterfactual', 'seed_robustness',
+                           'concurrent_leaders'},
+            'bindings': {'lead': len(minimum) + len(maximum) + len(whole) + len(separate_gaps) + len(excess_gaps)}}

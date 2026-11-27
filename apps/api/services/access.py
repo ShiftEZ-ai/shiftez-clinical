@@ -63,10 +63,12 @@ def keep_developer(db, identity_ids, department_id=None):
                     "Keep at least one Developer: give someone else the Developer role first", 409)
 
 
-def keep_installation_admin(db, *, binding_id=None, identity_ids=()):
+def keep_installation_admin(db, actor, *, binding_id=None, identity_ids=()):
     """The command writer serializes this check and its revoke or disable across departments."""
     if db.info.get("bulk"):
         db.flush()
+    if any(has_installation_admin(db, identity_id) for identity_id in identity_ids):
+        require_role_change(db, actor, s.INSTALLATION_ADMIN_ROLE)
     require(has_installation_admin(db, excluding_binding_id=binding_id, excluding_identities=identity_ids, permanent=True)
             or not has_installation_admin(db, permanent=True), "LAST_INSTALLATION_ADMIN",
             f"Give someone else the {s.ROLE_LABELS[s.INSTALLATION_ADMIN_ROLE]} role before removing this access", 409)
@@ -287,7 +289,8 @@ def require_role_change(db, actor, role, *, grant=False):
     permission = s.ROLE_GRANT_PERMISSIONS[role]
     allowed = s.PERMISSIONS[permission]
     if permission == "access.installation_admin":
-        require_role(actor, *allowed)
+        require(actor.permits(*allowed), "FORBIDDEN",
+                f"Ask an {s.ROLE_LABELS[role]} to change this access", 403)
         if db is not None and db.info.get("bulk"):
             # Bulk commands defer flushing; read revocations already made by this batch.
             db.flush()
@@ -373,7 +376,7 @@ def access_command(db, actor, command, settings):
             require(other_admins(db, actor.department_id, row.identity_id), "LAST_ADMIN",
                     "Keep at least one admin: give someone else the Admin role first", 409)
         if row.role == s.INSTALLATION_ADMIN_ROLE:
-            keep_installation_admin(db, binding_id=row.id)
+            keep_installation_admin(db, actor, binding_id=row.id)
         if row.role in s.SYSTEM_ROLES:
             from .independence import today as local_today
             if live_role_holder(db, row, local_today(db, actor.department_id)):
@@ -397,7 +400,7 @@ def access_command(db, actor, command, settings):
         account = lock_link_account(db, row.id)
         if not enable:
             keep_developer(db, {row.id})
-            keep_installation_admin(db, identity_ids={row.id})
+            keep_installation_admin(db, actor, identity_ids={row.id})
         row.disabled = not enable
         row.revision += 1
         if not enable:

@@ -78,7 +78,7 @@ def test_every_registered_get_has_a_public_contract_or_requires_sign_in(h, tmp_p
     samples = {
         **dict.fromkeys(('batch_id', 'content_id', 'conversion_id', 'entry_id', 'event_id', 'exception_id',
                          'image_id', 'import_id', 'job_id', 'notification_id', 'occurrence_id', 'policy_id',
-                         'publication_id', 'report_id', 'result_id', 'series_id', 'swap_id'), MISSING_ID),
+                         'publication_id', 'report_id', 'request_id', 'result_id', 'series_id', 'swap_id'), MISSING_ID),
         'catalogue_id': 'people_per_session', 'kind': 'services', 'object_id': h.seed['services'][0],
         'operation_key': MISSING_ID, 'person_id': person, 'shift_id': shift,
         'token': MISSING_TOKEN, 'workspace_id': workspace['id'],

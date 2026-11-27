@@ -9,7 +9,7 @@ from apps.api.snapshots import fingerprints, full_shifts, project_series_shifts,
 from packages.domain.time import aware
 from .common import local_date_span, visible_rota_name
 from . import reviews
-from .planning import allowed_actions, redo_available
+from .planning import allowed_actions, edit_availability
 from .planning_groups import unrestricted
 from .workspace_access import access_record
 from .workspace_reads import stored_checks
@@ -31,6 +31,7 @@ def compact(db, actor, workspace):
         publication_id=publication_id, validation=check['validation'],
         allowed_actions=allowed_actions(db, actor, workspace, historical=historical,
                                         published=publication_id is not None))
+    metadata['can_undo'], can_redo = edit_availability(db, actor, workspace) if actor.permits('coordinator') else (False, False)
     fork = db.scalar(select(m.WorkspaceForkBase).options(load_only(m.WorkspaceForkBase.id,
         m.WorkspaceForkBase.source_workspace_id, m.WorkspaceForkBase.source_revision,
         m.WorkspaceForkBase.source_content_revision)).where(m.WorkspaceForkBase.workspace_id == workspace.id))
@@ -46,7 +47,7 @@ def compact(db, actor, workspace):
         'review_progress': reviews.viewer_progress(db, actor, workspace, current_fingerprint=current),
         'review_items': check['review_items'], 'reviewer_involved': reviews.contributed(db, workspace, actor.identity_id),
         'can_change_fixed': actor.permits('coordinator') and unrestricted(db, actor, access_record(db, workspace)),
-        'can_redo': actor.permits('coordinator') and redo_available(db, actor, workspace),
+        'can_redo': can_redo,
         'swap_id': db.scalar(select(m.SwapRequest.id).where(m.SwapRequest.workspace_id == workspace.id)),
         'approvals': [record(row) for row in db.scalars(select(m.Approval).where(m.Approval.workspace_id == workspace.id))]}
 

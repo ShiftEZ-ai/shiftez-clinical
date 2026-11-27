@@ -154,7 +154,7 @@ def test_subject_link_without_the_exact_current_issuer_cannot_authenticate(h, pr
         del binding["issuer"]
     else:
         binding["issuer"] = stored_issuer
-    with pytest.raises(Problem, match="add your hospital sign-in"), transaction(h.app.state.engine, write=True) as db:
+    with pytest.raises(Problem, match="add your institutional sign-in"), transaction(h.app.state.engine, write=True) as db:
         oidc.finish_flow(db, provider.settings, provider.claims)
     with transaction(h.app.state.engine) as db:
         assert db.scalar(select(func.count()).select_from(m.Session)) == 0
@@ -188,7 +188,7 @@ def test_legacy_unscoped_database_link_requires_explicit_reconfirmation(h):
         db.add(m.AuthConfiguration(id=config.SINGLETON, data=data))
     with transaction(h.app.state.engine, write=True) as db:
         settings = config.effective(db, h.settings)
-        with pytest.raises(Problem, match="add your hospital sign-in"):
+        with pytest.raises(Problem, match="add your institutional sign-in"):
             oidc.finish_flow(db, settings, {"sub": "hospital-staff-subject"})
     assert admin.put(PATH, json=configuration(h, expected_revision=1)).status_code == 422
     confirmed = configuration(h, expected_revision=1)
@@ -198,5 +198,5 @@ def test_legacy_unscoped_database_link_requires_explicit_reconfirmation(h):
                                              "reason": "Undo synthetic link confirmation"})
     assert undone.status_code == 200 and undone.json()["institutional_bindings"][0]["issuer"] == ""
     with transaction(h.app.state.engine, write=True) as db:
-        with pytest.raises(Problem, match="add your hospital sign-in"):
+        with pytest.raises(Problem, match="add your institutional sign-in"):
             oidc.finish_flow(db, config.effective(db, h.settings), {"sub": "hospital-staff-subject"})

@@ -10,9 +10,10 @@ from make_known_failures import SAFE_NODE
 WORKFLOW = ".github/workflows/ci.yml"
 
 
-def github_get(repository, resource):
+def github_get(repository, resource, *, raw=False):
+    flags = ["--allow-escape-sequences"] if raw else []
     return subprocess.check_output(
-        ["gh", "api", "--hostname", "github.com", "--method", "GET", f"repos/{repository}/actions/{resource}"],
+        ["gh", "api", "--hostname", "github.com", "--method", "GET", *flags, f"repos/{repository}/actions/{resource}"],
         stderr=subprocess.PIPE,
         timeout=60,
     )
@@ -31,7 +32,9 @@ def workflow_runs(repository, event, default, page=1):
 def ancestor(git, older, newer):
     try:
         git("merge-base", "--is-ancestor", older, newer)
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
         return False
     return True
 

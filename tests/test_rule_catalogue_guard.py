@@ -27,11 +27,11 @@ def catalogue(entry, *lines, settings=None):
             'definition': {'rule': {'kind': 'catalogue', 'id': entry, 'settings': settings or {}, 'lines': list(lines)}}}
 
 
-def world(h):
-    """Old rules of the kinds production holds, with person lines, and a week of sessions with people on them."""
+def legacy_rules(h):
+    """Old rules of the kinds production holds, with person lines."""
     a, b, c = h.seed['people']
     service = h.seed['services'][0]
-    old = {
+    return {
         'cap': activate(h, propose(h, {'kind': 'max_duties', 'maximum': 3}, per_person=[{'person_id': a, 'amount': 1}])),
         'quota': activate(h, propose(h, {'kind': 'block_quota', **BLOCK, 'metric': 'duties', 'comparison': 'range', 'amount': 1, 'maximum_amount': 3,
                                          'target_amount': 2, 'target_strength': 'high', 'window_alignment': 'calendar_week'},
@@ -41,6 +41,13 @@ def world(h):
         'prefer': activate(h, propose(h, {'kind': 'allocation_preference', 'priority': 3}, {'person_id': b}, 'advisory')),
         'fair': activate(h, propose(h, {'kind': 'balance_goal', 'metric': 'duties'}, severity='advisory')),
     }
+
+
+def world(h):
+    """Legacy rules and a week of sessions with people on them."""
+    a, b, c = h.seed['people']
+    service = h.seed['services'][0]
+    old = legacy_rules(h)
     w = h.workspace(start='2026-10-04', end='2026-10-11')
     for day, people in (('04', [a, b]), ('05', [a]), ('06', [a, b, c]), ('07', [c]), ('08', [])):
         w = h.shift(w, f'2026-10-{day}T08:00:00+03:00', f'2026-10-{day}T12:00:00+03:00', people=people,

@@ -167,7 +167,7 @@ def test_week_shows_published_days_grey_and_read_only_around_the_draft(browser, 
         start = grid.get_by_role('columnheader', name=re.compile(r'^14 Oct 2026 · .* · the draft starts$'))
         expect(start).to_have_class(re.compile(r'\bsd-edge\b'))  # the day the draft starts (grey context ends here)
         expect(grid.get_by_role('columnheader', name=re.compile(r'^15 Oct 2026')).locator('.wk-cov')).not_to_have_text('Published')
-        chip = grid.get_by_role('button', name=re.compile(r'^Jordan Lee, Clinical review session, .+, 12 Oct 2026 08:00.12:00, published, read-only$'))
+        chip = grid.get_by_role('button', name=re.compile(r'^Staff 02\(test\), Clinical review session, .+, 12 Oct 2026 08:00.12:00, published, read-only$'))
         expect(chip).to_have_class(re.compile(r'\bsd-greychip\b'))
         expect(page.get_by_role('list', name='Key')).to_contain_text('Published, read-only')
         # A published chip opens the session read-only in a side panel (S-22), never the planner's editing panel.
@@ -181,7 +181,7 @@ def test_week_shows_published_days_grey_and_read_only_around_the_draft(browser, 
         dialog.get_by_role('button', name='Close panel').click()
         expect(dialog).to_have_count(0)
         # The draft's own chip on 14 Oct is editable (not grey).
-        own = grid.get_by_role('button', name=re.compile(r'^Alex Morgan, Clinical review session, .+, 14 Oct 2026'))
+        own = grid.get_by_role('button', name=re.compile(r'^Staff 01\(test\), Clinical review session, .+, 14 Oct 2026'))
         expect(own).not_to_have_class(re.compile(r'\bsd-greychip\b'))
         assert not errors, errors
     finally:
@@ -202,7 +202,7 @@ def test_day_overlay_shows_published_and_draft_with_changed_and_new(browser, liv
         # Overlay: both layers, with what the draft changes.
         show(page, f"schedule/day/2026-10-12?edit={d2['id']}&mode=overlay")
         expect(view_button(page)).to_have_accessible_name('View settings: Day · Overlay')
-        expect(table.get_by_role('button', name=re.compile(r'^Published, Clinical review session, 08:00 to 12:00, .*Jordan Lee'))).to_have_count(1)
+        expect(table.get_by_role('button', name=re.compile(r'^Published, Clinical review session, 08:00 to 12:00, .*Staff 02\(test\)'))).to_have_count(1)
         changed = table.get_by_role('button', name=re.compile(r'^Draft, Clinical review session, 08:00 to 12:00, .*, changed$'))
         expect(changed.get_by_text('Changed', exact=True)).to_be_visible()
         new = table.get_by_role('button', name=re.compile(r'^Draft, Clinical review session, 13:00 to 17:00, .*, new$'))
@@ -315,7 +315,7 @@ def test_period_moves_across_rota_boundaries_and_today_returns(browser, live_ser
         # A week before the draft: all published, read-only, with the published sessions as grey chips.
         grid = page.get_by_role('region', name='Week view').get_by_role('grid')
         expect(grid.get_by_role('columnheader', name=re.compile('published, read-only$'))).to_have_count(7)
-        expect(grid.get_by_role('button', name=re.compile(r'^Alex Morgan, Clinical review session, .+, 4 Oct 2026 .*published, read-only$'))).to_be_visible()
+        expect(grid.get_by_role('button', name=re.compile(r'^Staff 01\(test\), Clinical review session, .+, 4 Oct 2026 .*published, read-only$'))).to_be_visible()
         page.get_by_role('button', name='Go to today', exact=True).click()
         settled(page)
         assert today() in hash_of(page), hash_of(page)
@@ -339,7 +339,7 @@ def test_moving_back_to_a_week_already_seen_reads_nothing_again(browser, live_se
         page.get_by_role('button', name='Previous week', exact=True).click()
         expect(page.get_by_role('group', name='Schedule').locator('strong').first).to_have_text('Sun 11 Oct – Sat 17 Oct')
         settled(page)
-        expect(page.get_by_role('button', name=re.compile(r'^Jordan Lee, .*12 Oct 2026.*published, read-only$'))).to_be_visible()
+        expect(page.get_by_role('button', name=re.compile(r'^Staff 02\(test\), .*12 Oct 2026.*published, read-only$'))).to_be_visible()
         page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')  # the redraw and anything it started have run
         assert reads == [], reads  # the draft and the published window are kept for the visit
         assert not errors, errors
@@ -430,7 +430,7 @@ def test_staff_see_their_published_duties_only_on_the_same_page(browser, live_se
         expect(page.locator('#main[data-loaded-view=restricted]')).to_contain_text('Restricted page')
         expect(page.get_by_text('Secret draft')).to_have_count(0)
         errors[:] = [e for e in errors if not e.startswith('403 ') or f"/api/workspaces/{d['id']}" not in e]  # the refused draft read
-        expect(page.get_by_role('button', name=re.compile('Jordan Lee'))).to_have_count(0)
+        expect(page.get_by_role('button', name=re.compile('Staff 02\\(test\\)'))).to_have_count(0)
         if phone:
             expect(page.get_by_role('button', name='Menu', exact=True)).to_be_visible()
             assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth + 2')
@@ -606,7 +606,7 @@ def test_slow_published_sessions_keep_the_page_working(browser, live_server, h):
         # The week arrives once the slow read answers, with the published days filled in.
         expect(view_button(page)).to_have_accessible_name('View settings: Week', timeout=20000)
         settled(page)
-        expect(page.get_by_role('button', name=re.compile(r'^Alex Morgan, .*4 Oct 2026.*published, read-only$'))).to_be_visible()
+        expect(page.get_by_role('button', name=re.compile(r'^Staff 01\(test\), .*4 Oct 2026.*published, read-only$'))).to_be_visible()
         page.unroute('**/api/schedule/sessions*')
         page.locator('body').press('m')
         expect(view_button(page)).to_have_accessible_name('View settings: Month')

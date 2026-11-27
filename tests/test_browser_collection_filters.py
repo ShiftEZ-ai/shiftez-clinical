@@ -121,7 +121,7 @@ def test_rules_filter_is_the_shared_builder_with_groups_saved_as_a_view(browser,
 
 def test_a_shared_table_filters_with_an_or_group_sorts_by_two_keys_and_keeps_both_in_a_view(browser, live_server, h):
     people = h.get('admin', '/api/catalogues')['people']
-    tags = {'Alex Morgan': ['north', 'east'], 'Jordan Lee': ['south'], 'Taylor Noor': ['north']}
+    tags = {'Staff 01(test)': ['north', 'east'], 'Staff 02(test)': ['south'], 'Staff 03(test)': ['north']}
     for p in people:
         if p['display_name'] in tags:
             h.command('admin', 'catalogue.update', {'catalogue': 'people', 'value': {**{k: p[k] for k in ('display_name', 'active')}, 'tags': tags[p['display_name']]},
@@ -145,14 +145,14 @@ def test_a_shared_table_filters_with_an_or_group_sorts_by_two_keys_and_keeps_bot
         sort_direction(main, 'Descending', row=1)
         expect(main.get_by_role('button', name=re.compile(r'^Sort: Current rank, ascending, then .+, descending'))).to_be_visible()
         close_popover(page)
-        assert shown() == ['Taylor Noor', 'Jordan Lee', 'Alex Morgan']
+        assert shown() == ['Staff 03(test)', 'Staff 02(test)', 'Staff 01(test)']
         # Where Tags is not east And (Tags is north Or Tags is south).
         pop = toolbar(main, 'Filter')
         condition(pop, 'Tags', ['east'], op='none')
         or_group(pop, 'Tags', 'north', 'south')
         close_popover(page)
         expect(main.locator('tbody tr[data-row]')).to_have_count(2)
-        assert shown() == ['Taylor Noor', 'Jordan Lee']
+        assert shown() == ['Staff 03(test)', 'Staff 02(test)']
         save_view(main, 'North or south')
         saved = next(v for v in h.get('coordinator', '/api/table-views?table=people')['views'] if v['name'] == 'North or south')['definition']
         assert saved['sort'] == ['rank', 'asc'] and len(saved['then_sort']) == 1 and saved['then_sort'][0][1] == 'desc', saved
@@ -161,7 +161,7 @@ def test_a_shared_table_filters_with_an_or_group_sorts_by_two_keys_and_keeps_bot
         navigate(page, 'people')
         expect(main.get_by_role('button', name='Saved views: North or south', exact=True)).to_be_visible()
         expect(main.locator('tbody tr[data-row]')).to_have_count(2)
-        assert shown() == ['Taylor Noor', 'Jordan Lee']
+        assert shown() == ['Staff 03(test)', 'Staff 02(test)']
         # View settings › Shown properties: a property moves down, and the header follows.
         view = toolbar(main, 'View settings')
         headers = main.locator('thead th[data-col]').all_inner_texts()

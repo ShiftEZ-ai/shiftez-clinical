@@ -50,10 +50,11 @@ def subject_independent(db, actor, subjects, entered_by, *, sql=False):
             person_key(db, entered_by) != person_key(db, actor.identity_id))
 
 
-def ensure_subject(db, actor, action, subjects, entered_by, message, reason=None, target_id=None, *, context=None):
+def ensure_subject(db, actor, action, subjects, entered_by, message, reason=None, target_id=None, *,
+                   context=None, record_decision=True):
     """Enforce the shared rule and retain explicit on-behalf authorship in the decision audit."""
     permission = ensure(db, actor, action, subject_independent(db, actor, subjects, entered_by),
-                        message, reason, target_id, context=context)
+                        message, reason, target_id, context=context, record_decision=record_decision)
     enterer = person_key(db, entered_by)
     subject_keys = {"person:" + person for person in subjects if person is not None}
     if subject_keys and enterer not in subject_keys:
@@ -172,7 +173,7 @@ def can_decide(db, actor, action, independent, *, context=None):
 
 
 def ensure(db, actor, action, independent, message, reason=None, target_id=None, *, context=None,
-           allow_self_approval=True):
+           allow_self_approval=True, record_decision=True):
     """Pass when someone else decides. Own decisions need permission (self-grants need no other admin),
     a real reason, a mark in the decision history and an announcement to approvers and auditors."""
     if independent:
@@ -190,6 +191,8 @@ def ensure(db, actor, action, independent, message, reason=None, target_id=None,
     text = (reason or "").strip()
     require(len(text) >= 3 and text not in ROUTINE_REASONS, "SELF_APPROVAL_REASON",
             "You are deciding your own work: add a reason", 422)
+    if not record_decision:
+        return permission
     db.info.setdefault("self_approved", []).append({"action": action, "permission_id": permission.id if permission else None})
     # The reason stays in the decision history only: it can be private (a leave request, for example).
     outbox(db, actor, f"self_approval:{action}:{target_id or ''}:{m.uid()}", "self_approval",

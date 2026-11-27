@@ -8,13 +8,15 @@ import socket
 import re
 from datetime import timedelta
 import logging
+from pathlib import Path
 import time
 import threading
+from types import SimpleNamespace
 from weakref import WeakKeyDictionary
 from zoneinfo import ZoneInfo
 import httpx
 import apps.api.services.catalogue_proof_identity as proof_identity
-from sqlalchemy import delete, func, literal, or_, select, text, tuple_, update
+from sqlalchemy import delete, event, func, literal, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -31,6 +33,7 @@ from apps.api.schema import require_current_schema
 from apps.api.serialization import job_progress_record
 from apps.api.snapshots import currency_hint, fingerprint
 from apps.api.version import build
+from apps.api.errors import Problem
 from apps.api.services.generation_resume import (clear_generation_resume, prune_generation_resume, resume_current,
                                                  resume_expired, has_generation_checkpoint, generation_resume_available, may_run)
 from apps.api.services.generation_scope import require_generation_sessions_in_scope
@@ -69,6 +72,27 @@ def _preserve_generation_stage(previous, progress):
     if previous_index is not None and current_index is not None and current_index < previous_index:
         return {**progress, 'stage': previous_stage}
     return progress
+
+
+# The only kinds the interactive lane claims: short reads a planner waits on while a long main-loop job runs.
+INTERACTIVE_KINDS = frozenset({'fill_options', 'planner_preview'})
+
+
+class InteractiveWriteRefused(Problem):
+    def __init__(self):
+        super().__init__(500, 'INTERACTIVE_WRITE_REFUSED', 'An interactive job may record only its own result')
+
+
+def _refuse_rota_writes(db, *, preview_savepoint=False):
+    """An interactive-lane session may write only job rows; planner_preview's savepoint is always rolled back."""
+    @event.listens_for(db, 'before_flush')
+    def refuse(session, _context, _instances):
+        # Only planner_tools.preview's own savepoint, which it always rolls back, may flush rota rows.
+        if preview_savepoint and session.info.get('_planner_preview') and session.in_nested_transaction():
+            return
+        rows = (*session.new, *session.deleted, *(row for row in session.dirty if session.is_modified(row)))
+        if any(not isinstance(row, m.Job) for row in rows):
+            raise InteractiveWriteRefused()
 
 
 def _release_job_memory(claim=None):
@@ -180,7 +204,9 @@ def describe(db, event, publication, identity, *, wishes=None, rota_label=None):
         return ('Your absence was approved' if own else f"Absence approved for {_name(db, event.payload.get('person_id'))}"), spans_text(db, event) + 'The approved rota change is ready to publish. Published duties change when it is published.'
     if event.kind == "swap" and event.payload.get('notice'):
         if event.payload['notice'] == 'no_recipients':
-            return 'Nobody eligible can take this duty', (event.payload.get('no_eligible_recipients_reason') or 'Open Requests to withdraw the offer or ask the coordinator for cover.')
+            from apps.api.services.swaps import AUDIENCE_NOTICE_TITLE, UNKNOWN_AUDIENCE_REASON, stored_audience_reason
+            return AUDIENCE_NOTICE_TITLE, (stored_audience_reason(event.payload.get('no_eligible_recipients_reason'))
+                                           or UNKNOWN_AUDIENCE_REASON)
         return 'Your swap offer needs a new duty', 'The offered duty changed in the published rota. Open Requests to choose a current duty.'
     if event.kind == "swap":
         row = db.get(m.SwapRequest, event.payload.get("swap_id"))
@@ -597,8 +623,8 @@ def oldest_queued_job(engine):
                 if job else {'job_id': None, 'queued_seconds': 0})
 
 
-def job_available(db, *, recovering_worker=None):
-    enabled = enabled_jobs()
+def job_available(db, *, recovering_worker=None, kinds=None):
+    enabled = enabled_jobs() if kinds is None else enabled_jobs() & m.Job.kind.in_(kinds)
     lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     if recovering_worker is not None:
         lost = or_(lost, m.Job.worker_id == recovering_worker)
@@ -606,20 +632,23 @@ def job_available(db, *, recovering_worker=None):
         (m.Job.status == 'running') & lost)).limit(1)) is not None
 
 
-def claim_pending(engine, *, recovering_worker=None):
+def claim_pending(engine, *, recovering_worker=None, kinds=None):
     with transaction(engine) as db:
-        if not job_available(db, recovering_worker=recovering_worker):
+        if not job_available(db, recovering_worker=recovering_worker, kinds=kinds):
             return None
-    return retry_write(engine, lambda db: claim_job(db, recovering_worker=recovering_worker))
+    return retry_write(engine, lambda db: claim_job(db, recovering_worker=recovering_worker, kinds=kinds))
 
 
-def claim_job(db, *, recovering_worker=None):
+def claim_job(db, *, recovering_worker=None, kinds=None):
+    """Claim under the writer lock, so concurrent claimers (lanes or workers) never take the same job."""
     require_current_schema(db)
     enabled = enabled_jobs()
+    # The heavy-kind check below stays department-wide; only the lane's own candidates are narrowed.
+    wanted = enabled if kinds is None else enabled & m.Job.kind.in_(kinds)
     # Bounded lease recovery after worker death; no lost running job remains forever.
     lease_expired = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
     lost = lease_expired if recovering_worker is None else or_(lease_expired, m.Job.worker_id == recovering_worker)
-    expired = list(db.scalars(select(m.Job).where(enabled, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
+    expired = list(db.scalars(select(m.Job).where(wanted, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
         .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)
         .with_for_update(skip_locked=True).execution_options(populate_existing=True)))
     for old in expired:
@@ -691,10 +720,10 @@ def claim_job(db, *, recovering_worker=None):
                 old.result = {**(old.result or {}), 'resume_available': True}
         old.revision += 1
         queue_generation_outcome(db, old)
-    queued = select(m.Job).where(enabled, m.Job.status == "queued")
+    queued = select(m.Job).where(wanted, m.Job.status == "queued")
     # The serialized claim reserves one solve slot. A paused expired job keeps its stored status.
     heavy = m.Job.kind.in_(_HEAVY_JOB_KINDS)
-    if db.scalar(select(m.Job.id).where(m.Job.status == "running", heavy, lease_expired.is_not(True)).limit(1)):
+    if db.scalar(select(m.Job.id).where(enabled, m.Job.status == "running", heavy, lease_expired.is_not(True)).limit(1)):
         queued = queued.where(~heavy)
     if recovering_worker is not None and expired:
         queued = queued.order_by(m.Job.id.in_([old.id for old in expired]).desc())
@@ -1434,17 +1463,27 @@ def housekeeping(engine, settings):
     return departments
 
 
-def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False):
+def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, recover_owned=False, kinds=None,
+                recovered=None):
+    """One pass of the main loop, or with `kinds` one claim of the interactive lane (no maintenance).
+
+    `recovered` is called once this pass's claim has committed, before the claimed job runs."""
     settings = settings or engine.get_execution_options().get("rota_write_settings") or Settings.from_env()
     pass_engine = engine
-    queued = oldest_queued_job(engine)
-    claim_first = queued['job_id'] is not None and queued['queued_seconds'] >= settings.worker_claim_max_defer_seconds
+    interactive = kinds is not None
+    lane = 'interactive' if interactive else 'main'
+    queued = {'job_id': None} if interactive else oldest_queued_job(engine)
+    claim_first = interactive or (queued['job_id'] is not None
+                                  and queued['queued_seconds'] >= settings.worker_claim_max_defer_seconds)
     departments = set() if claim_first else housekeeping(engine, settings)
     claim_engine = engine.execution_options(rota_defer_busy_writer=False) if claim_first else engine
-    claim = claim_pending(claim_engine, recovering_worker=WORKER_ID if recover_owned else None)
+    claim = claim_pending(claim_engine, recovering_worker=WORKER_ID if recover_owned else None, kinds=kinds)
+    if recovered is not None:
+        recovered()
     # Recover a crash after final validation before TTL pruning can release its private checkpoint.
     try:
-        prune_generation_state(engine, settings=settings)
+        if not interactive:
+            prune_generation_state(engine, settings=settings)
     except DatabaseWriteDeferred:
         if not claim:
             raise
@@ -1457,7 +1496,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
         result, error, error_detail = None, None, None
         started = time.monotonic()
         _memory_probe('before_job', claim)
-        log.info("job_started", extra={"job_id": claim["id"], "kind": claim["kind"], "attempt": claim["attempt"]})
+        log.info("job_started", extra={"job_id": claim["id"], "kind": claim["kind"], "attempt": claim["attempt"],
+                                       "lane": lane})
         stopped, finished = threading.Event(), threading.Event()
         progress = dict(claim.get('progress') or {"stage": "checking", "elapsed_seconds": 0})
         deferred_generation = claim['kind'] == 'generation' and claim['input'].get('_deferred_generation')
@@ -1696,6 +1736,9 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                                'line': origin.tb_lineno} if origin is not None else None})
                         result.update(generation_fix_lists_fallback(claim['input'], result))
             elif claim['kind'] == 'feasibility':
+                if interactive:
+                    # The proof row is written outside the guarded finish transaction.
+                    raise InteractiveWriteRefused()
                 from packages.domain.feasibility import check
                 result = check(claim['input'], progress=report, cancelled=stopped.is_set)
             elif claim['kind'] == 'planner_preview':
@@ -1710,6 +1753,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     actor = planner_actor_for(db, claim)
                     workspace = db.get(m.Workspace, claim['input']['workspace']['id'])
                     command = s.Command.model_validate(claim['input']['planner_command'])
+                    if interactive:
+                        _refuse_rota_writes(db, preview_savepoint=True)
                     require(workspace is not None and workspace.status == 'draft' and workspace.archived_at is None,
                             'STALE_INPUTS', 'The rota changed before its impact preview started', 409)
                     require(planner_tools.source_fingerprint(db, actor, workspace, command)
@@ -1735,6 +1780,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                           if engine.dialect.name == 'postgresql' else engine)
                 with transaction(reader) as db:
                     allow_long_idle(db, 30)
+                    if interactive:
+                        _refuse_rota_writes(db)
                     actor = planner_actor_for(db, claim)
                     workspace = db.get(m.Workspace, value.workspace_id)
                     require(workspace is not None and workspace.status == 'draft' and workspace.archived_at is None,
@@ -1802,14 +1849,15 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                     claim['check_stamp'] = (since, preparation_stamp(db, workspace),
                                             selection and (selection['start'], selection['end']))
         except Exception as exc:
-            error = error or (getattr(exc, 'code', type(exc).__name__)
-                              if claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview', 'fill_options', 'merge_preview', 'merge_apply'}
-                              else type(exc).__name__)
+            coded_failure = (isinstance(exc, InteractiveWriteRefused)
+                             or claim['kind'] in {'catalogue_proof', 'validation', 'planner_preview',
+                                                  'fill_options', 'merge_preview', 'merge_apply'})
+            error = error or (getattr(exc, 'code', type(exc).__name__) if coded_failure else type(exc).__name__)
             # Code metadata only: messages, locals and formatted tracebacks can carry rota data.
             origin = exc.__traceback__
             while origin.tb_next is not None:
                 origin = origin.tb_next
-            log.warning("job_failed", extra={"job_id": claim["id"], "kind": claim["kind"], "error_code": error,
+            log.warning("job_failed", extra={"job_id": claim["id"], "kind": claim["kind"], "error_code": error, "lane": lane,
                 "exception_type": type(exc).__name__, "error_location": {
                     "module": origin.tb_frame.f_globals.get('__name__'),
                     "function": origin.tb_frame.f_code.co_name, "line": origin.tb_lineno}})
@@ -1827,13 +1875,23 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                 'solver_wall_seconds': solve_end - solve_start,
                 'result_preparation_seconds': computed - solve_end,
             }
-        log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"],
+        log.info("job_computation_finished", extra={"job_id": claim["id"], "kind": claim["kind"], "lane": lane,
             "attempt": claim["attempt"], "duration_ms": round((computed - started) * 1000, 2),
             **generation_timings})
         feasibility_projection = None
         staged_result = False
 
         def finish(db):
+            if interactive:
+                # A kind that would store rota or check data is refused; only its failed receipt is written.
+                _refuse_rota_writes(db)
+                try:
+                    with db.begin_nested():
+                        return finish_job(db, claim, result, error, progress=progress, error_detail=error_detail)
+                except InteractiveWriteRefused as refused:
+                    log.warning('interactive_write_refused', extra={'job_id': claim['id'], 'kind': claim['kind'],
+                                                                    'lane': lane})
+                    return finish_job(db, claim, None, refused.code, progress=progress)
             if feasibility_projection is not None:
                 return finish_job(db, claim, None, error, progress=progress,
                                   feasibility_projection=feasibility_projection)
@@ -1856,7 +1914,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                                     context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "stage_result"})
                         staged_result = True
                     if not retry_write(engine, finish, deadline=lease_deadline,
-                                       context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "finish"}):
+                                       context={"job_id": claim["id"], "kind": claim["kind"], "job_phase": "finish",
+                                                "lane": lane}):
                         return True  # Cancellation or a newer attempt owns the job now.
                     break
                 except DatabaseWriteTimeout:
@@ -1865,12 +1924,12 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                         time.sleep(min(delay, remaining))
                         delay = min(delay * 2, JOB_HEARTBEAT_SECONDS)
             else:
-                log.warning("job_result_write_timeout", extra={"job_id": claim["id"], "kind": claim["kind"]})
+                log.warning("job_result_write_timeout", extra={"job_id": claim["id"], "kind": claim["kind"], "lane": lane})
                 return True  # Leave lease recovery to claim_job; do not overwrite another attempt.
             completed = time.monotonic()
             log.log(logging.WARNING if error else logging.INFO, "job_finished",
                     extra={"job_id": claim["id"], "kind": claim["kind"], "status": "failed" if error else "succeeded",
-                           "error_code": error, "duration_ms": round((completed - started) * 1000, 2),
+                           "error_code": error, "lane": lane, "duration_ms": round((completed - started) * 1000, 2),
                            **({'result_persistence_seconds': completed - computed} if generation_timings else {})})
         finally:
             # Release both Python graphs and native CP-SAT arenas on success, failure, cancellation, or write timeout.
@@ -1885,6 +1944,8 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
             # All closures now see only the probe identity after durable finish.
             claim = probe_claim
             _release_job_memory(probe_claim)
+    if interactive:
+        return bool(claim)
     if claim_first:
         # Maintenance cannot consume the newly claimed job's lease before its heartbeat starts.
         departments |= housekeeping(pass_engine, settings)
@@ -1917,6 +1978,22 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
     # Projection warming is maintenance, not a claimed job. Callers use this
     # result to assert that cancellation left no runnable work.
     return bool(departments or claim)
+
+
+def interactive_loop(engine, settings, stopped, wake):
+    """One interactive job at a time beside the main loop, so a candidate check never waits behind a rota check."""
+    while not stopped.is_set():
+        try:
+            worked = process_one(engine, settings=settings, kinds=INTERACTIVE_KINDS)
+        except (DatabaseWriteDeferred, DatabaseWriteTimeout, SQLAlchemyError) as exc:
+            log.warning('interactive_pass_deferred', extra={'lane': 'interactive', 'error_code': type(exc).__name__})
+            worked = False
+        except Exception as exc:  # the main loop still claims these kinds; this lane only adds capacity
+            log.warning('interactive_pass_failed', extra={'lane': 'interactive', 'error_code': type(exc).__name__})
+            worked = False
+        if not worked:
+            wake.wait(settings.worker_poll_seconds)
+            wake.clear()
 
 
 def process_push_one(engine, settings, *, record_worker_heartbeat=True):
@@ -1995,6 +2072,31 @@ def notification_loop(engine, settings, stopped, wake=None, *, dispatch=True):
             listener.close()
 
 
+def _solver_worker_count():
+    configured = os.getenv('ROTA_SOLVER_WORKERS')
+    if configured is not None:
+        workers = int(configured)
+        if not 1 <= workers <= 8:
+            raise RuntimeError('ROTA_SOLVER_WORKERS must be between 1 and 8')
+        return workers
+
+    process_cpu_count = getattr(os, 'process_cpu_count', None)
+    available = process_cpu_count() if process_cpu_count else None
+    if available is None:
+        try:
+            available = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            available = 1
+    try:
+        quota, period = Path('/sys/fs/cgroup/cpu.max').read_text(encoding='ascii').split()
+        if quota != 'max':
+            available = min(available, max(1, int(quota) // int(period)))
+    except (OSError, ValueError, ZeroDivisionError):
+        # An unavailable quota leaves the process CPU count as the limit.
+        pass
+    return max(1, min(8, available))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
@@ -2009,10 +2111,7 @@ def main():
         raise RuntimeError(
             "ROTA_DB_POOL_TIMEOUT_SECONDS must be less than JOB_LEASE_SECONDS - JOB_HEARTBEAT_SECONDS "
             f"({JOB_LEASE_SECONDS - JOB_HEARTBEAT_SECONDS} seconds) to leave positive worker lease time")
-    settings.warn_default_generation_engine()
-    solver_workers = int(os.getenv('ROTA_SOLVER_WORKERS', '1'))
-    if not 1 <= solver_workers <= 8:
-        raise RuntimeError('ROTA_SOLVER_WORKERS must be between 1 and 8')
+    solver_workers = _solver_worker_count()
     if not WORKER_ID.strip() or len(WORKER_ID) > 120:
         raise RuntimeError('ROTA_WORKER_ID must be a nonempty instance identifier of at most 120 characters')
     engine = make_engine(settings.database_url, settings=settings)
@@ -2023,18 +2122,33 @@ def main():
     extraction = threading.Thread(target=run_loop, args=(engine, settings, stopped),
                                   name='score-check-worker', daemon=True)
     notification_stopped = threading.Event()
-    job_wake = threading.Event()
+    job_wake = wakes = threading.Event()
+    interactive = None
+    if not args.once and not args.push_only:
+        lane_wake = threading.Event()
+        wakes = SimpleNamespace(set=lambda: (job_wake.set(), lane_wake.set()))
+        interactive = threading.Thread(target=interactive_loop, args=(engine, settings, stopped, lane_wake),
+                                       name='interactive-lane', daemon=True)
     notification_thread = None
     if (not args.once and getattr(getattr(engine, 'dialect', None), 'name', None) == 'postgresql'):
         notification_thread = threading.Thread(target=notification_loop,
-                                                args=(engine, settings, notification_stopped, job_wake),
+                                                args=(engine, settings, notification_stopped, wakes),
                                                 kwargs={'dispatch': not args.push_only},
                                                 name='notification-dispatcher', daemon=True)
         notification_thread.start()
     if not args.once and not args.push_only:
         extraction.start()
+    recover_owned = True
+
+    def recovered():
+        # Start-up recovery treats every running job of this WORKER_ID as lost, so it must have committed before
+        # the lane claims anything, and must not run again (a later deferred pass) once the lane may be running.
+        nonlocal recover_owned
+        recover_owned = False
+        if interactive is not None and interactive.ident is None:
+            interactive.start()
+
     try:
-        recover_owned = True
         delay = settings.worker_poll_seconds
         while True:
             _touch_alive_file()
@@ -2043,7 +2157,8 @@ def main():
                 if args.push_only:
                     worked = process_push_one(engine, settings, record_worker_heartbeat=False)
                 else:
-                    worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned)
+                    worked = process_one(engine, solver_workers=solver_workers, settings=settings, recover_owned=recover_owned,
+                                         recovered=recovered)
                 recover_owned = False
             except DatabaseWriteDeferred:
                 queued = {'job_id': None, 'queued_seconds': 0}
@@ -2092,6 +2207,8 @@ def main():
         stopped.set()
         if extraction.ident is not None:
             extraction.join(timeout=1)
+        if interactive is not None and interactive.ident is not None:
+            interactive.join(timeout=1)
 
 
 if __name__ == "__main__":

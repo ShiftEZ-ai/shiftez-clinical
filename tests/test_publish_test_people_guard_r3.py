@@ -44,6 +44,10 @@ def test_system_delivery_uses_source_creator_for_every_channel(ready, monkeypatc
     for role in ("staff", "approver"):
         subscribe(h, role, endpoint="https://fcm.googleapis.com/source-privacy-" + role, hint="privacy-" + role)
     email_person = no_account_person(h)
+    # These unlinked recipients represent ordinary staff in this test.
+    with transaction(h.app.state.engine, write=True) as db:
+        for number, person_id in enumerate(h.seed["people"][1:], start=2):
+            db.get(m.Person, person_id).display_name = f"Synthetic other recipient {number}"
     if path == "announcement_reminder":
         row = notice(h, also_email=True)
         with transaction(h.app.state.engine, write=True) as db:

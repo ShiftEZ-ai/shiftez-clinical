@@ -466,12 +466,12 @@ def test_a_merge_that_would_add_a_must_fix_cannot_be_applied(browser, live_serve
             if body['job']['kind'] != 'merge_preview':
                 return route.fulfill(json=body)
             merge = body['job']['result']['merge']
-            body['job']['result']['merge'] = {**merge, 'can_apply': False, 'new_or_worse_findings': [{'message': 'Alex Morgan goes over the weekend cap'}]}
+            body['job']['result']['merge'] = {**merge, 'can_apply': False, 'new_or_worse_findings': [{'message': 'Staff 01(test) goes over the weekend cap'}]}
             route.fulfill(json=body)
         page.route(re.compile(r'/api/jobs/[^/?]+$'), worse)
         panel = open_merge(page, draft, h)
         expect(panel.get_by_role('status').first).to_contain_text('Merging would add or worsen a must-fix cause')
-        expect(panel).to_contain_text('Alex Morgan goes over the weekend cap')
+        expect(panel).to_contain_text('Staff 01(test) goes over the weekend cap')
         expect(panel.get_by_role('button', name='Merge 1 change')).to_be_disabled()
     finally:
         context.close()

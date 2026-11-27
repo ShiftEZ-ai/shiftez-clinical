@@ -1,6 +1,7 @@
 """Staff consent is separate from rota review and atomic official publication."""
 
 import copy
+from collections import Counter
 from zoneinfo import ZoneInfo
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -25,7 +26,163 @@ from .person_record import require_person
 
 OPEN_STATES = {"offered", "counteroffered", "accepted", "reviewing"}
 # Validator findings that depend only on the person and the duty they would take, never on other duties.
-RECIPIENT_DUTY_CODES = {"NOT_ELIGIBLE", "UNAVAILABLE", "EXTERNAL_ROTATION"}
+RECIPIENT_DUTY_CODES = {"NOT_ELIGIBLE", "UNAVAILABLE", "RESTRICTION", "EXTERNAL_ROTATION"}
+PRIVATE_TIME_WORDS = {
+    "UNAVAILABLE": "is unavailable at that time.",
+    "RESTRICTION": "has protected time then.",
+}
+COLLEAGUE_NOT_FREE = "COLLEAGUE_NOT_FREE"
+COLLEAGUE_NOT_FREE_MESSAGE = "This colleague is not free at that time."
+NO_OTHER_STAFF = "There are no other active staff sign-ins in this department."
+UNKNOWN_AUDIENCE_REASON = "Nobody can take this duty under the current rules."
+AUDIENCE_NOTICE_TITLE = "Nobody eligible can take this duty"
+_AUDIENCE_NOT_FREE = "Colleagues are not free at that time."
+AUDIENCE_WORDS = {
+    **dict.fromkeys((*PRIVATE_TIME_WORDS, COLLEAGUE_NOT_FREE), _AUDIENCE_NOT_FREE),
+    "ATTACHMENT_PAIRING": "Colleagues cannot take this duty while keeping trainee pairings.",
+    "CALENDAR_CLOSED": "The clinic or location is closed for this duty.",
+    "CALENDAR_DATE_SET_UNRESOLVED": "The opening dates for this duty need review.",
+    "CALENDAR_TIME_UNRESOLVED": "The opening times for this duty need review.",
+    "CALENDAR_UNKNOWN": "The opening calendar for this duty is unavailable.",
+    "CAPABILITY_GAP": "Taking this duty would leave required skills uncovered.",
+    "CAPACITY_OVERFLOW": "Taking this duty would use extra places.",
+    "CATALOGUE_VALIDITY_CHANGED": "The setup for this duty has changed.",
+    "CONFIGURED_DURATION_REQUIRED": "This duty must be booked for its full configured duration.",
+    "CONSECUTIVE_DAYS": "Taking this duty would exceed the consecutive-day limit.",
+    "CONSECUTIVE_WEEKENDS": "Taking this duty would exceed the consecutive-weekend limit.",
+    "COVERAGE_GAP": "Taking this duty would leave required cover short.",
+    "COVERAGE_TARGET": "Taking this duty would leave cover below its target.",
+    "CUSTOM_FIELD_INVALID": "This duty has an invalid configured value.",
+    "DISTINCT_PERSON_GAP": "Taking this duty would leave too few distinct qualified people.",
+    "DUPLICATE_PARTICIPATION": "Colleagues cannot be counted twice on the same duty.",
+    "DURATION_LIMIT": "This duty exceeds its configured duration limit.",
+    "EXTERNAL_CLASSIFICATION_UNKNOWN": "External duties need classification before this transfer can be checked.",
+    "EXTERNAL_LOCATION_UNKNOWN": "External duty locations need review before this transfer can be checked.",
+    "EXTERNAL_ROTATION": _AUDIENCE_NOT_FREE,
+    "EXTRA_COVER_NOT_OVERTIME": "This extra-cover duty requires overtime.",
+    "FIXED_SESSION_UNITS_REQUIRED": "This duty needs a complete-assignment counting setup.",
+    "FORBIDDEN_TRANSITION": "Taking this duty would create a forbidden next-day combination.",
+    "FULL_ASSIGNMENT_REQUIRED": "Colleagues must be able to take the full duty.",
+    "LEAD_GAP": "Taking this duty would leave its team-lead requirement unmet.",
+    "LEAD_NOT_QUALIFIED": "The team-lead requirements for this duty are unmet.",
+    "LOCATION_CLOSED": "The place for this duty is closed.",
+    "LOCATION_INACTIVE": "The place for this duty is inactive at that time.",
+    "LOCATION_TYPE": "This duty cannot use its configured place type.",
+    "LOCATION_TYPE_INACTIVE": "The place type for this duty is inactive at that time.",
+    "MAXIMUM_PARTICIPANTS": "Taking this duty would exceed the number of people allowed.",
+    "MAX_DUTIES": "Taking this duty would exceed duty limits.",
+    "MAX_HOURS": "Taking this duty would exceed working-hours limits.",
+    "MIN_REST": "Taking this duty would leave too little rest between duties.",
+    "NOT_ELIGIBLE": "Colleagues do not meet the eligibility requirements for the full duty.",
+    "OPEN_EXTRA_COVER": "This duty still needs extra cover.",
+    "PARTICIPATION_INVALID": "The planned attendance for this duty needs review.",
+    "POOLED_RESOURCE_CAPACITY": "Taking this duty would exceed shared resource capacity.",
+    "QUOTA_ABOVE_MAXIMUM": "Taking this duty would exceed duty quotas.",
+    "QUOTA_ABOVE_TARGET": "Taking this duty would exceed quota targets.",
+    "QUOTA_BELOW_MINIMUM": "Taking this duty would leave required quotas unmet.",
+    "QUOTA_BELOW_TARGET": "Taking this duty would leave quota targets unmet.",
+    "QUOTA_CONTEXT_MISSING": "The complete quota period is needed to check this transfer.",
+    "QUOTA_PRESENCE_INVALID": "Attendance data needs review before quotas can be checked.",
+    "QUOTA_PRORATION_UNRESOLVED": "The adjusted quotas for this duty need review.",
+    "QUOTA_SCOPE_LIMIT": "This duty's quota scope is too large to check.",
+    "QUOTA_TIME_AMBIGUOUS": "The quota period boundaries need review.",
+    "REQUIREMENT_OUTSIDE_SHIFT": "A requirement for this duty falls outside its scheduled time.",
+    "RESOURCE_CAPACITY": "There is too little space for concurrent duties at that time.",
+    "RESOURCE_INACTIVE": "A resource required for this duty is inactive.",
+    "RESOURCE_INTERVAL_OUTSIDE_SHIFT": "A resource is required outside this duty's scheduled time.",
+    "RESOURCE_LOCATION": "A required resource cannot be used at this duty's location.",
+    "RESOURCE_UNKNOWN": "A resource required for this duty is unavailable.",
+    "ROTATION_LEAVE_NEEDS_APPROVAL": _AUDIENCE_NOT_FREE,
+    "ROTATION_LEAVE_NOT_ALLOWED": _AUDIENCE_NOT_FREE,
+    "RULE_EXCEPTION": "An approved exception applies to the duty check.",
+    "SCOPED_COVERAGE_GAP": "Taking this duty would leave a required group without enough cover.",
+    "SCOPED_PARTICIPANT_LIMIT": "Taking this duty would exceed a group staffing limit.",
+    "SERVICE_INACTIVE": "A service for this duty is inactive at that time.",
+    "SERVICE_REQUIRED": "This duty needs a service before it can be transferred.",
+    "SHARED_DUTY_UNAPPROVED": "This duty is not configured for shared cover.",
+    "SUPERVISION_GAP": "Taking this duty would leave too little qualified supervision.",
+    "SUPERVISION_LEVEL": "Taking this duty would leave supervision unevenly distributed.",
+    "SUPERVISION_PAIRING": "Taking this duty would leave required supervision pairings unmet.",
+    "SUPERVISION_RANK": "Taking this duty would leave supervision rank requirements unmet.",
+    "SUPERVISION_UNCONFIGURED": "Trainee supervision requirements need to be configured for this duty.",
+    "SUPERVISOR_CAPACITY": "Taking this duty would exceed supervision capacity.",
+    "SUPERVISOR_REQUIRED": "Duties need assigned supervisors before this limit can be checked.",
+    "SUPERVISOR_SCOPED_CAPACITY": "Taking this duty would exceed supervision capacity for a group.",
+    "SURPLUS_COVER": "Taking this duty would leave more cover than needed.",
+    "SWAP_EXPIRY": "Consent would expire after a duty starts.",
+    "SWAP_RETURN_REQUIRED": "Colleagues have no future duty to offer in return on this rota.",
+    "TARGET_OVERRIDE_STALE": "A quota adjustment needs review before this duty can be transferred.",
+    "TIME_OVERLAP": "Taking this duty would overlap other duties.",
+    "TRAVEL_BUFFER": "Taking this duty would leave too little travel time.",
+    "TYPE_INACTIVE": "This duty type is inactive at that time.",
+    "TYPE_VERSION_CHANGED": "The duty type has changed and needs review.",
+}
+SAFE_AUDIENCE_REASONS = frozenset(AUDIENCE_WORDS.values()) | {NO_OTHER_STAFF, UNKNOWN_AUDIENCE_REASON}
+# One source: a code the audience table words as "not free" is also neutral on a staff reader's row.
+NOT_FREE_CODES = frozenset(code for code, words in AUDIENCE_WORDS.items() if words == _AUDIENCE_NOT_FREE)
+OPTIONAL_NOTE_COMMANDS = {"swap.offer", "swap.accept", "swap.counteroffer", "swap.confirm", "swap.withdraw"}
+
+
+def optional_swap_note(kind, reason):
+    reason = reason.strip()
+    return "" if kind == "swap.withdraw" and reason == "Routine update" else reason
+
+
+def can_read_private_time(actor):
+    # The pair that reads every swap in the department and a colleague's availability on their card.
+    return actor is not None and actor.permits("coordinator", "approver")
+
+
+def staff_refusal(value):
+    """Project machine-generated refusal evidence without touching the stored event."""
+    if isinstance(value, dict):
+        if value.get("code") in NOT_FREE_CODES or value.get("error_code") in NOT_FREE_CODES:
+            return {"code": COLLEAGUE_NOT_FREE, "message": COLLEAGUE_NOT_FREE_MESSAGE}
+        return {key: staff_refusal(child) for key, child in value.items()}
+    if isinstance(value, list):
+        result = []
+        for child in value:
+            projected = staff_refusal(child)
+            if not isinstance(projected, dict) or projected.get("code") != COLLEAGUE_NOT_FREE or projected not in result:
+                result.append(projected)
+        return result
+    if isinstance(value, str):
+        if value in NOT_FREE_CODES:
+            return COLLEAGUE_NOT_FREE
+        if value.startswith("The person taking ") and value.endswith(tuple(PRIVATE_TIME_WORDS.values())):
+            return COLLEAGUE_NOT_FREE_MESSAGE
+    return value
+
+
+def eligibility_for_reader(actor, result):
+    if result["eligible"] or can_read_private_time(actor):
+        return result
+    shown = staff_refusal(result)
+    # The headline is the first finding's sentence, so it cannot say more than the row does.
+    return {**shown, "message": shown["findings"][0]["message"]} if shown["findings"] else shown
+
+
+def stored_audience_reason(message):
+    if message is None:
+        return None
+    # Historical notices repeated the title before the explanation.
+    reason = message.removeprefix(AUDIENCE_NOTICE_TITLE + ". ")
+    return reason if reason in SAFE_AUDIENCE_REASONS else UNKNOWN_AUDIENCE_REASON
+
+
+def read_swap_result(actor, result):
+    """Apply current reader permissions to projections, including old command receipts."""
+    if not can_read_private_time(actor):
+        result = {**result, "prepare_refusal": staff_refusal(result.get("prepare_refusal")),
+                  "publish_refusal": staff_refusal(result.get("publish_refusal"))}
+    if "no_eligible_recipients_reason" in result:
+        result = {**result, "no_eligible_recipients_reason": stored_audience_reason(result["no_eligible_recipients_reason"])}
+    return result
+
+
+def read_command_result(actor, result):
+    return {key: read_swap_result(actor, value) if key in {"swap", "undone"} and isinstance(value, dict) else value
+            for key, value in result.items()}
 
 
 def staff_identity(db, identity_id, person_id, department_id, cache=None):
@@ -217,6 +374,8 @@ def projection(db, row, cache=None, actor=None):
             "recipient_name": person(row.recipient_person_id).display_name if row.recipient_person_id else None,
             "offered_assignment": summary(publication, row.first_assignment_id, index),
             "counteroffered_assignment": summary(publication, row.second_assignment_id, index)}
+    if actor is not None:
+        result = read_swap_result(actor, result)
     if actor is not None and public_offer(actor, row):
         return {**{key: result[key] for key in ("id", "revision", "kind", "open_offer", "status", "effective_status",
             "expires_at", "created_at", "publication_id", "proposer_person_id", "proposer_name", "offered_assignment")},
@@ -241,8 +400,14 @@ def events_for(db, actor, row, thread=False):
         at = db.get(m.SwapRequest, at.reopened_from_id) if thread and at.reopened_from_id else None
     events = db.scalars(select(m.SwapEvent).where(m.SwapEvent.swap_id.in_(rows))
                        .order_by(m.SwapEvent.created_at, m.SwapEvent.seq))
-    return [event for event in events if event.action != "reopened" or not rows[event.swap_id].reopened_from_id
-            or involved(db.get(m.SwapRequest, rows[event.swap_id].reopened_from_id))]
+    result = [record(event) for event in events if event.action != "reopened" or not rows[event.swap_id].reopened_from_id
+              or involved(db.get(m.SwapRequest, rows[event.swap_id].reopened_from_id))]
+    if not can_read_private_time(actor):
+        for event in result:
+            if event["action"] in {"prepare_refused", "publish_refused"}:
+                event["detail"] = staff_refusal(event["detail"])
+                event["reason"] = staff_refusal(event["reason"])
+    return result
 
 
 def list_cache(db, actor, rows, summaries=True):
@@ -423,10 +588,8 @@ class Eligibility:
                 aware(finding.get('start') or shift['start']), aware(finding.get('end') or shift['end'])) if shift else []
             clinic = next((self.data['services'][f['service_id']]['name'] for f in failures if f['code'] == 'ELIGIBILITY_MISSING'), typ)
             return f'The person taking this duty is not eligible for {clinic} for the full duty.'
-        if finding['code'] == 'UNAVAILABLE':
-            return f'The person taking {typ} is unavailable at that time.'
-        if finding['code'] == 'RESTRICTION':
-            return f'The person taking {typ} has protected time then.'
+        if finding['code'] in PRIVATE_TIME_WORDS:
+            return f"The person taking {typ} {PRIVATE_TIME_WORDS[finding['code']]}"
         if finding['code'] == 'TIME_OVERLAP':
             start = (finding.get('start') or shift.get('start')) if shift else None
             when = aware(start).astimezone(ZoneInfo(self.data['organisation']['timezone'])).strftime('%a %d %b %H:%M') if start else ''
@@ -469,9 +632,17 @@ class Eligibility:
         return s.SwapEligibility(eligible=False, message=findings[0]["message"], findings=findings).model_dump()
 
 
-def require_eligible(result):
-    require(result["eligible"], "SWAP_INELIGIBLE", result["message"] or "This swap fails mandatory validation",
-            422, {"findings": result["findings"]})
+def require_eligible(actor, result):
+    if not result["eligible"]:
+        shown = eligibility_for_reader(actor, result)
+        raise Problem(422, "SWAP_INELIGIBLE", shown["message"] or "This swap fails mandatory validation",
+                      {"findings": shown["findings"]})
+
+
+def nobody_reason(failures):
+    """Use the commonest audience explanation, with no text from individual findings."""
+    reasons = Counter(AUDIENCE_WORDS.get(f["code"], UNKNOWN_AUDIENCE_REASON) for f in failures)
+    return max(reasons, key=lambda reason: (reasons[reason], reason)) if reasons else NO_OTHER_STAFF
 
 
 def eligible_staff(db, publication, assignment_id, expires_at, kind, *, failures=None, stop_after_first=False):
@@ -497,7 +668,7 @@ def eligible_staff(db, publication, assignment_id, expires_at, kind, *, failures
             if stop_after_first:
                 break
         elif failures is not None:
-            failures.extend(result['findings'])
+            failures.extend(staff_refusal(result['findings']))
     return eligible
 
 
@@ -507,7 +678,7 @@ def audience_states(db, rows):
     return {payload["swap_id"]: {"audience_pending": bool(payload.get("audience_pending")),
                                  "audience_failed": bool(payload.get("audience_failed")),
                                  "audience_count": payload.get("audience_count"),
-                                 'no_eligible_recipients_reason': payload.get('no_eligible_recipients_reason'),
+                                 'no_eligible_recipients_reason': stored_audience_reason(payload.get('no_eligible_recipients_reason')),
                                  "no_eligible_recipients": payload.get("audience_count") == 0 and not payload.get("audience_pending") and not payload.get("audience_failed")}
             for payload in db.scalars(select(m.Outbox.payload).where(m.Outbox.event_key.in_(keys)))} if keys else {}
 
@@ -530,11 +701,7 @@ def compute_audience(db, inputs):
     publication = db.get(m.Publication, row.publication_id)
     failures = []
     people = eligible_staff(db, publication, row.first_assignment_id, aware(row.expires_at), row.kind, failures=failures)
-    from collections import Counter
-    reasons = Counter(f['message'] for f in failures)
-    return {'person_ids': sorted(people), 'no_eligible_recipients_reason':
-            ('Nobody eligible can take this duty. ' + (reasons.most_common(1)[0][0] if reasons else
-             'There are no other active staff sign-ins in this department.')) if not people else None}
+    return {'person_ids': sorted(people), 'no_eligible_recipients_reason': nobody_reason(failures) if not people else None}
 
 
 def store_audience(db, inputs, result, error=None):
@@ -646,7 +813,8 @@ def options(db, actor, assignment_id=None, swap_id=None, recipient_id=None, kind
                 "basis": "Own future published duties and linked staff names only; choose a duty to check eligibility"}
     if row:
         preview = Eligibility(db, publication)
-        assignments = ([{**summary(pub, a.id, indexes[pub.id]), **preview.pair(row.first_assignment_id, a.id, row.expires_at)}
+        assignments = ([{**summary(pub, a.id, indexes[pub.id]), **eligibility_for_reader(
+                            actor, preview.pair(row.first_assignment_id, a.id, row.expires_at))}
                        for a, pub in entries[:200]] if kind == "exchange" else [])
         recipients = []
     else:
@@ -663,15 +831,18 @@ def options(db, actor, assignment_id=None, swap_id=None, recipient_id=None, kind
         assignments = [summary(pub, a.id, indexes[pub.id]) for a, pub in entries[:200]]
         preview = Eligibility(db, publication, audience=True) if assignment_id else None
         recipients = [{"id": person.id, "display_name": person.display_name,
-                       **preview.recipient(assignment_id, person.id, kind=kind)}
+                       **eligibility_for_reader(actor, preview.recipient(assignment_id, person.id, kind=kind))}
                       for person in people[:500] if assignment_id]
         if recipient_id:
             recipient = next((person for person in recipients if person["id"] == recipient_id), None)
             require(recipient is not None, "NOT_FOUND", "Choose an active departmental staff recipient", 404)
     return {"assignments": assignments, "recipients": recipients, "assignment_id": assignment_id, "swap_id": swap_id,
             "recipient_id": recipient_id, "kind": kind, "allowed_kinds": department.swap_kinds_allowed,
-            **(preview.recipient(row.first_assignment_id, person_id, row.expires_at, kind)
+            **(eligibility_for_reader(actor, preview.recipient(row.first_assignment_id, person_id, row.expires_at, kind))
                if row and kind == "give" else {}),
+            # Why nobody can take the chosen duty, from the checks above (never a second rule in the client).
+            "no_eligible_recipients_reason": nobody_reason([f for r in recipients for f in staff_refusal(r["findings"])])
+                if assignment_id and not row and not any(r["eligible"] for r in recipients) else None,
             "assignments_partial": len(entries) > 200 and not (row and kind == "give"),
             "recipients_partial": not row and len(people) > 500,
             "basis": "Own future published duties and active staff names only; no colleague schedules or private attributes"}
@@ -904,16 +1075,13 @@ def swap_command(db, actor, command):
                 "SWAP_EXPIRY", f"Consent expires within {department.swap_offer_window_days} days and before the offered assignment begins")
         require_unique_offer(db, actor.department_id, first.id, value.recipient_person_id)
         if value.recipient_person_id:
-            require_eligible(Eligibility(db, publication).recipient(first.id, value.recipient_person_id, value.expires_at, value.kind))
+            require_eligible(actor, Eligibility(db, publication).recipient(first.id, value.recipient_person_id, value.expires_at, value.kind))
         else:
             failures = []
             recipients = eligible_staff(db, publication, first.id, value.expires_at, value.kind,
                                         failures=failures, stop_after_first=True)
             if not recipients:
-                from collections import Counter
-                reasons = Counter(f['message'] for f in failures)
-                reason = 'Nobody can take this duty — ask your coordinator. ' + (reasons.most_common(1)[0][0]
-                    if reasons else 'There are no other active staff sign-ins in this department.')
+                reason = 'Nobody can take this duty — ask your coordinator. ' + nobody_reason(failures)
                 require(False, 'SWAP_NO_RECIPIENTS', reason, 422,
                         {'audience_count': 0, 'no_eligible_recipients': True,
                          'no_eligible_recipients_reason': reason})
@@ -936,7 +1104,8 @@ def swap_command(db, actor, command):
         again = undo(db, actor, row, value.reason)
         return {"swap": projection(db, again), "undone": projection(db, row)}
     if kind in {"swap.withdraw", "swap.reject"}:
-        value = s.Decision.model_validate(command.payload)
+        # The one required reason: a coordinator's or approver's refusal of a swap both people agreed to.
+        value = (s.Decision if kind == "swap.reject" else s.SwapNote).model_validate(command.payload)
         require(row.status in OPEN_STATES, "SWAP_STATE", "This swap is already closed", 409)
         if kind == "swap.withdraw":
             own_person(db, actor)
@@ -954,10 +1123,10 @@ def swap_command(db, actor, command):
             require(row.recipient_person_id in {None, person_id}, "FORBIDDEN", "Only an eligible recipient can respond to this offer", 403)
         publication = assert_live(db, row)
         if kind == "swap.accept":
-            value = s.Decision.model_validate(command.payload)
+            value = s.SwapNote.model_validate(command.payload)
             require(row.kind == "give", "SWAP_KIND", "An exchange requires a duty in return", 409)
             require(row.status == "offered", "SWAP_STATE", "Only an unanswered give-away can be accepted", 409)
-            require_eligible(Eligibility(db, publication).recipient(row.first_assignment_id, person_id, row.expires_at, row.kind))
+            require_eligible(actor, Eligibility(db, publication).recipient(row.first_assignment_id, person_id, row.expires_at, row.kind))
             require_unique_offer(db, row.department_id, row.first_assignment_id, person_id, row.id)
             row.recipient_person_id, row.recipient_id = person_id, actor.identity_id
             row.counteroffered_at, row.status = m.now(), "counteroffered"
@@ -969,16 +1138,16 @@ def swap_command(db, actor, command):
             first = db.get(m.Assignment, row.first_assignment_id)
             require(shift.id != first.shift_id, "INVALID_SWAP", "Choose a different session")
             require(aware(row.expires_at) <= aware(second.start), "SWAP_EXPIRY", "The proposed expiry must precede both assignments")
-            require_eligible(Eligibility(db, publication).pair(row.first_assignment_id, second.id))
+            require_eligible(actor, Eligibility(db, publication).pair(row.first_assignment_id, second.id))
             require_unique_offer(db, row.department_id, row.first_assignment_id, person_id, row.id)
             row.second_assignment_id, row.recipient_id, row.recipient_person_id = second.id, actor.identity_id, person_id
             row.counteroffered_at, row.status = m.now(), "counteroffered"
         elif kind == "swap.confirm":
             own_person(db, actor)
-            value = s.Decision.model_validate(command.payload)
+            value = s.SwapNote.model_validate(command.payload)
             require(row.status == "counteroffered", "SWAP_STATE", "The recipient must acknowledge the offer before confirmation", 409)
             require(actor.identity_id == row.proposer_id, "FORBIDDEN", "Only the original proposer can confirm this swap", 403)
-            require_eligible(Eligibility(db, publication).pair(row.first_assignment_id, row.second_assignment_id,
+            require_eligible(actor, Eligibility(db, publication).pair(row.first_assignment_id, row.second_assignment_id,
                                                            recipient_id=row.recipient_person_id))
             row.confirmed_at, row.status = m.now(), "accepted"
         elif kind == "swap.prepare":
@@ -989,7 +1158,8 @@ def swap_command(db, actor, command):
             require(False, "UNKNOWN_COMMAND", "Unsupported swap command")
     if kind != "swap.prepare":
         row.revision += 1
-    event(db, actor, row, kind.removeprefix("swap."), value.reason)
+    reason = optional_swap_note(kind, value.reason) if kind in OPTIONAL_NOTE_COMMANDS else value.reason
+    event(db, actor, row, kind.removeprefix("swap."), reason)
     if kind == "swap.confirm" and db.get(m.Department, actor.department_id).swap_auto_prepare:
         automatically_prepare(db, row)
     return {**result, "swap": projection(db, row)}
@@ -1037,7 +1207,7 @@ def undo(db, actor, row, reason):
         require_offer_capacity(db, row.department_id, row.proposer_id)
     if recipient_person_id is not None:
         preview = Eligibility(db, publication)
-        require_eligible(preview.pair(again.first_assignment_id, again.second_assignment_id,
+        require_eligible(actor, preview.pair(again.first_assignment_id, again.second_assignment_id,
                                     recipient_id=recipient_person_id) if later else
                          preview.recipient(again.first_assignment_id, recipient_person_id, aware(again.expires_at), again.kind))
     notice_key = f"swap:{row.id}:{row.revision}:{last.action}"

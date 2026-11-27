@@ -1,8 +1,8 @@
 """Enforce the live calendar and job admission invariants."""
 from alembic import op
 
-revision = '0156_live_uniqueness'
-down_revision = '0155_installation_admin'
+revision = '0158_live_uniqueness'
+down_revision = '0157_leave_balance_policy'
 branch_labels = depends_on = None
 SAFETY_CLASS = 'additive'
 DUPLICATE_PRECHECKS = (

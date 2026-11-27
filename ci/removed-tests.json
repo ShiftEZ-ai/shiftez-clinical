@@ -193,6 +193,46 @@
       "reason": "The meeting case moved to test_approved_meeting_opens_cover_in_a_reloaded_draft. It still checks approval status, request kind and no publication, and verifies that the protected time opens cover."
     },
     {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-admnnhekioipcdjgmljcnilfhiglmbdbhgppfbkhbfnnkhehbpnoggbdjegjecnn]",
+      "owner": "maintainer",
+      "reason": "Issue 1705 retires the warning for the former implicit greedy path, including its count, engine names and omission messages. The replacement checks that startup selects CP-SAT and emits no adoption warning."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-aeekcjnffhaklppdeaniaodafiglmnbfhmaohpapnbhpfnmmodkmnfgkjlpadefd]",
+      "owner": "maintainer",
+      "reason": "The replacement keeps the no-warning assertion in the test environment and verifies the new CP-SAT default."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-kelhndkbccnofanjhlomefgknmbhemlakobkhglbbjhnbgjceidoadgknlklgfgf]",
+      "owner": "maintainer",
+      "reason": "The replacement keeps the no-warning assertion and verifies that the explicit legacy setting still wins."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-knedfinbhnhepnajglfeknbidkpopmchmhppjmfdpgiflidfdkdjdjllfpfadokb]",
+      "owner": "maintainer",
+      "reason": "Issue 1705 retires the warning for the former implicit greedy path, including its count, engine names and omission messages. The replacement checks that startup selects CP-SAT and emits no adoption warning."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-lglikphbgegaaccjingffekbnlggchggnkgbjiaennphjeamkeocbodmidknikkk]",
+      "owner": "maintainer",
+      "reason": "The replacement keeps the no-warning assertion and verifies that the explicit CP-SAT setting still wins."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-ohdbmlicmconjapkiebaihojpcbfgghgdegfbcjioabkajoblknjcdemdgphddei]",
+      "owner": "maintainer",
+      "reason": "The replacement keeps the no-warning assertion and verifies that the explicit CP-SAT setting still wins."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-opaajlppffdcldidohpobimnnmffmhebehmmhakignbmkbgkamnagfhdjanephjj]",
+      "owner": "maintainer",
+      "reason": "The replacement keeps the no-warning assertion in the test environment and verifies the new CP-SAT default."
+    },
+    {
+      "node": "tests/test_greedy_limits_label.py::test_startup_warns_once_only_for_implicit_greedy_outside_tests[case-pmompildibpbenjlcebllmecebmpannjgbpjldnnmggkbidkccdihmkbigngegei]",
+      "owner": "maintainer",
+      "reason": "The replacement keeps the no-warning assertion and verifies that the explicit legacy setting still wins."
+    },
+    {
       "node": "tests/test_known_failures.py::test_bootstrap_cli_binds_root_caps_and_accepts_exact_classified_list",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_bootstrap_cli_produces_then_accepts_the_exact_add_only_file; assertions remain."
@@ -276,6 +316,111 @@
       "node": "tests/test_policy_v34.py::ImporterV34Tests::test_expiry_extension_changes_nothing_except_existing_date",
       "owner": "maintainer",
       "reason": "Expiry renewal of a known-failures entry is now refused (the list is removal-only); renamed to test_expiry_extension_is_refused_even_without_other_changes, which keeps every changed-field case and asserts the bare extension is refused."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-bgbknhpianonfooigomjiblipkapffdambcpjmjcileaeamgeidemjhaapabkdfi]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[changed-control-files] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-jeajafefpahdglkpegnpgibbieipdhkfodmebdlplhkeigjiekchpcpaihmchnbo]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[missing-run] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-lcbhijmcdinonmbcmeihdldnejnkanagbbobcaomijgacaifaahcjefgpiconejf]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[replaced-artifact] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-lnamchkmngiadoaahgpoflipcmkaabfpgbfaefabpblbgppcdmdckojbnagmfbhe]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[merge-group-lookup-timeout] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_absent_or_unavailable_proof_enables_full_suites[case-ngimdonkomhdnddblcolibddekgbjjeakpepghppjamphlkdndgjcpjkdkjhhoia]",
+      "owner": "maintainer",
+      "reason": "The stable case test_absent_or_unavailable_proof_enables_full_suites[missing-proof] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-agomeabjehmekafikneddecoaebgnbmehfndhmkcmeabcffjemhecnnglleoigad]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-gate-attempt] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-bbkhlaeabehdlbhhjonmlgmfnmkhodfdkdofggokegpcgamobgogmagekedpolgo]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-plan-base] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-bhanmamnennfbifjikioclgkignmhkjhlkfbjemnghmiibgflnpochgdgeakfhdd]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-inventory-seal] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-bnagaakopkljfhkpjbklbhlhnkamooochgebjfaipihchlionhdpigibffgmahfg]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[partial-plan-selection] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ccppjbbbcggbkdmiddngnioandeeonbhhhokmdpjlfjeohhpbcdhkegifkdddcog]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[missing-suite-files] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ckaeephebfiikjglklnopgdpjcdgbikhbjdocpihclejiidgpdibadfdfblinjio]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-plan-seal] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ecofbcnkpjnafghimomfeilaimgidhjhkpdhokbogmijgiineoogpacjfekankhg]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-workflow] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-fngdpfciohiaaknblbmgegieopijicjgbbcdliodgglpboognblmmhacfmefjaeg]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[stale-gate] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ggggbmabkogakmemebnflapgdongagkbbhndfingpcglpbhoaoccmcneghnledco]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[cancelled-gate] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-hmmagdikjkighlfoiclaenklockfmicfmcnbnoipnhoadcoadefgdlijpmbblhlb]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[skipped-gate] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-jlginnphdociokfmkicjmmlmdnpmclnkjldlhfipjhjkiffloanjcegiodmdgncc]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-proof-tree] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-kklfnpmecjddinibcofknnlhlidfbfjobklkbdmfplpcfingemeendnkklfmmekb]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-run-head] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-mofbicmemjphejlhjhhoapkagbmceabgoejmpndekalndjfkcmbjlkimcgceidjk]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[failed-merge-group-run] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-obgdgimdpimockaomkkhaldnfcdmfdddfmhajlaliphdbocgjoikicclpfkpndpi]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[nonpassing-verdict] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-ohclkolkjoclemkceiicmjjakpmficaejmamgbpncbeofjiccoddopknbihfnfkk]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-plan-tree] replaces this generated ID and retains its assertions."
+    },
+    {
+      "node": "tests/test_queue_reuse.py::test_unbound_evidence_runs_full_suites[case-pplijfckihaebnnheplekcgelokbiobnekaibpicifjadiellhcmcpgcdaehoapj]",
+      "owner": "maintainer",
+      "reason": "The stable case test_unbound_evidence_runs_full_suites[wrong-queue-branch] replaces this generated ID and retains its assertions."
     },
     {
       "node": "tests/test_quota_working_day_proration.py::test_leave_does_not_reduce_partial_window_commitment",
@@ -788,9 +933,24 @@
       "reason": "Renamed to test_stopped_resume_reports_valid_incumbent_without_completed_score: a stopped search that keeps a validated complete rota now reports FEASIBLE with score_completed false (one status meaning), so the UNKNOWN status assertion became FEASIBLE and two score-completion assertions were added; the other assertions remain."
     },
     {
+      "node": "tests/test_staff_swaps.py::test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text",
+      "owner": "maintainer",
+      "reason": "Parametrized over the withdraw note (none, empty, a routine note) as test_a_give_away_is_accepted_confirmed_and_withdrawn_without_typed_text[...]; every status and stored-reason assertion remains and an audit-reason assertion is added."
+    },
+    {
+      "node": "tests/test_staff_swaps.py::test_give_away_acceptance_requires_recipient_reason_revision_and_original_proposer",
+      "owner": "maintainer",
+      "reason": "Renamed to test_give_away_acceptance_checks_recipient_revision_and_original_proposer because the recipient reason is now optional; the body is unchanged and every assertion remains."
+    },
+    {
       "node": "tests/test_two_observation_gate.py::TwoObservationGateTests::test_plan_and_reader_use_two_replicas_on_every_event",
       "owner": "maintainer",
       "reason": "Renamed for event-specific replica counts. The selector and two-replica assertions outside ordinary pull requests remain."
+    },
+    {
+      "node": "tests/test_undo_single_step.py::test_second_undo_is_refused_not_a_redo",
+      "owner": "maintainer",
+      "reason": "The test is renamed to test_undo_walks_back_available_edits_then_refuses and keeps every assertion."
     },
     {
       "node": "tests/test_worker_write_timeouts.py::test_heartbeat_timeouts_cancel_only_near_lease_expiry",

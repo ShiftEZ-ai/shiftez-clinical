@@ -28,9 +28,9 @@ def test_include_ids_alone_selects_exactly_those_ids(h, collection, seed_key):
 
 
 @pytest.mark.parametrize("criteria", [
-    {"names": ["Alex Morgan"]},
-    {"where": {"q": "Alex Morgan"}},
-    {"where": {"filters": {"display_name": ["Alex Morgan"]}}},
+    {"names": ["Staff 01(test)"]},
+    {"where": {"q": "Staff 01(test)"}},
+    {"where": {"filters": {"display_name": ["Staff 01(test)"]}}},
 ])
 def test_include_ids_add_to_matches_and_exclude_ids_remove_from_union(h, criteria):
     first, second = h.seed["people"][:2]

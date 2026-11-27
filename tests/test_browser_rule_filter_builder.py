@@ -130,11 +130,11 @@ def test_filters_join_group_and_save_as_the_new_tree(browser, live_server, h, wi
         pick(page, rows.nth(1), 'Skill', ['Demo independent practice', 'Demo supervision'], op='Has all of')
         add_filter(who)
         expect(joiners.nth(1)).to_have_value('any')  # one joiner per level
-        pick(page, rows.nth(2), 'Person', ['Alex Morgan'])
+        pick(page, rows.nth(2), 'Person', ['Staff 01(test)'])
         assert operators(rows.nth(2)) == ['Is', 'Is not', 'Is empty', 'Is not empty']  # a person has one identity: no "has all of"
         # "and Taylor is not": the other joiner wraps the three "or" rows into a group, so the meaning stays clear.
         add_filter(who)
-        pick(page, rows.nth(3), 'Person', ['Taylor Noor'], op='Is not')
+        pick(page, rows.nth(3), 'Person', ['Staff 03(test)'], op='Is not')
         who.get_by_label('Joiner', exact=True).nth(2).select_option(label='And')
         group = who.locator('.cond-group')
         expect(group).to_have_count(1)
@@ -320,14 +320,14 @@ def test_reach_lists_group_people_by_their_filter_with_load_and_links(browser, l
         # Grouped by the filter that matched them (Taylor, "is not", never appears).
         expect(pop.locator('.picker-group')).to_have_count(2)
         expect(pop.locator('.picker-group').first).to_contain_text('Rank is any of')
-        expect(pop.locator('.picker-group').last).to_contain_text('Person is Alex Morgan')
-        expect(pop).not_to_contain_text('Taylor Noor')
-        alex = pop.get_by_role('option', name=re.compile('^Alex Morgan'))
+        expect(pop.locator('.picker-group').last).to_contain_text('Person is Staff 01(test)')
+        expect(pop).not_to_contain_text('Staff 03(test)')
+        alex = pop.get_by_role('option', name=re.compile('^Staff 01\\(test\\)'))
         expect(alex).to_contain_text('1 of 1, at the limit')  # once at each clinic: each clinic is counted on its own
         expect(alex.locator('.picker-meta .rc-load.at .rc-load-bar')).to_have_count(1)  # the bar beside the words
         expect(pop.locator('.picker-group', has_text='Recent')).to_have_count(0)  # fullest load first, never reordered
         expect(pop.locator('.picker-foot')).to_contain_text('2 at the limit')
-        pop.get_by_role('combobox').fill('jordan')
+        pop.get_by_role('combobox').fill('staff 02')
         expect(pop.get_by_role('option')).to_have_count(1)
         pop.get_by_role('combobox').fill('')
         shot(page, f'reach-people-{width}-{scheme}', full_page=False)
@@ -341,7 +341,7 @@ def test_reach_lists_group_people_by_their_filter_with_load_and_links(browser, l
         shot(page, f'reach-clinics-{width}-{scheme}', full_page=False)
         press_escape(page)
         people.click()
-        page.locator('.picker').get_by_role('option', name=re.compile('^Alex Morgan')).click()
+        page.locator('.picker').get_by_role('option', name=re.compile('^Staff 01\\(test\\)')).click()
         expect(page.get_by_role('dialog', name='Which rule applies?')).to_be_visible()
         page.keyboard.press('Escape')
         panel.locator('.rc-lp-title').first.get_by_role('button', name='2 people').click()
@@ -363,9 +363,9 @@ def test_the_table_marks_lines_counted_for_each(browser, live_server, h, width, 
         navigate(page, 'rules/duties_per_week')
         expect(page.locator(f'#main [data-row="{lines[1]["id"]}"] .cond-each-mark')).to_have_count(1)
         expect(page.locator(f'#main [data-row="{lines[0]["id"]}"] .cond-each-mark')).to_have_count(0)
-        # "not Taylor Noor" is muted, never struck through (strikethrough is an old value in the approval diff).
+        # "not Staff 03(test)" is muted, never struck through (strikethrough is an old value in the approval diff).
         except_pill = page.locator(f'#main [data-row="{lines[1]["id"]}"] .rp.except').first
-        expect(except_pill).to_have_text('not Taylor Noor')
+        expect(except_pill).to_have_text('not Staff 03(test)')
         expect(except_pill).to_have_css('text-decoration-line', 'none')  # retries: the row may re-render once
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
         shot(page, f'table-{width}-{scheme}', full_page=False)

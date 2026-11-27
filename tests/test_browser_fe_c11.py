@@ -32,24 +32,24 @@ def test_leaving_replace_after_mark_absent_keeps_the_absence(browser, live_serve
         pubs = []
         page.on('request', lambda r: pubs.extend(re.findall(r'/api/publications/([^/?]+)/pending-changes', r.url)))
         panel = open_session(page, h, later, person=2)
-        panel.get_by_role('button', name='Change Taylor Noor on this session').click()
-        page.get_by_role('menu', name='Change Taylor Noor').get_by_role('menuitem', name='Mark absent · Sick').click()
+        panel.get_by_role('button', name='Change Staff 03(test) on this session').click()
+        page.get_by_role('menu', name='Change Staff 03(test)').get_by_role('menuitem', name='Mark absent · Sick').click()
         expect(panel).to_contain_text('Nobody is left on this session.')
-        panel.get_by_role('button', name='Replace Taylor Noor…').click()
-        expect(panel.get_by_role('heading', name='Replace Taylor Noor')).to_be_visible()
+        panel.get_by_role('button', name='Replace Staff 03(test)…').click()
+        expect(panel.get_by_role('heading', name='Replace Staff 03(test)')).to_be_visible()
         expect(panel.locator('.wk-cands').get_by_role('button', name=re.compile('^Assign '))).not_to_have_count(0)
         assert staged(h, pubs[-1]) == [('absence', 'draft')]  # opening Replace records nothing and removes nothing
         panel.get_by_role('button', name=re.compile('Back to session')).click()
         state = panel.locator('.pc-state')
         expect(state).to_have_count(1)
-        expect(state).to_contain_text('Taylor Noor')
+        expect(state).to_contain_text('Staff 03(test)')
         expect(page.locator('#schedule-view .pchip.gap').first).to_contain_text('open place')
         assert staged(h, pubs[-1]) == [('absence', 'draft')]
         # Replace is still offered for the staged absence; Assign adds the cover and the absence stays.
-        panel.locator('.pc-foot').get_by_role('button', name='Replace Taylor Noor…').click()
+        panel.locator('.pc-foot').get_by_role('button', name='Replace Staff 03(test)…').click()
         panel.locator('.wk-cands').get_by_role('button', name=re.compile('^Assign ')).first.click()
         expect(panel.get_by_role('button', name=re.compile('^Send '))).to_be_visible()
-        expect(panel.locator('.change-summary')).to_contain_text('Taylor Noor · absent')
+        expect(panel.locator('.change-summary')).to_contain_text('Staff 03(test) · absent')
         assert staged(h, pubs[-1]) == [('absence', 'draft'), ('add', 'draft')]
         # SW3-A-29: with no urgent route there is nothing to choose: no lone "Routine" radio.
         assert not h.get('coordinator', f'/api/publications/{pubs[-1]}/pending-changes')['urgent_route']['active']
