@@ -350,6 +350,7 @@ def test_a_role_that_may_not_change_a_type_reads_it_only(browser, live_server, h
         expect(main.locator('.cellbar')).to_contain_text('Read only')
         page.keyboard.press('Control+d')
         expect(stage_bar(main)).to_be_hidden()
+        expect(main.get_by_role('button', name='Fill down')).to_have_count(0)
         if dark:
             bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
             assert bg not in ('rgb(255, 255, 255)', 'rgb(248, 250, 252)'), bg
@@ -392,6 +393,104 @@ def test_record_types_from_the_registry_and_the_fill_handle(browser, live_server
         page.evaluate("window.dispatchEvent(new PointerEvent('pointerup'))")
         expect(grid.locator('td.is-staged')).to_have_count(3)
         expect(stage_bar(main)).to_contain_text('3 changes in 3 rows')
+    finally:
+        context.close()
+
+
+def test_fill_down_by_single_clicks_stages_what_the_fill_handle_does(browser, live_server, h):
+    """WCAG 2.2 SC 2.5.7 (issue 1727): Fill down, a click on the pattern's last cell and one on the last row fill a
+    two-row pattern down with no pointer held down: the same staged cells as dragging the corner, read-only columns
+    left as they were, each step announced, and the save undone by its one Undo."""
+    service, _ = walk_in(h)
+    # Two of them also at a second clinic: five rows, and no filled date makes one record overlap another.
+    south = clinic(h, 'Walk-in South')
+    for pid in h.seed['people'][:2]:
+        permit(h, pid, south)
+    context, page = sign_in(browser, live_server, CRED)
+    try:
+        main, grid = open_sheet(page)
+        main.get_by_role('searchbox', name='Search rows').fill('Walk-in')
+        rows = grid.locator('tbody tr')
+        expect(rows).to_have_count(5)
+        headers = [t.strip() for t in grid.locator('thead th').all_inner_texts()]
+        until, clinic_col = headers.index('Until (included)'), headers.index('Clinic')
+        live = page.locator('#sr-live')
+        fill = main.locator('.cellbar').get_by_role('button', name='Fill down', exact=True)
+
+        def at(r, c):
+            return rows.nth(r).get_by_role('gridcell').nth(c)
+
+        def pattern():
+            for r, day in ((0, '15/12/2026'), (1, '20/12/2026')):
+                at(r, until).click()
+                page.keyboard.press('Enter')
+                box = main.get_by_label(re.compile(r'^Until \(included\) for '))
+                box.fill(day)
+                box.press('Enter')
+            expect(grid.locator('td.is-staged')).to_have_count(2)
+
+        def until_texts():
+            return [at(r, until).inner_text() for r in range(5)]
+
+        # The corner handle, dragged from the two-row pattern to the last row.
+        pattern()
+        at(0, until).click()
+        at(1, until).click(modifiers=['Shift'])
+        at(1, until).locator('.fill-handle').dispatch_event('pointerdown', {'button': 0, 'bubbles': True})
+        at(4, until).dispatch_event('pointerover', {'bubbles': True})
+        page.evaluate("window.dispatchEvent(new PointerEvent('pointerup'))")
+        expect(grid.locator('td.is-staged')).to_have_count(5)
+        dragged = until_texts()
+        assert [t.count('15 Dec 2026') + t.count('20 Dec 2026') for t in dragged] == [1] * 5
+        stage_bar(main).get_by_role('button', name=re.compile('Discard')).click()
+        stage_bar(main).get_by_role('button', name=re.compile('Discard all')).click()
+        expect(stage_bar(main)).to_be_hidden()
+
+        # The same fill with single clicks: Fill down, the pattern's last cell, the last row.
+        pattern()
+        at(0, until).click()
+        expect(fill).to_have_attribute('aria-pressed', 'false')
+        fill.click()
+        expect(fill).to_have_attribute('aria-pressed', 'true')
+        expect(main.locator('.cellbar')).to_contain_text('Choose the last cell of the pattern.')
+        expect(live).to_have_text('Choose the last cell of the pattern.')
+        at(1, until).click()
+        expect(live).to_have_text('Choose the last row to fill.')
+        at(1, until).click()
+        expect(live).to_have_text('Choose a row below the pattern.')
+        expect(grid.locator('td.is-staged')).to_have_count(2)
+        at(4, until).click()
+        expect(live).to_have_text('3 cells filled down · not saved yet')
+        expect(fill).to_have_attribute('aria-pressed', 'false')
+        expect(grid.locator('td.is-staged')).to_have_count(5)
+        assert until_texts() == dragged
+
+        # A pattern over a read-only column: only the editable column fills, and the count says so.
+        at(0, until).click()
+        fill.click()
+        at(0, clinic_col).click()
+        at(4, clinic_col).click()
+        expect(live).to_have_text('4 cells filled down · not saved yet')
+        for r in range(5):
+            expect(at(r, until)).to_contain_text('15 Dec 2026')
+            expect(at(r, clinic_col)).not_to_have_class(re.compile(r'\bis-staged\b'))
+        # Esc leaves Fill down without changing anything.
+        fill.click()
+        page.keyboard.press('Escape')
+        expect(live).to_have_text('Fill down cancelled.')
+        expect(fill).to_have_attribute('aria-pressed', 'false')
+
+        def ends():
+            return sorted(e['ends_on'] for e in h.get(CRED, '/api/catalogues')['eligibilities'] if e['service_id'] in (service['id'], south['id']))
+
+        assert ends() == ['2026-11-01'] * 5
+        stage_bar(main).get_by_role('button', name='Save 5 changes').click()
+        toast = page.locator('#toast-tray .toast').filter(has_text='changed')
+        expect(toast).to_contain_text('5 clinic permissions changed')
+        assert ends() == ['2026-12-16'] * 5
+        toast.get_by_role('button', name='Undo').click()
+        expect(page.locator('#toast-tray')).to_contain_text(re.compile('Undone|undone'))
+        assert ends() == ['2026-11-01'] * 5
     finally:
         context.close()
 
