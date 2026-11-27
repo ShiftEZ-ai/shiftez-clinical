@@ -13,17 +13,19 @@ from apps.api import models as m
 from apps.api import rate_limit
 from apps.api.db import transaction
 from packages.contracts.schemas import PolicyDefinition
+from .legacy_lead import historical_type
+from .test_backend_scale import measure
 from .test_performance_budget import python_budget
 from .test_rule_catalogue_api import approve, propose
 
 
-def department(h):
+def department(h, *, people_count=150):
     workspace = h.workspace('Synthetic bulk proposal fixture', start='2026-10-01', end='2026-11-01')
     with transaction(h.app.state.engine, write=True) as db:
         dept = db.get(m.Department, h.seed['department_id'])
         people = list(h.seed['people'])
         added = [m.Person(id=str(uuid4()), organisation_id=dept.organisation_id,
-                          display_name=f'Synthetic proposal person {n} (test)') for n in range(150 - len(people))]
+                          display_name=f'Synthetic proposal person {n} (test)') for n in range(people_count - len(people))]
         db.add_all(added)
         db.flush()
         db.add_all([m.Membership(department_id=dept.id, person_id=p.id, category_id=h.seed['category'],
@@ -41,6 +43,25 @@ def department(h):
             start=first + timedelta(days=n % 31), end=first + timedelta(days=n % 31, hours=4)) for n in range(500)])
     h.client('coordinator')
     return people
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_legacy_lead_conversion_preview_select_budget(scale_harness, backend):
+    h = scale_harness(backend)
+    people = department(h, people_count=163)
+    duty = historical_type(h, {'name': 'Historical lead duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 1}], 'lead': {'minimum': 1, 'maximum': 1}}})
+    client = h.client('coordinator')
+    response, metrics = measure(h, 'Team leads conversion preview', lambda: client.post(
+        '/api/rules/catalogue/team_leads/check', json={'legacy_effective_on': '2026-10-04'}))
+    assert response.status_code == 200, response.text
+    preview = response.json()
+    assert not preview['issues'] and not preview['duplicates']
+    assert [source['type_id'] for source in preview['legacy_lead_conversion']['sources']] == [duty['id']]
+    reached = {person['person_id'] for line in preview['reach_details']['lines'] for person in line['people']}
+    assert len(reached) == 163 and reached == set(people)
+    # 23: people.period_records reads each dated person table in its own period-bounded ORM statement.
+    assert 0 < metrics['sql']['SELECT'] <= 23, metrics['sql']
 
 
 def measured(label, operation, ceiling):

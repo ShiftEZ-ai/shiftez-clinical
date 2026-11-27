@@ -128,8 +128,9 @@ UI rules (detail in DESIGN.md, owned by the Design Lead):
 
 ## Critical changes (one independent review before landing)
 Only a critical change gets a review, meaning a change whose failure would be irreversible, silent or public. Everything else is opened and merged by the thread that made it once the required checks are green, with no second review or sign-off. Critical paths in this repository:
-- Data loss: `migrations/`, any command that deletes or rewrites data, retention, audit and history tables (`packages/contracts/audit.py`), backups and restore.
-- Data exposure: sign-in and permissions (`apps/api/auth.py`, `apps/api/oidc.py`, `apps/api/services/access.py`, `apps/api/services/workspace_access.py`, `apps/api/services/auth_configuration.py`, `PERMISSIONS` in `packages/contracts/schemas.py`); privacy and secrets (`apps/api/data_crypto.py`, read filtering of personal data); API response shapes and queries that change which personal data a role sees; exports, prints and outbound messages that carry personal data; new dependencies or install scripts; making anything public; network or access-control changes.
+- Data loss: `migrations/`, any command that deletes or rewrites data, retention, audit and history tables (`packages/contracts/audit.py`, `apps/api/services/audit_log.py`), backups and restore.
+- Data exposure: sign-in and permissions (`apps/api/auth.py`, `apps/api/oidc.py`, `apps/api/services/access.py`, `apps/api/services/workspace_access.py`, `apps/api/services/auth_configuration.py`, `PERMISSIONS` in `packages/contracts/schemas.py`); privacy and secrets (`apps/api/data_crypto.py`, read filtering of personal data); personal-data reads (`apps/api/services/availability.py`, `apps/api/services/home.py`); API response shapes and queries that change which personal data a role sees; exports, prints and outbound messages that carry personal data; new dependencies or install scripts; making anything public; network or access-control changes.
+- Approval separation: `apps/api/services/independence.py`, `apps/api/services/reviews.py` (who may approve, and when a second person is required).
 - Clinical safety rules: `packages/domain/conditions.py`, `packages/domain/rule_lines.py`, `packages/domain/solver_rules.py`, `packages/contracts/rule_catalogue.py`, `SAFETY_*` in `packages/contracts/schemas.py`. These become CI-only once the golden scenarios cover every safety rule kind and option (#743).
 - Merge gates: `.github/`, `ci/`, `tests/quarantine.json`, test-runner and build configuration, the scripts in `package.json`, and deleting, skipping or weakening a test.
 - Production: `infra/`, `apps/api/settings.py`, production deploys.
@@ -139,9 +140,26 @@ A critical change gets one independent review of the full PR diff (merge base to
 ## Data safety
 - Migrations only add; never edit, rename or delete a landed migration (`migrations/safety.py`,
   `tests/test_data_safety.py`). A release never erases production data.
-- Every production deploy takes a verified backup first; never copy one environment's data into another.
-- Publication and audit evidence is never deleted or rewritten. Deleting or rewriting data needs the owner's
-  separate, explicit yes.
+- Personal data includes staff directory and contact details, accounts and access records, rota assignments,
+  training, requests, availability, preferences, notification and calendar records, and feedback. Records without
+  an expiry are kept for scheduling and history. Archiving a draft preserves its contents.
+- The application offers administrators an audited leaver workflow. After the person is marked inactive,
+  `person.anonymise` clears identifying directory and account fields, private notes, copied delivery addresses
+  and unapplied staged payloads. It disables sign-in and revokes active sessions and calendar feeds. Rotas and
+  fairness keep a former-staff reference. See `apps/api/services/leavers.py` and `tests/test_leavers.py`.
+- Publication and audit evidence is never deleted or rewritten, with two exceptions: the leaver workflow removes
+  private leave reasons from availability history, and authentication events age out as described below.
+  Publications, audit records and definition history can retain personal references indefinitely. Deleting or
+  rewriting real data requires the owner's separate, explicit yes.
+- Worker cleanup deletes expired sessions after `EXPIRED_SESSION_DAYS`, sign-in attempts after the sign-in rate
+  window plus one day, rate-limit rows at their expiry and authentication events after
+  `password_login_audit_retention_days`. Mailbox consent expires at `oauth_flow_minutes`. Cleanup removes the flow
+  after use, expiry or loss of an active session or eligible access. It removes mailbox connections when access ends.
+- The worker clears screenshots at the contract's `screenshot_days` limit and staged edits at the department's
+  `bulk_staged_days` limit. The report or lifecycle record remains. Solver resume state expires under
+  `generation_resume_days`. See `apps/worker/main.py` for cleanup.
+- Take a verified backup before every production deploy. Backups age out under the rotation in
+  [Backup and restore](DELIVERY.md#backup-and-restore). Never copy one environment's data into another.
 
 ## Privacy
 - The repository is public under a proprietary licence (source-visible only; no open licence). Public text cannot be reliably erased:
