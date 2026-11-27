@@ -80,15 +80,14 @@
     },
     {
       "workflow": ".github/workflows/image.yml",
-      "runs": 35,
-      "first_run": 44529028327,
-      "last_run": 45955814837,
+      "runs": 3,
+      "first_run": 45957540552,
+      "last_run": 45959336727,
       "jobs": {
         "publish": {
-          "p95_minutes": 2.516667,
+          "p95_minutes": 1.9,
           "events": {
-            "push:main": {"runs": 25, "first_run": 45925744588, "last_run": 45955814837, "p95_seconds": 151, "max_seconds": 155, "max_run": 45931445022, "max_job": 140284773735},
-            "push:v": {"runs": 10, "first_run": 44529028327, "last_run": 45907816351, "p95_seconds": 84, "max_seconds": 84, "max_run": 45907816351, "max_job": 140208686304}
+            "push:main": {"runs": 3, "first_run": 45957540552, "last_run": 45959336727, "p95_seconds": 114, "max_seconds": 114, "max_run": 45959336727, "max_job": 140373164280}
           }
         }
       }

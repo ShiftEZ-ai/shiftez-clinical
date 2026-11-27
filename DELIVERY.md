@@ -171,11 +171,12 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Deploys
 
-- `image.yml` builds and publishes by digest. Use exact digests for deploys because out-of-order builds can move
-  the floating `dev` tag backwards. Workflows have no deploy access. The operator promotes the image and the
-  receiving system verifies its image ID and revision. Deployment commands live in the private runbook.
+- `image.yml` publishes the same scanned main build to the primary and public packages. Each commit has its own
+  image concurrency group. Use exact digests for deploys because out-of-order builds can move the floating `dev`
+  tag backwards. Workflows have no deploy access. The operator promotes the image and the receiving system
+  verifies its image ID and revision. Deployment commands live in the private runbook.
 - **Dev admission gate.** Admit green `main` commits with a scanned public image. Verify its digest and its
-  `image.yml` provenance for `refs/heads/main` before the dev slot starts it. The operator deploy record holds the
+  `image.yml` provenance offline, pinning the signer workflow and `refs/heads/main` before startup. The operator record holds the
   commit, digest, time and health result. Unattended deployment and its GitHub deployment row are tracked in
   issue 1279.
 - **Staging deploy gate.** Admit tagged candidates after verifying the scanned tag image and its exact digest.
@@ -214,13 +215,13 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 | Rule | Reason | Review date |
 | --- | --- | --- |
-| One attested artifact per commit | Main has a separate attested public build to omit private build metadata. Staging and production use the same scanned candidate digest, whose tag build has no provenance attestation. | 2026-12-23 |
+| One attested artifact across environments | Version tags build a scanned image separately from main. Staging and production use the same candidate digest. Signed tag provenance is tracked in issue 1339. | 2026-12-23 |
 | Automatic dev deployments and GitHub deployment audit | The operator records deploys in the deploy audit. Unattended delivery and the matching GitHub deployment record are open in issue 1279. | 2026-12-01 |
 | Staging rollback rehearsal and GitHub deployment audit | The deploy audit holds staging evidence. The staging gate still needs a recorded rehearsal and GitHub deployment evidence. | 2026-12-01 |
 | Scheduled production backups and quarterly restore evidence | Backup and drill tools exist. Production scheduling and a completed quarterly production drill await evidence. | 2026-12-01 |
 | Nightly full suite | The hosted schedule starts suites only when capacity allows. Separate nightly quarantine reporting is tracked in issue 1003. | 2026-12-01 |
 | First-attempt CI | The exception in Test policy remains until issue 1473 removes it. | 2026-12-01 |
-| CI job limits | Browser keeps its existing limit while artifact download stalls in issue 856 and the install budget in issue 1458 remain open. Include release-branch pushes in the next sample once they run. | 2026-12-01 |
+| CI job limits | Browser keeps its limit while artifact download stalls in issue 856 and the install budget in issue 1458 remain open. The image job keeps its limit pending more runs of the new scanner, including a tag push. Include release-branch pushes once they run. | 2026-12-01 |
 | PR feedback and merge-queue duration | The hosted timing sample exceeds the feedback and full-suite targets. | 2026-12-01 |
 | Formatter coverage | Hosted checks enforce whitespace, generated contracts, Python lint and TypeScript types. Language formatter checks are pending. | 2026-12-23 |
 | Required checks and independent verdict | The ruleset also requires the working-policy workflow. The publisher enforces the critical review before auto-merge. | 2026-12-23 |
@@ -242,11 +243,12 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   yes.
 - Every free GitHub security feature is on and stays on; nothing paid is enabled without the owner's yes.
 - Secrets never enter the repository, its variables or its environments.
-- Before publication, the public main image and every version-tag image go through the privacy scan. The scan
-  checks the config and all added layers. It verifies pinned base layer digests and hashes from installed wheel RECORDs. A finding in
-  package-manager metadata is allowed when its line is byte-identical to a line at the same path in the verified
-  base layers. The exception table binds historical wheel bytecode findings to a path, class and SHA-256.
-  New public builds disable wheel bytecode generation. Any other finding blocks the public push.
+- Every main and version-tag build scans one image archive before loading, tagging or pushing it. The scan uses
+  the Static checks public patterns on the config and all added layers and verifies the pinned base layer digests
+  and installed wheel RECORD hashes. Package metadata findings are allowed only on byte-identical lines at the
+  same path in verified base layers.
+  The exception table binds historical wheel bytecode findings to a path, class and SHA-256. Image builds disable
+  wheel bytecode generation. An unverified input or any other finding blocks publication.
 - Security reports go through GitHub's private vulnerability reporting.
 
 ## Speed and quality gates
