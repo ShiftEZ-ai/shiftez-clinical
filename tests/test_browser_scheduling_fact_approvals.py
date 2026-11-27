@@ -58,7 +58,7 @@ def test_coordinator_proposes_approver_approves_from_needs_you_then_undo(browser
         # The approver sees it in Needs you, with who proposed it, and opens it in Requests.
         approver, review = themed(browser, live_server, 'approver', width)
         need = review.locator('.home-needs li').filter(has_text='Person fact to approve')
-        expect(need).to_contain_text('Jordan Lee')
+        expect(need).to_contain_text('Staff 02(test)')
         expect(need).to_contain_text(SUMMARY)
         expect(need).to_contain_text('proposed by Coordinator · Demo')
         shot(review, 'needs-you', width)
@@ -113,10 +113,10 @@ def test_each_role_sees_and_decides_only_what_it_may(browser, live_server, h, ro
             expect(facts).to_have_count(0)
             return
         expect(facts).to_have_count(1 if role == 'programme_lead' else 2)
-        first = facts.filter(has_text='Alex Morgan')
+        first = facts.filter(has_text='Staff 01(test)')
         expect(first).to_contain_text('proposed by Coordinator · Demo')
         if role == 'programme_lead':
-            expect(cards.filter(has_text='Taylor Noor')).to_have_count(0)
+            expect(cards.filter(has_text='Staff 03(test)')).to_have_count(0)
         decides = role == 'approver'
         expect(first.get_by_role('button', name='Approve', exact=True)).to_have_count(1 if decides else 0)
         first.locator('.request-title strong, .dt-card-title').first.click()
@@ -142,8 +142,8 @@ def test_each_role_sees_and_decides_only_what_it_may(browser, live_server, h, ro
             assert h.get('auditor', f'/api/people/{member}/scheduling-facts')['history'][0]['status'] == 'declined'
             toolbar(page, 'Saved views').get_by_role('menuitemradio', name=re.compile('^Waiting for approval')).click()
             expect(facts).to_have_count(1)
-            expect(facts).to_contain_text('Taylor Noor')
-            expect(facts.filter(has_text='Alex Morgan')).to_have_count(0)
+            expect(facts).to_contain_text('Staff 03(test)')
+            expect(facts.filter(has_text='Staff 01(test)')).to_have_count(0)
         if width == 390:
             no_horizontal_scroll(page)
         assert not errors, errors

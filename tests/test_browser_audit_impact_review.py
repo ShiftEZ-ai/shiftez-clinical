@@ -467,7 +467,7 @@ def test_contact_only_preview_explains_unchanged_scheduling_without_an_empty_fin
         dialog = page.get_by_role('dialog', name='Edit person')
         expect(dialog.get_by_text('Configuration checked.', exact=True)).to_be_visible()
         with page.expect_response(lambda r: r.url.endswith('/api/catalogue/preview') and r.request.method == 'POST') as preview:
-            dialog.get_by_label('Hospital phone', exact=True).fill('+966 11 000 1234')
+            dialog.get_by_label('Work phone', exact=True).fill('+966 11 000 1234')
         assert preview.value.status == 200
         assert preview.value.json()['proposed']['work_phone'] == '+966 11 000 1234'
         impact = dialog.locator('section').filter(has=page.get_by_role('heading', name='Review configuration consequences', exact=True))

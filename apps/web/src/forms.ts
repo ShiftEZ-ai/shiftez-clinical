@@ -252,7 +252,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
     let value:()=>Record<string,unknown>=()=>({name:name.input.value,description:description.input.value,starts_on:start.input.value,ends_on:end.input.value||null,active:active.input.checked});
     if(kind==='people'){
       const title=field('Job title','text',row?.title||'',{maxlength:160}),section=field('Directory section','text',row?.directory_section||'',{maxlength:160});
-      const phone=field('Hospital phone','tel',row?.work_phone||'',{maxlength:80}),extension=field('Office extension','text',row?.work_extension||'',{maxlength:80});
+      const phone=field('Work phone','tel',row?.work_phone||'',{maxlength:80}),extension=field('Office extension','text',row?.work_extension||'',{maxlength:80});
       const number=field('Employee or student number','text',row?.staff_number||'',{maxlength:80}),pager=field('Pager number','text',row?.pager||'',{maxlength:40}),order=field('Directory order','number',row?.directory_order??1000,{min:0,max:100000,required:true});
       const initialPhone=phone.input.value,initialExtension=extension.input.value,initialPager=pager.input.value;
       const code=field('Short code','text',row?.short_code||'',{maxlength:6,pattern:'[A-Z0-9]{0,6}',autocomplete:'off'});
@@ -313,7 +313,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       const person=personField(row?.person_id||''),programme=select('Programme',options(all(ctx,'programmes')),row?.programme_id||'');
       // An external rotator: a trainee of another programme placed here, managed by this department's programme lead.
       const external=check('External rotator',row?.external===true,'A trainee from another programme, placed here for these dates.');
-      const home=field('Home programme','text',row?.home_programme||'',{maxlength:160,placeholder:'e.g. Internal medicine, another hospital'});
+      const home=field('Home programme','text',row?.home_programme||'',{maxlength:160,placeholder:'e.g. Internal medicine'});
       const syncExternal=()=>{home.wrap.hidden=!external.input.checked;};external.input.addEventListener('change',syncExternal);syncExternal();
       programme.wrap.classList.add('span-2');end.input.required=true;form.append(person.wrap,programme.wrap,dates,external.wrap,home.wrap);
       value=()=>({person_id:person.get(),programme_id:programme.input.value,starts_on:start.input.value,ends_on:end.input.value,

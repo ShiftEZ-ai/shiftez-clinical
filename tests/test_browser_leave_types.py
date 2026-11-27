@@ -157,7 +157,7 @@ def test_coordinator_records_leave_with_a_type_and_the_timeline_shows_it(browser
         navigate(page, 'requests')
         whole_list(page)  # the whole list, not the decider's Waiting for you
         dialog = new_request(page, 'Leave or absence')
-        pick(dialog, 'People', ['Alex Morgan'])
+        pick(dialog, 'People', ['Staff 01(test)'])
         kind = dialog.get_by_label('Record as', exact=True)
         typ = dialog.get_by_label('Type', exact=True)
         expect(typ).to_be_visible()
@@ -186,8 +186,8 @@ def test_coordinator_records_leave_with_a_type_and_the_timeline_shows_it(browser
         context, page = sign_in(browser, live_server, 'coordinator')
         try:
             navigate(page, 'schedule/people/2026-10-04?edit=none')
-            alex_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Alex Morgan'))
-            jordan_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Jordan Lee'))
+            alex_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Staff 01(test)'))
+            jordan_row = page.locator('.pg-row').filter(has=page.get_by_role('rowheader', name='Staff 02(test)'))
             expect(alex_row.locator(f'.pg-cell.leave[data-tip="{blocking}"]')).to_have_count(1)
             expect(jordan_row.locator(f'.pg-cell.leave-soft[data-tip="{soft}"]')).to_have_count(1)
             expect(jordan_row.locator('.pg-cell.leave')).to_have_count(0)  # never shown as blocking

@@ -89,7 +89,7 @@ def eligibilities(h, person=None):
 @seeded
 def permission_overlap(h):
     alex, clinic = h.seed['people'][0], h.seed['services'][0]
-    # Every permission ends on 1 Nov; Alex has a later one at the first clinic from 1 Dec.
+    # Every permission ends on 1 Nov; Staff 01 has a later one at the first clinic from 1 Dec.
     for r in eligibilities(h):
         ended = h.command('credentialer', 'eligibility.end', {'ends_on': '2026-11-01', 'reason': 'Test setup'}, r['id'], r['revision'])['record']
         if r['person_id'] == alex and r['service_id'] == clinic:
@@ -189,7 +189,7 @@ def test_held_back_rows_open_results_and_resolve_reopens_just_them(browser, live
         panel(page).get_by_role('button', name='Group', exact=True).click()
         page.get_by_role('dialog', name='Group').get_by_role('menuitemradio', name='Person', exact=True).click()
         expect(panel(page).locator('.dt-group')).to_have_count(3)
-        expect(panel(page).locator('.dt-group').first).to_contain_text(re.compile('Alex Morgan|Jordan Lee|Taylor Noor'))
+        expect(panel(page).locator('.dt-group').first).to_contain_text(re.compile('Staff 01\\(test\\)|Staff 02\\(test\\)|Staff 03\\(test\\)'))
         panel(page).get_by_role('button', name='Resolve 5').click()
         expect(panel(page).get_by_role('heading', name='Preview — nothing saved yet')).to_be_visible()
         expect(panel(page).locator('.bulk-sum')).to_have_text(re.compile(r'= 5$'))
@@ -324,7 +324,7 @@ def test_their_leave_pages_on_the_server_and_selects_all_matching_by_count(brows
     errors = errors_of(page)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
         pop = toolbar(page.locator('#main'), 'Filter')
@@ -402,7 +402,7 @@ def test_their_leave_keeps_rows_shown_with_show_more_after_a_save(browser, live_
     held = []
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
         pop = toolbar(page.locator('#main'), 'Filter')
@@ -453,19 +453,19 @@ def test_stale_preview_asks_to_preview_again(browser, live_server, h):
 
 
 def test_paste_names_lists_unmatched_and_ambiguous(browser, live_server, h):
-    h.configure('people', {'display_name': 'Taylor Noor', 'active': True})  # a second Taylor Noor: ambiguous
+    h.configure('people', {'display_name': 'Staff 03(test)', 'active': True})  # a second Staff 03(test): ambiguous
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     try:
         navigate(page, 'people')
         caret(page.locator('#main')).get_by_role('menuitem', name='Paste names or codes…').click()
         dialog = page.get_by_role('dialog', name='Paste names or codes')
-        dialog.get_by_label('Names or codes', exact=True).fill('Alex Morgan\nTaylor Noor\nNobody Here')
+        dialog.get_by_label('Names or codes', exact=True).fill('Staff 01(test)\nStaff 03(test)\nNobody Here')
         result = dialog.locator('.bulk-paste-result')
         expect(result).to_contain_text('1 matched')
         expect(result).to_contain_text('1 matches more than one')
         expect(result).to_contain_text('1 not found')
         expect(result.locator('.bulk-paste-none')).to_contain_text('Nobody Here')
-        result.get_by_label('Taylor Noor', exact=True).select_option(index=1)
+        result.get_by_label('Staff 03(test)', exact=True).select_option(index=1)
         dialog.get_by_role('button', name='Select 2', exact=True).click()
         expect(bar(page)).to_contain_text('2')
         # Nothing found: Select stays off and says why.
@@ -619,7 +619,7 @@ def test_apply_disarms_after_back_results_close_without_unsaved_and_child_list_s
         row.locator('.date-text').fill('31 Jan 2027')
         row.locator('.date-text').press('Tab')
         submit(page)
-        # Five open-ended permissions would shorten (kept to resolve), Taylor's extends: Apply is no longer armed.
+        # Five open-ended permissions would shorten (kept to resolve), Staff 03's extends: Apply is no longer armed.
         apply = panel(page).locator('.bulk-foot .button.primary')
         expect(apply).to_have_text(re.compile(r'^Apply ready rows'))
         apply.click()
@@ -735,7 +735,7 @@ def test_people_sheet_opened_directly_reads_only_for_a_role_that_may_not_change_
     try:
         main, grid = people_sheet(page)
         expect(grid).to_have_attribute('aria-readonly', 'true')
-        expect(grid.locator('tbody tr').filter(has_text='Alex Morgan')).to_have_count(1)
+        expect(grid.locator('tbody tr').filter(has_text='Staff 01(test)')).to_have_count(1)
         assert not errors, errors
     finally:
         context.close()
@@ -801,9 +801,9 @@ def test_saved_rule_lines_change_proposes_a_version_for_independent_approval(bro
 
 
 def their_leave(page):
-    """People › Alex Morgan › Show their… › Leave, every status."""
+    """People › Staff 01(test) › Show their… › Leave, every status."""
     navigate(page, 'people')
-    page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+    page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
     bar(page).get_by_role('button', name='Show their…').click()
     page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
     pop = toolbar(page.locator('#main'), 'Filter')
@@ -858,7 +858,7 @@ def test_leave_dates_and_record_leave_take_a_date_and_a_time(browser, live_serve
     errors = errors_of(page)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Change…').click()
         row = change_row(page, 'Record leave')
         row.get_by_label('From', exact=True).fill('10/03/2027')
@@ -903,7 +903,7 @@ def test_condition_and_paste_select_every_match_beyond_the_loaded_page(browser, 
         main = page.locator('#main')
         caret(main).get_by_role('menuitem', name='Select by condition…').click()
         pop = page.get_by_role('dialog', name='Select by condition')
-        condition(pop, 'Person', ['Alex Morgan'])
+        condition(pop, 'Person', ['Staff 01(test)'])
         expect(pop.locator('.bulk-condition-count')).to_contain_text('210')
         pop.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('210')
@@ -911,7 +911,7 @@ def test_condition_and_paste_select_every_match_beyond_the_loaded_page(browser, 
         expect(bar(page)).to_be_hidden()
         caret(main).get_by_role('menuitem', name='Paste names or codes…').click()
         dialog = page.get_by_role('dialog', name='Paste names or codes')
-        dialog.get_by_label('Names or codes', exact=True).fill('Alex Morgan')
+        dialog.get_by_label('Names or codes', exact=True).fill('Staff 01(test)')
         expect(dialog.locator('.bulk-paste-result')).to_contain_text('210 matched')
         dialog.get_by_role('button', name='Select 210', exact=True).click()
         expect(bar(page)).to_contain_text('210')
@@ -940,7 +940,7 @@ def test_a_server_selection_with_no_loaded_rows_still_offers_its_actions(browser
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     errors = errors_of(page)
 
-    # The first page the list loads leaves out Jordan's records (they are on a later page), whatever the server order.
+    # The first page the list loads leaves out Staff 02's records (they are on a later page), whatever the server order.
     def first_page(route):
         body = route.request.post_data_json or {}
         response = route_fetch(route)
@@ -951,18 +951,18 @@ def test_a_server_selection_with_no_loaded_rows_still_offers_its_actions(browser
     page.route('**/api/bulk/rows', first_page)
     try:
         navigate(page, 'people')
-        for name in ('Alex Morgan', 'Jordan Lee'):
+        for name in ('Staff 01(test)', 'Staff 02(test)'):
             page.locator('#main tr', has_text=name).locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
         pop = toolbar(page.locator('#main'), 'Filter')
         pop.get_by_role('button', name='Clear all filters', exact=True).click()
         close_popover(page)
-        expect(page.locator('#main tr', has_text='Jordan Lee')).to_have_count(0)
+        expect(page.locator('#main tr', has_text='Staff 02(test)')).to_have_count(0)
         main = page.locator('#main')
         caret(main).get_by_role('menuitem', name='Select by condition…').click()
         pop = page.get_by_role('dialog', name='Select by condition')
-        condition(pop, 'Person', ['Jordan Lee'])
+        condition(pop, 'Person', ['Staff 02(test)'])
         expect(pop.locator('.bulk-condition-count')).to_contain_text('3')
         pop.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('3')
@@ -1031,7 +1031,7 @@ def test_add_to_programme_sends_the_registry_action_and_its_inputs(browser, live
     page.on('request', lambda r: sent.append(r.post_data_json) if r.method == 'POST' and '/api/commands' in r.url and (r.post_data_json or {}).get('kind') == 'bulk.apply' else None)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Change…').click()
         row = change_row(page, 'Add to programme')
         row.get_by_label('Programme', exact=True).select_option(label='Bulk form programme')
@@ -1339,8 +1339,8 @@ def record_enabled(button):
 
 
 def test_paste_names_a_late_reply_for_earlier_names_never_selects_them(browser, live_server, h):
-    """Review (5th) #3: Alex Morgan's matching reply arrives after Jordan Lee was typed: it never enables Select nor
-    selects Alex; only Jordan's own reply counts."""
+    """Review (5th) #3: Staff 01(test)'s matching reply arrives after Staff 02(test) was typed: it never enables Select nor
+    selects Staff 01; only Staff 02's own reply counts."""
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     held = []
     try:
@@ -1352,10 +1352,10 @@ def test_paste_names_a_late_reply_for_earlier_names_never_selects_them(browser, 
         record_enabled(pick)
         page.route('**/api/bulk/resolve', lambda route: held.append(route))
         with page.expect_request('**/api/bulk/resolve'):
-            names.fill('Alex Morgan')
+            names.fill('Staff 01(test)')
         with page.expect_request('**/api/bulk/resolve'):
-            names.fill('Jordan Lee')
-            held[0].continue_()  # Alex's answer, while Jordan waits to be read
+            names.fill('Staff 02(test)')
+            held[0].continue_()  # Staff 01's answer, while Staff 02 waits to be read
         expect(pick).to_be_disabled()
         assert len(held) == 2, held
         assert page.evaluate('window.__enabled') == [], page.evaluate('window.__enabled')
@@ -1363,14 +1363,14 @@ def test_paste_names_a_late_reply_for_earlier_names_never_selects_them(browser, 
         page.unroute('**/api/bulk/resolve')
         expect(dialog.locator('.bulk-paste-result')).to_contain_text('1 matched')
         pick.click()
-        expect(page.locator('#main tr', has_text='Jordan Lee').locator('.bulk-check')).to_be_checked()
-        expect(page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check')).not_to_be_checked()
+        expect(page.locator('#main tr', has_text='Staff 02(test)').locator('.bulk-check')).to_be_checked()
+        expect(page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check')).not_to_be_checked()
     finally:
         context.close()
 
 
 def test_select_by_condition_stays_within_the_lists_own_conditions(browser, live_server, h):
-    """Review (5th) #4: on a paged child list filtered "Status is not Ended", Select by condition Person = Alex takes
+    """Review (5th) #4: on a paged child list filtered "Status is not Ended", Select by condition Person = Staff 01 takes
     the 210 future records the list holds, never the ended one the list's own condition hides."""
     alex = h.seed['people'][0]
     kind = h.get('admin', '/api/catalogues')['leave_types'][0]['id']
@@ -1388,7 +1388,7 @@ def test_select_by_condition_stays_within_the_lists_own_conditions(browser, live
         expect(page.locator('.bulk-more')).to_contain_text('Showing 200 of 210')
         caret(main).get_by_role('menuitem', name='Select by condition…').click()
         pop = page.get_by_role('dialog', name='Select by condition')
-        condition(pop, 'Person', ['Alex Morgan'])
+        condition(pop, 'Person', ['Staff 01(test)'])
         expect(pop.locator('.bulk-condition-count')).to_contain_text(re.compile(r'^210 '))
         pop.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('210')
@@ -1399,24 +1399,24 @@ def test_select_by_condition_stays_within_the_lists_own_conditions(browser, live
 
 def test_people_as_of_day_ends_with_the_session(browser, live_server, h):
     """Review (5th) #13: A reads People as of 2000 (no ranks then) and signs out; B signing in in the same tab reads
-    People today (Alex's current rank)."""
+    People today (Staff 01's current rank)."""
     people = {p['id']: p for p in h.get('admin', '/api/catalogues')['people']}
     ranks = {c['id']: c['name'] for c in h.get('admin', '/api/catalogues')['categories']}
     rank = ranks[people[h.seed['people'][0]]['current_category_ids'][0]]
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     try:
         navigate(page, 'people')
-        alex = page.locator('#main tr', has_text='Alex Morgan')
+        alex = page.locator('#main tr', has_text='Staff 01(test)')
         expect(alex).to_contain_text(rank)
         pop = toolbar(page.locator('#main'), 'Filter')
         day = pop.locator('.dt-as-of input')
         day.fill('01/01/2000')
         page.keyboard.press('Tab')
         close_popover(page)
-        expect(page.locator('#main tr', has_text='Alex Morgan')).not_to_contain_text(rank)
+        expect(page.locator('#main tr', has_text='Staff 01(test)')).not_to_contain_text(rank)
         switch_account(page, 'admin')
         navigate(page, 'people')
-        expect(page.locator('#main tr', has_text='Alex Morgan')).to_contain_text(rank)
+        expect(page.locator('#main tr', has_text='Staff 01(test)')).to_contain_text(rank)
     finally:
         context.close()
 
@@ -1439,7 +1439,7 @@ def test_a_child_list_reads_its_kept_as_of_day_after_navigating_away_and_back(br
     page.on('request', lambda r: sent.append(r.post_data_json) if r.method == 'POST' and '/api/bulk/rows' in r.url else None)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
         current_only(page)
@@ -1476,8 +1476,8 @@ def test_a_child_list_reads_its_kept_as_of_day_after_navigating_away_and_back(br
 
 
 def test_ticks_and_unticks_after_select_by_condition_overlay_the_server_selection(browser, live_server, h):
-    """Review (5fd5) #3: Leave of Alex (195) and Jordan (15), paged at 200. Select by condition Person is Alex (195,
-    the server's selection); ticking one of Jordan's rows adds it, unticking one of Alex's further down excludes
+    """Review (5fd5) #3: Leave of Staff 01 (195) and Staff 02 (15), paged at 200. Select by condition Person is Staff 01 (195,
+    the server's selection); ticking one of Staff 02's rows adds it, unticking one of Staff 01's further down excludes
     only that one: 195 go to Preview and Apply changes exactly those."""
     alex, jordan = h.seed['people'][0], h.seed['people'][1]
     kinds = h.get('admin', '/api/catalogues')['leave_types']
@@ -1490,7 +1490,7 @@ def test_ticks_and_unticks_after_select_by_condition_overlay_the_server_selectio
     errors = errors_of(page)
     try:
         navigate(page, 'people')
-        for name in ('Alex Morgan', 'Jordan Lee'):
+        for name in ('Staff 01(test)', 'Staff 02(test)'):
             page.locator('#main tr', has_text=name).locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Leave')).click()
@@ -1501,21 +1501,21 @@ def test_ticks_and_unticks_after_select_by_condition_overlay_the_server_selectio
         expect(page.locator('.bulk-more')).to_contain_text('Showing 200 of 210')
         caret(main).get_by_role('menuitem', name='Select by condition…').click()
         pop = page.get_by_role('dialog', name='Select by condition')
-        condition(pop, 'Person', ['Alex Morgan'])
+        condition(pop, 'Person', ['Staff 01(test)'])
         expect(pop.locator('.bulk-condition-count')).to_contain_text('195')
         pop.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('195')
-        # Jordan's rows first (sorted on the rows loaded): tick one of them.
+        # Staff 02's rows first (sorted on the rows loaded): tick one of them.
         sort = toolbar(main, 'Sort')
         sort.get_by_role('menuitemradio', name='Person', exact=True).click()
         sort_direction(main, 'Descending')
         close_popover(page)
-        added = main.locator('tbody tr', has_text='Jordan Lee').first
+        added = main.locator('tbody tr', has_text='Staff 02(test)').first
         added_id = added.get_attribute('data-row')
         added.locator('.bulk-check').check()
         expect(bar(page)).to_contain_text('196')
-        # Further down the loaded rows (one page, the server's): untick one of Alex's.
-        removed = main.locator('tbody tr', has_text='Alex Morgan').first
+        # Further down the loaded rows (one page, the server's): untick one of Staff 01's.
+        removed = main.locator('tbody tr', has_text='Staff 01(test)').first
         removed_id = removed.get_attribute('data-row')
         removed.locator('.bulk-check').uncheck()
         expect(bar(page)).to_contain_text('195')
@@ -1596,7 +1596,7 @@ def test_show_their_opens_the_child_list_on_the_parent_lists_as_of_day(browser, 
         expect(main.locator('tbody tr', has_text='November clinic')).to_have_count(0)
         navigate(page, 'people')
         as_of(main, '15/11/2026')
-        main.locator('tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        main.locator('tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         # The child list's read is awaited (the rows can be drawn before the assertion would see the request).
         with page.expect_request(lambda r: r.method == 'POST' and '/api/bulk/rows' in r.url) as sent:
@@ -1636,7 +1636,7 @@ def test_a_server_selection_holds_after_show_more_loads_the_last_page(browser, l
         else:
             caret(main).get_by_role('menuitem', name='Select by condition…').click()
             pop = page.get_by_role('dialog', name='Select by condition')
-            condition(pop, 'Person', ['Alex Morgan'])
+            condition(pop, 'Person', ['Staff 01(test)'])
             expect(pop.locator('.bulk-condition-count')).to_contain_text('210')
             pop.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('210')
@@ -1690,7 +1690,7 @@ def test_a_saved_child_view_day_gives_way_to_the_parent_lists_day(browser, live_
         page.reload()
         navigate(page, 'people')
         as_of(main, '15/11/2026')
-        main.locator('tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        main.locator('tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         show_their_permissions(page)
         expect(main.locator('tbody tr', has_text='November clinic')).to_have_count(1)
@@ -1892,13 +1892,13 @@ def test_set_a_rule_number_waits_for_unsaved_edits_of_that_rule(browser, live_se
         page.evaluate("location.hash='people'")  # leaving asks first; the edits stay as a draft either way
         page.get_by_role('dialog', name='Leave this page?').get_by_role('button', name='Go to People', exact=True).click()
         expect_loaded(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='More actions').click()
         page.get_by_role('menu', name='More actions').get_by_role('menuitem', name='Set a rule number…').click()
         dialog = page.get_by_role('dialog', name=re.compile('^Set a rule number'))
         dialog.get_by_label('Rule', exact=True).select_option(label='Workload limit')
         dialog.get_by_label('Maximum', exact=True).fill('7')
-        dialog.get_by_label('Reason', exact=True).fill('Alex: at most 7')
+        dialog.get_by_label('Reason', exact=True).fill('Staff 01: at most 7')
         dialog.get_by_role('button', name='Preview', exact=True).click()
         expect(dialog).to_contain_text('unsaved edits on the Rules page')
         assert not [p for p in h.get('admin', '/api/catalogues')['policies'] if p.get('status') == 'proposed']
@@ -1932,7 +1932,7 @@ def test_show_their_workflow_records_open_on_the_collections_own_statuses(browse
     errors = errors_of(page)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^' + label)).click()
         main = page.locator('#main')
@@ -2010,7 +2010,7 @@ def test_change_proposes_selects_the_lines_of_the_rule_in_force_only(browser, li
 
 
 def two_peoples_leave(h):
-    """Leave of Alex (195) and Jordan (15) in 2027, one hour each."""
+    """Leave of Staff 01 (195) and Staff 02 (15) in 2027, one hour each."""
     alex, jordan = h.seed['people'][0], h.seed['people'][1]
     kinds = h.get('admin', '/api/catalogues')['leave_types']
     for who, count in ((alex, 195), (jordan, 15)):
@@ -2037,17 +2037,17 @@ def every_status(page):
 
 
 def test_a_child_lists_selection_belongs_to_its_parents(browser, live_server, h):
-    """Pre-review #5: a leave record ticked among Alex's is not still selected (hidden) in Jordan's leave."""
+    """Pre-review #5: a leave record ticked among Staff 01's is not still selected (hidden) in Staff 02's leave."""
     two_peoples_leave(h)
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     errors = errors_of(page)
     try:
-        their_leave_of(page, 'Alex Morgan')
+        their_leave_of(page, 'Staff 01(test)')
         page.locator('#main tbody tr[data-row]').first.locator('.bulk-check').check()
         expect(bar(page)).to_contain_text('1')
         navigate(page, 'people')
         caret(page.locator('#main')).get_by_role('menuitem', name='Select none').click()
-        their_leave_of(page, 'Jordan Lee')
+        their_leave_of(page, 'Staff 02(test)')
         expect(page.locator('#main tbody tr[data-row]').first).to_be_visible()
         expect(bar(page)).to_be_hidden()
         assert not errors, errors
@@ -2056,20 +2056,20 @@ def test_a_child_lists_selection_belongs_to_its_parents(browser, live_server, h)
 
 
 def test_invert_after_select_by_condition_is_every_other_match(browser, live_server, h):
-    """Pre-review #6: Alex's 195 selected by condition among 210 (paged at 200); Invert selects Jordan's 15."""
+    """Pre-review #6: Staff 01's 195 selected by condition among 210 (paged at 200); Invert selects Staff 02's 15."""
     from .test_browser_bulk_sheet import no_light_path
     no_light_path(h)  # 15 would apply at once: Preview shows what goes
     alex, jordan, kinds = two_peoples_leave(h)
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     errors = errors_of(page)
     try:
-        their_leave_of(page, 'Alex Morgan', 'Jordan Lee')
+        their_leave_of(page, 'Staff 01(test)', 'Staff 02(test)')
         main = page.locator('#main')
         every_status(page)
         expect(page.locator('.bulk-more')).to_contain_text('Showing 200 of 210')
         caret(main).get_by_role('menuitem', name='Select by condition…').click()
         pop = page.get_by_role('dialog', name='Select by condition')
-        condition(pop, 'Person', ['Alex Morgan'])
+        condition(pop, 'Person', ['Staff 01(test)'])
         expect(pop.locator('.bulk-condition-count')).to_contain_text('195')
         pop.get_by_role('button', name='Select', exact=True).click()
         expect(bar(page)).to_contain_text('195')
@@ -2191,8 +2191,8 @@ def test_preview_shows_times_in_the_department_timezone(browser, live_server, h)
 
 
 def test_select_all_matching_keeps_the_records_selected_before(browser, live_server, h):
-    """Pre-review 2 #1: one of Jordan's leave ticked, then a search for Alex (210 matches, 200 loaded) and Select all
-    210 matching: the selection is the 210 plus Jordan's one (211), and Apply changes exactly those."""
+    """Pre-review 2 #1: one of Staff 02's leave ticked, then a search for Staff 01 (210 matches, 200 loaded) and Select all
+    210 matching: the selection is the 210 plus Staff 02's one (211), and Apply changes exactly those."""
     from .test_browser_bulk_sheet import no_light_path
     no_light_path(h)
     alex, jordan = h.seed['people'][0], h.seed['people'][1]
@@ -2203,16 +2203,16 @@ def test_select_all_matching_keeps_the_records_selected_before(browser, live_ser
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     errors = errors_of(page)
     try:
-        their_leave_of(page, 'Alex Morgan', 'Jordan Lee')
+        their_leave_of(page, 'Staff 01(test)', 'Staff 02(test)')
         every_status(page)
         main = page.locator('#main')
         search = main.get_by_role('searchbox').first
-        search.fill('Jordan')
+        search.fill('Staff 02')
         expect(main.locator('tbody tr[data-row]')).to_have_count(5)
         kept = main.locator('tbody tr[data-row]').first
         kept_id = kept.get_attribute('data-row')
         kept.locator('.bulk-check').check()
-        search.fill('Alex')
+        search.fill('Staff 01')
         expect(page.locator('.bulk-more')).to_contain_text('Showing 200 of 210')
         page.get_by_role('checkbox', name=re.compile('^Select all .* shown')).check()
         page.locator('.dt-select-banner').get_by_role('button', name='Select all 210 matching').click()
@@ -2240,7 +2240,7 @@ def test_an_older_fix_recheck_never_overwrites_a_newer_choice(browser, live_serv
     held = []
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Clinic permissions')).click()
         current_only(page)
@@ -2319,7 +2319,7 @@ def test_an_older_preview_reply_never_replaces_a_newer_one(browser, live_server,
     held = []
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Clinic permissions')).click()
         current_only(page)
@@ -2537,8 +2537,8 @@ def test_a_rule_stays_read_only_on_any_page_while_its_proposal_is_out(browser, l
 
 
 def test_narrowing_a_child_lists_parents_keeps_only_their_selected_rows(browser, live_server, h):
-    """Review (407f) #2: Alex's and Jordan's leave both ticked, then Alex removed from the parents: the list is Jordan's
-    and the selection is Jordan's ticked row only (Change sends nothing of Alex's)."""
+    """Review (407f) #2: Staff 01's and Staff 02's leave both ticked, then Staff 01 removed from the parents: the list is Staff 02's
+    and the selection is Staff 02's ticked row only (Change sends nothing of Staff 01's)."""
     alex, jordan = h.seed['people'][0], h.seed['people'][1]
     kinds = h.get('admin', '/api/catalogues')['leave_types']
     for who, day in ((alex, '2027-04-01'), (jordan, '2027-04-02')):
@@ -2550,17 +2550,17 @@ def test_narrowing_a_child_lists_parents_keeps_only_their_selected_rows(browser,
     sent = []
     page.on('request', lambda r: sent.append(r.post_data_json) if r.method == 'POST' and '/api/commands/preview' in r.url else None)
     try:
-        their_leave_of(page, 'Alex Morgan', 'Jordan Lee')
+        their_leave_of(page, 'Staff 01(test)', 'Staff 02(test)')
         every_status(page)
         main = page.locator('#main')
         rows = {who: main.locator('tbody tr', has_text=day).filter(has_text=name)
-                for who, day, name in ((alex, '1 Apr 2027', 'Alex'), (jordan, '2 Apr 2027', 'Jordan'))}
+                for who, day, name in ((alex, '1 Apr 2027', 'Staff 01'), (jordan, '2 Apr 2027', 'Staff 02'))}
         ids = {who: r.get_attribute('data-row') for who, r in rows.items()}
         for r in rows.values():
             r.locator('.bulk-check').check()
         expect(bar(page)).to_contain_text('2')
         page.get_by_role('button', name=re.compile(r'^For 2 selected')).click()
-        page.get_by_role('menu', name='Parents').get_by_role('menuitem', name=re.compile('^Remove Alex')).click()
+        page.get_by_role('menu', name='Parents').get_by_role('menuitem', name=re.compile('^Remove Staff 01')).click()
         expect(page.get_by_role('button', name=re.compile(r'^For 1 selected'))).to_be_visible()
         expect(main.locator(f'tr[data-row="{ids[alex]}"]')).to_have_count(0)
         expect(bar(page)).to_contain_text('1')
@@ -2578,7 +2578,7 @@ def test_narrowing_a_child_lists_parents_keeps_only_their_selected_rows(browser,
 
 
 def test_narrowing_parents_keeps_a_selected_row_beyond_the_first_page(browser, live_server, h):
-    """#467 SHOULD 9: Jordan's 205th leave row (loaded by Show more) ticked, then Alex removed from the parents: the pick
+    """#467 SHOULD 9: Staff 02's 205th leave row (loaded by Show more) ticked, then Staff 01 removed from the parents: the pick
     is checked against the whole narrowed list, not only its first page, and stays selected."""
     alex, jordan = h.seed['people'][0], h.seed['people'][1]
     kinds = h.get('admin', '/api/catalogues')['leave_types']
@@ -2590,7 +2590,7 @@ def test_narrowing_parents_keeps_a_selected_row_beyond_the_first_page(browser, l
     context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
     errors = errors_of(page)
     try:
-        their_leave_of(page, 'Alex Morgan', 'Jordan Lee')
+        their_leave_of(page, 'Staff 01(test)', 'Staff 02(test)')
         every_status(page)
         main, more = page.locator('#main'), page.locator('.bulk-more')
         # A row the server sent on its second page (offset 200), not one that only reads like a late date.
@@ -2598,7 +2598,7 @@ def test_narrowing_parents_keeps_a_selected_row_beyond_the_first_page(browser, l
         with page.expect_response(later) as reply:
             more.get_by_role('button', name=re.compile(r'^Show \d+ more')).click()
         expect(more).to_be_empty()
-        late = main.locator(','.join(f'tbody tr[data-row="{r["id"]}"]' for r in reply.value.json()['rows'])).filter(has_text='Jordan').first
+        late = main.locator(','.join(f'tbody tr[data-row="{r["id"]}"]' for r in reply.value.json()['rows'])).filter(has_text='Staff 02').first
         while not late.count():  # the list's own pages: the row is on one of the later ones
             main.get_by_role('button', name='Next page').click()
         late_id = late.get_attribute('data-row')
@@ -2606,13 +2606,13 @@ def test_narrowing_parents_keeps_a_selected_row_beyond_the_first_page(browser, l
         expect(bar(page)).to_contain_text('1')
         shown = main.locator('tbody').element_handle()
         page.get_by_role('button', name=re.compile(r'^For 2 selected')).click()
-        page.get_by_role('menu', name='Parents').get_by_role('menuitem', name=re.compile('^Remove Alex')).click()
+        page.get_by_role('menu', name='Parents').get_by_role('menuitem', name=re.compile('^Remove Staff 01')).click()
         expect(page.get_by_role('button', name=re.compile(r'^For 1 selected'))).to_be_visible()
         expect(bar(page)).to_contain_text('1')
         page.wait_for_function('t => !t.isConnected', arg=shown)  # the list is read afresh (Loading…), then drawn
         expect(main.locator('tbody tr').first).to_be_visible()
         kept = main.locator(f'tr[data-row="{late_id}"]')
-        if not kept.count():  # Alex's row gone, the kept row can move back across a 50-row page boundary
+        if not kept.count():  # Staff 01's row gone, the kept row can move back across a 50-row page boundary
             main.get_by_role('button', name='Previous page', exact=True).click()
         expect(kept.locator('.bulk-check')).to_be_checked()
         assert not errors, errors
@@ -2644,13 +2644,13 @@ def test_a_first_rule_version_proposed_from_people_holds_that_rule_read_only(bro
     held = []
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='More actions').click()
         page.get_by_role('menu', name='More actions').get_by_role('menuitem', name='Set a rule number…').click()
         dialog = page.get_by_role('dialog', name=re.compile('^Set a rule number'))
         dialog.get_by_label('Rule', exact=True).select_option(label='Workload limit')
         dialog.get_by_label('Maximum', exact=True).fill('7')
-        dialog.get_by_label('Reason', exact=True).fill('Alex: at most 7')
+        dialog.get_by_label('Reason', exact=True).fill('Staff 01: at most 7')
         dialog.get_by_role('button', name='Preview', exact=True).click()
         propose = panel(page).locator('.bulk-foot .button.primary')
         expect(propose).to_have_text(re.compile(r'^Propose'))
@@ -2904,7 +2904,7 @@ def test_another_credentialer_sees_opens_and_approves_a_change_sent_for_review(b
     try:
         # The list of clinic permissions says a change waits for this person's review.
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Show their…').click()
         page.get_by_role('menu', name='Show their…').get_by_role('menuitem', name=re.compile('^Clinic permissions')).click()
         note = page.locator('#main .bulk-staged-note')
@@ -2945,7 +2945,7 @@ def test_a_review_notification_waits_for_the_unsaved_editor_open_beside_it(brows
     errors = errors_of(page)
     try:
         navigate(page, 'people')
-        page.locator('#main tr', has_text='Alex Morgan').locator('.bulk-check').check()
+        page.locator('#main tr', has_text='Staff 01(test)').locator('.bulk-check').check()
         bar(page).get_by_role('button', name='Change…').click()
         reason = panel(page).get_by_label('Reason', exact=True)
         reason.fill('Typed, not saved')
@@ -3100,7 +3100,7 @@ def test_a_failed_limits_read_sends_every_change_through_preview(browser, live_s
 
 
 def test_select_all_matching_under_show_changed_takes_only_the_changed_rows(browser, live_server, h):
-    """Review (1c7f) #3: Alex's 21 leave records, one changed by a bulk change; "Show changed · 1" shows that one, and
+    """Review (1c7f) #3: Staff 01's 21 leave records, one changed by a bulk change; "Show changed · 1" shows that one, and
     Select all matching then selects 1 (not the server's 21), so Change… sends that one record."""
     alex = h.seed['people'][0]
     kinds = h.get('admin', '/api/catalogues')['leave_types']

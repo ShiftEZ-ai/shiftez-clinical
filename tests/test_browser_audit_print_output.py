@@ -259,7 +259,7 @@ def expect_atomic_times(page):
 @pytest.mark.parametrize('width', [1440, 390])
 def test_selected_published_print_sheet_retains_long_labels_and_hides_controls(browser, live_server, h, tmp_path, width):
     labels = {
-        'person': 'Alex Morgan — Senior Family Medicine Consultant for Integrated Community Follow-up and Continuity Care',
+        'person': 'Staff 01(test) — Senior Family Medicine Consultant for Integrated Community Follow-up and Continuity Care',
         'clinic': 'Continuity clinic — Comprehensive Follow-up and Coordinated Long-Term Condition Review Service',
         'location': 'Main outpatient building — Family Medicine Centre, extended consultation room at the east corridor',
         'duty': 'Clinical review session — Comprehensive Follow-up, Medication Review and Coordinated Care Planning',

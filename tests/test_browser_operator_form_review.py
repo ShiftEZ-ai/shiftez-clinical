@@ -17,8 +17,8 @@ def test_rule_review_keeps_named_people_exclusions_and_nested_groups_after_edit(
         dialog = page.get_by_role('dialog', name='Add rule')
         dialog.get_by_role('radio', name='Maximum hours', exact=True).check()
         scope = dialog.locator('.scope-who-what')
-        condition(scope, 'Person', ['Alex Morgan'])
-        condition(scope, 'Person', ['Taylor Noor'], op='none')
+        condition(scope, 'Person', ['Staff 01(test)'])
+        condition(scope, 'Person', ['Staff 03(test)'], op='none')
         add_filter(scope, group=True)
         group = scope.locator('.cond-group')
         condition(group, 'Clinic', ['Continuity clinic'])
@@ -30,10 +30,10 @@ def test_rule_review_keeps_named_people_exclusions_and_nested_groups_after_edit(
         line = scope.locator('.cond-line').first
         line.locator('.pick-button').click()
         picker = scope.locator('.picker')
-        # A short list has no Clear (X-37): untick what is chosen, then tick Jordan Lee.
+        # A short list has no Clear (X-37): untick what is chosen, then tick Staff 02(test).
         for name in picker.get_by_role('option', checked=True).evaluate_all('o => o.map(x => x.getAttribute("aria-label"))'):
             picker.get_by_role('option', name=name, exact=True).uncheck()
-        picker.get_by_role('option', name='Jordan Lee', exact=True).check()
+        picker.get_by_role('option', name='Staff 02(test)', exact=True).check()
         page.keyboard.press('Escape')
         dialog.get_by_role('button', name='Propose rule', exact=True).click()
         expect(dialog).to_have_count(0)

@@ -67,7 +67,7 @@ def test_toolbar_fitting_observers_are_released_when_pages_change(browser, live_
                 if view == 'people':
                     page.wait_for_function("() => window.__observed().some(n => n.tagName === 'TH' && n.isConnected)")
                     search = page.get_by_role('searchbox', name='Search people', exact=True)
-                    search.fill('Alex')
+                    search.fill('Staff 01')
                     expect(page.locator('#main tbody tr[data-row]')).to_have_count(1)
                     search.fill('')
                     expect(page.locator('#main tbody tr[data-row]')).to_have_count(len(h.seed['people']))

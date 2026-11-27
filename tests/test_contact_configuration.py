@@ -128,6 +128,30 @@ def test_seed_defaults_and_legacy_fallback_are_role_configurable(pg):
     assert second.status_code == 304 and not second.content
 
 
+def test_open_contact_defaults_require_a_chosen_role_when_restricted(pg):
+    role = s.INSTALLATION_ADMIN_ROLE
+    identity(pg, 'installation_contact_reader', [role])
+    person = pg.seed['people'][1]
+    card = f'/api/people/{person}/card'
+    defaults = pg.get('admin', '/api/contact-types')['contact_types']
+    public = [row for row in defaults if row['visibility']['mode'] == 'everyone']
+    assert {row['legacy_field'] for row in public} == {'work_phone', 'pager'}
+    assert all(row['visibility']['roles'] == [] for row in public)
+    typ = next(row for row in public if row['legacy_field'] == 'work_phone')
+    set_value(pg, typ)
+    assert [c['value'] for c in pg.get('installation_contact_reader', card)['contacts']] == ['5550100']
+
+    value = {k: typ[k] for k in s.ContactTypeInput.model_fields}
+    restricted = pg.configure('contact_types', {**value, 'visibility': {'mode': 'roles'}},
+                              typ['id'], typ['revision'])['record']
+    assert restricted['visibility'] == {'mode': 'roles', 'roles': []}
+    assert not pg.get('installation_contact_reader', card)['contacts']
+
+    pg.configure('contact_types', {**value, 'visibility': {'mode': 'roles', 'roles': [role]}},
+                 typ['id'], restricted['revision'])
+    assert [c['value'] for c in pg.get('installation_contact_reader', card)['contacts']] == ['5550100']
+
+
 @pytest.mark.parametrize('role', s.ROLE_NAMES)
 def test_seeded_mcd_pager_dials_directly_without_one_tap(pg, role):
     identity(pg, f'pager_reader_{role}', [role])
@@ -250,9 +274,9 @@ def test_migration_retains_all_existing_data(session_limits_database):
         for row in types:
             default = next(t for t in s.DEFAULT_CONTACT_TYPES if t['legacy_field'] == row.legacy_field)
             expected = {k: value for k, value in default.items() if k not in {'id', 'visibility'}}
-            # A seeded row keeps the roles of its day; a role added later reaches only new departments.
-            seeded = [role for role in default['visibility']['roles'] if role != s.INSTALLATION_ADMIN_ROLE]
-            expected['visibility'] = ({**default['visibility'], 'roles': seeded}
+            # This migration retains the audience it seeded, independent of current defaults.
+            seeded = ['staff', 'coordinator', 'approver', 'credentialer', 'admin', 'auditor', 'programme_lead', 'operator']
+            expected['visibility'] = ({'mode': 'everyone', 'roles': seeded}
                                       if row.legacy_field not in {'work_extension', 'work_email'}
                                       else {'mode': 'roles', 'roles': ['admin', 'coordinator']})
             if row.legacy_field == 'pager':  # the default was renamed for new departments; a seeded row is never renamed

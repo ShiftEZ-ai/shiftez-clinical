@@ -51,7 +51,7 @@ class FakeChanges:
         blocked = lambda pid, name, kind, code, message, allowed: {'person_id': pid, 'display_name': name, 'status': 'blocked', 'week_hours': 0,
             'rota_hours': 0, 'rest_before_hours': None, 'fills': True, 'override_allowed': allowed,
             'findings': [{'kind': kind, 'code': code, 'severity': 'error', 'message': message}]}
-        self.candidates = [ok(c, 'Taylor Noor', 6), ok('p-sk', 'Keiko Stone', 9),
+        self.candidates = [ok(c, 'Staff 03(test)', 6), ok('p-sk', 'Keiko Stone', 9),
                            blocked('p-zr', 'Grace Xu', 'CLASH', 'TIME_OVERLAP', 'On duty 13:00–16:00 at another clinic', False),
                            blocked('p-aa', 'Keiko Underwood', 'LEAVE', 'UNAVAILABLE', 'Annual leave to Thursday', False),
                            blocked('p-ma', 'Grace Jensen', 'RULE', 'MIN_REST', 'Minimum rest: 9 h since the last duty, needs 11 h', True)]
@@ -129,8 +129,8 @@ def test_a_coordinator_changes_a_person_on_a_published_session_and_staff_cannot(
     try:
         FakeChanges(h).install(page)
         panel = open_session(page, h, tomorrow)
-        panel.get_by_role('button', name='Change Alex Morgan on this session').click()
-        menu = page.get_by_role('menu', name='Change Alex Morgan')
+        panel.get_by_role('button', name='Change Staff 01(test) on this session').click()
+        menu = page.get_by_role('menu', name='Change Staff 01(test)')
         for item in ('Replace…', 'Swap with another duty…', 'Mark absent · Sick', 'Mark absent · Leave', 'Mark absent · Emergency', 'Mark absent · Other', 'Move to another session…'):
             expect(menu.get_by_role('menuitem', name=item)).to_be_visible()
         page.keyboard.press('Escape')
@@ -156,33 +156,33 @@ def test_replace_picks_reviews_and_sends_with_urgent_only_when_a_route_is_active
         fake = FakeChanges(h, urgent)
         fake.install(page)
         panel = open_session(page, h, tomorrow)
-        panel.get_by_role('button', name='Change Alex Morgan on this session').click()
+        panel.get_by_role('button', name='Change Staff 01(test) on this session').click()
         page.get_by_role('menuitem', name='Replace…').click()
-        expect(panel.get_by_role('heading', name='Replace Alex Morgan')).to_be_visible()
+        expect(panel.get_by_role('heading', name='Replace Staff 01(test)')).to_be_visible()
         expect(panel.get_by_role('button', name='Back to session')).to_be_visible()
         expect(panel.get_by_role('radio', name='Sick')).to_have_attribute('aria-checked', 'true')
         # One primary: the first who passes every rule; every Assign says whom.
         expect(panel.locator('.wk-cand .button.primary')).to_have_count(1)
-        expect(panel.get_by_role('button', name='Assign Taylor Noor')).to_have_class(re.compile('primary'))
+        expect(panel.get_by_role('button', name='Assign Staff 03(test)')).to_have_class(re.compile('primary'))
         expect(panel.get_by_role('button', name='Luca Davies')).to_be_visible()
         # A published change never breaks a rule on purpose (maintenance has no override): not even an overridable one.
         expect(panel.get_by_role('button', name=re.compile('^Break rule and assign'))).to_have_count(0)
         assert fake.prepared == 1  # candidates come from the hidden draft's copy of the session
         panel.get_by_role('radio', name='Leave').click()
-        panel.get_by_role('button', name='Assign Taylor Noor').click()
+        panel.get_by_role('button', name='Assign Staff 03(test)').click()
         # Review: was / now, the scoped check, the route, who is told; the change is in the list, not sent.
         expect(panel.get_by_text('Passes every check')).to_be_visible()
-        expect(panel.locator('.change-summary')).to_contain_text('Alex Morgan · leave')
-        expect(panel.locator('.change-summary')).to_contain_text('Taylor Noor')
+        expect(panel.locator('.change-summary')).to_contain_text('Staff 01(test) · leave')
+        expect(panel.locator('.change-summary')).to_contain_text('Staff 03(test)')
         expect(page.locator('.pc-chip')).to_have_text('1 change · not sent')
         expect(panel.get_by_role('radio', name=re.compile('^Urgent'))).to_have_count(1 if urgent else 0)
-        expect(panel.get_by_text('Taylor Noor and Alex Morgan are told once it is approved.')).to_be_visible()
+        expect(panel.get_by_text('Staff 03(test) and Staff 01(test) are told once it is approved.')).to_be_visible()
         kind, payload, _ = fake.sent[0]
         assert kind == 'publication.change' and payload['kind'] == 'replace' and payload['absence_reason'] == 'leave'  # the wire key (DL-035, AbsenceCategory); its label is 'Leave'
         assert payload['person_id'] == h.seed['people'][2]
         send = panel.get_by_role('button', name='Send for urgent approval' if urgent else 'Send for approval')
         send.click()
-        expect(page.locator('.toast').filter(has_text='Taylor Noor shows as waiting until it is approved')).to_be_visible()
+        expect(page.locator('.toast').filter(has_text='Staff 03(test) shows as waiting until it is approved')).to_be_visible()
         assert fake.sent[-1][0] == 'publication.changes.submit' and fake.sent[-1][1]['urgency'] == ('urgent' if urgent else 'routine')
         assert ('change_ids' in fake.sent[-1][1]) == urgent  # urgent goes alone; routine sends the whole list
         # Sent: the panel says so with Withdraw; the grid shows who leaves and who joins; the chip waits (gold).
@@ -191,7 +191,7 @@ def test_replace_picks_reviews_and_sends_with_urgent_only_when_a_route_is_active
         expect(page.locator('.pc-chip')).to_have_text('1 change waiting')
         expect(page.locator(f'#schedule-view .pchip.pc-leaving[data-person="{h.seed["people"][0]}"]')).to_have_count(1)
         # The shared person pill carries its full, short and initials forms (one shows by width): read its name.
-        expect(page.locator('#schedule-view .pchip.pc-joining')).to_have_attribute('data-tip', 'Taylor Noor')
+        expect(page.locator('#schedule-view .pchip.pc-joining')).to_have_attribute('data-tip', 'Staff 03(test)')
         page.locator('.toast').get_by_role('button', name='Undo').click()
         expect(page.locator('.pc-chip')).to_have_text('1 change · not sent')
         assert fake.sent[-1][0] == 'publication.changes.withdraw' and set(fake.sent[-1][1]) == {'reason'}
@@ -210,9 +210,9 @@ def test_the_change_list_undoes_and_waits_for_the_open_place_before_sending(brow
         panel.get_by_role('button', name='Close the session…').click()
         panel.get_by_label('Reason').fill('Typed, then kept')
         panel.get_by_role('button', name='Keep it open').click()
-        panel.get_by_role('button', name='Change Jordan Lee on this session').click()
+        panel.get_by_role('button', name='Change Staff 02(test) on this session').click()
         page.get_by_role('menuitem', name='Mark absent · Sick').click()
-        expect(page.locator('.toast').filter(has_text='Jordan Lee marked absent')).to_be_visible()
+        expect(page.locator('.toast').filter(has_text='Staff 02(test) marked absent')).to_be_visible()
         page.locator('.pc-chip').click()
         expect(page.get_by_text('Not saved.')).to_have_count(0)
         changes = page.locator('.dock-panel.pc-panel')
@@ -220,13 +220,13 @@ def test_the_change_list_undoes_and_waits_for_the_open_place_before_sending(brow
         row = changes.locator('.pc-changes li')
         expect(row).to_have_count(1)
         expect(row).to_contain_text('Absence')
-        expect(row).to_contain_text('Jordan Lee · absent')
+        expect(row).to_contain_text('Staff 02(test) · absent')
         expect(row).to_contain_text('1 must fix')
         expect(row.get_by_role('button', name='Find someone')).to_be_visible()
         send = changes.get_by_role('button', name='Send 1 change for approval')
         expect(send).to_be_disabled()
         expect(changes.get_by_text('Fill the open place to send')).to_be_visible()
-        row.get_by_role('button', name='Undo this change: Jordan Lee · absent').click()
+        row.get_by_role('button', name='Undo this change: Staff 02(test) · absent').click()
         expect(changes.get_by_text('No changes.')).to_be_visible()
         expect(page.locator('.pc-chip')).to_have_count(0)
         assert [k for k, _, _ in fake.sent] == ['publication.change', 'publication.change.undo']
@@ -243,7 +243,7 @@ def test_cancel_session_needs_a_reason_and_the_armed_confirm(browser, live_serve
         fake.install(page)
         panel = open_session(page, h, later, person=2)
         panel.get_by_role('button', name='Close the session…').click()
-        expect(panel.get_by_text('Taylor Noor is freed and told once it is approved. You can undo it.')).to_be_visible()
+        expect(panel.get_by_text('Staff 03(test) is freed and told once it is approved. You can undo it.')).to_be_visible()
         expect(panel.get_by_role('radio', name=re.compile('^Routine'))).to_be_checked()  # a later day
         panel.get_by_label('Reason').fill('Clinic closed for an inspection')
         panel.get_by_role('button', name='Close session').click()
@@ -268,9 +268,9 @@ def test_a_coordinator_replaces_someone_from_a_phone(browser, live_server, h):
         expect(page.get_by_role('heading', name='Best on a desktop')).to_have_count(0)
         page.locator(f'#schedule-view [data-person~="{h.seed["people"][0]}"]').first.click()
         panel = page.locator('.dock-panel')
-        panel.get_by_role('button', name='Change Alex Morgan on this session').click()
+        panel.get_by_role('button', name='Change Staff 01(test) on this session').click()
         page.get_by_role('menuitem', name='Replace…').click()
-        panel.get_by_role('button', name='Assign Taylor Noor').click()
+        panel.get_by_role('button', name='Assign Staff 03(test)').click()
         expect(panel.get_by_role('button', name='Send for approval')).to_be_visible()
         assert page.evaluate('() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1')
     finally:
@@ -283,9 +283,9 @@ def test_send_waits_while_offline_and_keeps_the_change(browser, live_server, h):
     try:
         FakeChanges(h, urgent=True).install(page)
         panel = open_session(page, h, tomorrow)
-        panel.get_by_role('button', name='Change Alex Morgan on this session').click()
+        panel.get_by_role('button', name='Change Staff 01(test) on this session').click()
         page.get_by_role('menuitem', name='Replace…').click()
-        panel.get_by_role('button', name='Assign Taylor Noor').click()
+        panel.get_by_role('button', name='Assign Staff 03(test)').click()
         send = panel.get_by_role('button', name='Send for urgent approval')
         expect(send).to_be_enabled()
         context.set_offline(True)
@@ -306,12 +306,12 @@ def test_render_published_changes_states(browser, live_server, h, size, theme):
     try:
         FakeChanges(h, urgent=True).install(page)
         panel = open_session(page, h, tomorrow)
-        panel.get_by_role('button', name='Change Alex Morgan on this session').click()
+        panel.get_by_role('button', name='Change Staff 01(test) on this session').click()
         shot(page, 'b2-published-changes--menu', size, theme)
         page.get_by_role('menuitem', name='Replace…').click()
-        expect(panel.get_by_role('button', name='Assign Taylor Noor')).to_be_visible()
+        expect(panel.get_by_role('button', name='Assign Staff 03(test)')).to_be_visible()
         shot(page, 'b1-replace-on-published--pick', size, theme)
-        panel.get_by_role('button', name='Assign Taylor Noor').click()
+        panel.get_by_role('button', name='Assign Staff 03(test)').click()
         send = panel.get_by_role('button', name='Send for urgent approval')
         expect(send).to_be_visible()
         shot(page, 'b1-replace-on-published--review', size, theme)
@@ -321,7 +321,7 @@ def test_render_published_changes_states(browser, live_server, h, size, theme):
         page.locator('.toast').get_by_role('button', name='Dismiss message').click()
         panel.get_by_role('button', name='Close panel').click()
         panel = open_session(page, h, later, person=2)
-        panel.get_by_role('button', name='Change Taylor Noor on this session').click()
+        panel.get_by_role('button', name='Change Staff 03(test) on this session').click()
         page.get_by_role('menuitem', name='Mark absent · Sick').click()
         panel.get_by_role('button', name='Close the session…').click()
         panel.get_by_label('Reason').fill('Clinic closed for an inspection')

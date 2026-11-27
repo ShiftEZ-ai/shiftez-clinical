@@ -16,8 +16,8 @@ _UNEXPLAINED = "Can\u2019t explain this rule right now. Its check still applies.
 
 
 def rota(h):
-    """Alex in the Continuity clinic on Monday and Tuesday, Jordan in the Review clinic on Monday. Rules: a department
-    duty limit with Jordan's own number (a template line), minimum rest (a safety rule) and a Review-clinic hours limit."""
+    """Staff 01 in the Continuity clinic on Monday and Tuesday, Staff 02 in the Review clinic on Monday. Rules: a department
+    duty limit with Staff 02's own number (a template line), minimum rest (a safety rule) and a Review-clinic hours limit."""
     a, b, _ = h.seed['people']
     duties = activate(h, propose(h, {'kind': 'max_duties', 'maximum': 5, 'window': 'week'}, name='Weekly duty limit', per_person=[{'person_id': b, 'amount': 3}]))
     rest = activate(h, propose(h, {'kind': 'min_rest', 'hours': 11}, name='Rest between duties'))
@@ -61,11 +61,11 @@ def test_hover_pin_highlight_and_exception_markers(browser, live_server, h):
         expect(page.locator('.wk-grid')).to_be_visible()
         page.keyboard.press('Escape')
         expect(panel).to_be_hidden()
-        # Jordan has their own number in the duty limit: a marker with words, not colour alone.
-        mark = page.locator('.pchip').filter(has_text='Jordan').locator('.rk-mark')
+        # Staff 02 has their own number in the duty limit: a marker with words, not colour alone.
+        mark = page.locator('.pchip').filter(has_text='Staff 02').locator('.rk-mark')
         expect(mark).to_have_attribute('aria-label', re.compile('Own number'))
-        # Jordan's session panel: which rules count here, and their own number wins over the rule's 5.
-        page.locator('.pchip').filter(has_text='Jordan').click()
+        # Staff 02's session panel: which rules count here, and their own number wins over the rule's 5.
+        page.locator('.pchip').filter(has_text='Staff 02').click()
         person = page.get_by_role('dialog').filter(has_text='Rules applied here')
         row = rule_row(person, 'Weekly duty limit')
         # The row is the rule's sentence (Why panel v2); the person's own number is said in the opened row.
@@ -86,7 +86,7 @@ def test_hover_pin_highlight_and_exception_markers(browser, live_server, h):
         page.wait_for_timeout(200)  # the bar's pop-in animation
         assert spot.bounding_box()['x'] + spot.bounding_box()['width'] <= page.locator('.rk-panel').bounding_box()['x']  # not under the panel
         expect(page.locator('.pchip.rk-hit')).to_have_count(1)
-        expect(page.locator('.pchip.rk-hit')).to_contain_text('Jordan')
+        expect(page.locator('.pchip.rk-hit')).to_contain_text('Staff 02')
         # DL-069 keeps dimmed content opaque and moves it to the neutral muted token so the hue is not the only cue.
         muted = page.evaluate("""() => { const probe = document.createElement('span'); probe.style.color = 'var(--muted)'; document.body.append(probe); const value = getComputedStyle(probe).color; probe.remove(); return value; }""")
         dimmed_chip = page.locator('.pchip:not(.rk-hit)[data-rk]').first
@@ -99,15 +99,15 @@ def test_hover_pin_highlight_and_exception_markers(browser, live_server, h):
         clinic.locator('.rk-row-head').click()  # closes it
         clinic.locator('.rk-row-head').click()  # opens and locks again
         pick_view(page, 'People')
-        expect(page.locator('.pg-name.rk-hit')).to_contain_text('Jordan')
+        expect(page.locator('.pg-name.rk-hit')).to_contain_text('Staff 02')
         pick_view(page, 'Coverage')
         expect(page.locator('.cov-cell.rk-hit')).to_have_count(1)
-        # List: the rows are sessions; only Jordan's is lit, the others dim.
+        # List: the rows are sessions; only Staff 02's is lit, the others dim.
         pick_view(page, 'List')
         page.locator('.planner-toolbar').hover()  # Leave any rule preview revealed beneath View settings.
         expect(page.locator('.rk-spot.locked')).to_contain_text('Review clinic hours')
         expect(page.locator('tr.rk-hit')).to_have_count(1)
-        expect(page.locator('tr.rk-hit')).to_contain_text('Jordan')
+        expect(page.locator('tr.rk-hit')).to_contain_text('Staff 02')
         dimmed_row = page.locator('tr[data-rk]:not(.rk-hit)').first
         assert dimmed_row.evaluate('n => getComputedStyle(n).opacity') == '1'
         assert dimmed_row.evaluate('n => getComputedStyle(n).color') == muted
@@ -531,7 +531,7 @@ def test_a_goal_warns_on_the_assignment_when_someone_is_outside_the_band(browser
 
 
 def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_server, h):
-    """A skill held at the Review clinic only: Alex's hover card there lists its rule, their Continuity session's does not
+    """A skill held at the Review clinic only: Staff 01's hover card there lists its rule, their Continuity session's does not
     (as its "Rules applied here" panel says). A leave buffer lights only the session worked next to the leave."""
     from datetime import date
     from apps.api import models as m
@@ -580,7 +580,7 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
         review_session = chip(lambda s: review in s['service_ids'])
         assert rules_on(review_session) == rules_on(chip(lambda s: review not in s['service_ids'] and s['start'][:10] == '2026-10-05')) + 1
         pick_view(page, 'Week')
-        # The leave buffer: only Alex's Tuesday place (the day before the leave), not Monday's, not Jordan's.
+        # The leave buffer: only Staff 01's Tuesday place (the day before the leave), not Monday's, not Staff 02's.
         planner_tool(page, 'Rules in this rota')
         panel = page.get_by_role('dialog', name='Rules in this rota')
         rule_row(panel, 'Rest next to leave').locator('.rk-row-head').click()
@@ -654,7 +654,7 @@ def test_click_on_a_day_head_does_not_pin_the_rules_panel(browser, live_server, 
     """REQ-PANEL: mouse and keyboard open the selected day in the same panel, and focus moves to its first stop
     (planner_rules.ts drawPanel): the first rule row shown, else the selected tab (rules that are met are folded)."""
     w, _ = rota(h)
-    if unmet:  # Alex works Monday evening too: under 11 h before Tuesday morning, so Rest between duties is not met
+    if unmet:  # Staff 01 works Monday evening too: under 11 h before Tuesday morning, so Rest between duties is not met
         w = h.shift(w, '2026-10-05T20:00:00+03:00', '2026-10-05T23:30:00+03:00', people=[h.seed['people'][0]])['workspace']
     context, page = sign_in(browser, live_server, 'coordinator')
     try:

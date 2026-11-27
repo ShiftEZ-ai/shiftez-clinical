@@ -51,8 +51,8 @@ export async function aiProviderPage(target:HTMLElement,zone:string){
       const timeout=field('Time limit (seconds)','number',p?.timeout_s??120,{required:true,min:1,max:600});
       const key=field(p?.key_set?'Replace API key':'API key','password','',{autocomplete:'new-password',spellcheck:'false',maxLength:10000});
       const def=check('Default for new imports',p?.is_default??!s.profiles.length),on=check('On',p?.enabled??true);
-      // A provider on the hospital network is an explicit choice (the server checks the address); never guessed from the URL.
-      const onSite=check('On the hospital network',p?.allow_private_endpoint??false);
+      // A provider on the organisation network is an explicit choice (the server checks the address); never guessed from the URL.
+      const onSite=check('On the organisation network',p?.allow_private_endpoint??false);
       // Only what the chosen kind uses is shown: the API style for OpenAI-compatible and Gemini.
       const sync=()=>{style.wrap.hidden=!['openai_compatible','gemini'].includes(kind.input.value);
         notice.textContent=api.sendsTo({kind:kind.input.value as api.ProviderKind,base_url:url.input.value});};
