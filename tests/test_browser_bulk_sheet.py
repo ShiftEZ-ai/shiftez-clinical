@@ -402,8 +402,10 @@ def test_fill_down_by_single_clicks_stages_what_the_fill_handle_does(browser, li
     two-row pattern down with no pointer held down: the same staged cells as dragging the corner, read-only columns
     left as they were, each step announced, and the save undone by its one Undo."""
     service, _ = walk_in(h)
+    # Two of them also at a second clinic: five rows, and no filled date makes one record overlap another.
+    south = clinic(h, 'Walk-in South')
     for pid in h.seed['people'][:2]:
-        permit(h, pid, service, '2026-12-01', '2027-03-01')
+        permit(h, pid, south)
     context, page = sign_in(browser, live_server, CRED)
     try:
         main, grid = open_sheet(page)
@@ -479,16 +481,16 @@ def test_fill_down_by_single_clicks_stages_what_the_fill_handle_does(browser, li
         expect(fill).to_have_attribute('aria-pressed', 'false')
 
         def ends():
-            return sorted(e['ends_on'] for e in h.get(CRED, '/api/catalogues')['eligibilities'] if e['service_id'] == service['id'])
+            return sorted(e['ends_on'] for e in h.get(CRED, '/api/catalogues')['eligibilities'] if e['service_id'] in (service['id'], south['id']))
 
-        assert ends() == ['2026-11-01'] * 3 + ['2027-03-01'] * 2
+        assert ends() == ['2026-11-01'] * 5
         stage_bar(main).get_by_role('button', name='Save 5 changes').click()
         toast = page.locator('#toast-tray .toast').filter(has_text='changed')
         expect(toast).to_contain_text('5 clinic permissions changed')
         assert ends() == ['2026-12-16'] * 5
         toast.get_by_role('button', name='Undo').click()
         expect(page.locator('#toast-tray')).to_contain_text(re.compile('Undone|undone'))
-        assert ends() == ['2026-11-01'] * 3 + ['2027-03-01'] * 2
+        assert ends() == ['2026-11-01'] * 5
     finally:
         context.close()
 
