@@ -207,6 +207,7 @@ def test_home_leave_clash_replace_opens_the_replacement_list_for_the_person_on_l
         expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
         assert f"edit={w['id']}" in page.url
         expect(page.locator('.wk-panel').get_by_role('heading', name='Replace ' + who)).to_be_visible()
+        expect(page.locator('.wk-panel').get_by_role('heading', name='Can take over', exact=True)).to_be_visible()
         expect(page.locator(f'#schedule-view {draft_chip(b)}').first).to_be_focused()
     finally:
         context.close()
