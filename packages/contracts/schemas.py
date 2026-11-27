@@ -6062,8 +6062,8 @@ class LeaveAllowanceLine(Schema):
 
     @model_validator(mode='after')
     def dated_person_line(self):
-        if (self.person_id is None) != (self.starts_on is None):
-            raise ValueError('Supply a person and start date together for an individual allowance')
+        if self.person_id is not None and self.starts_on is None:
+            raise ValueError('Supply a start date for an individual allowance')
         return self
 
 
@@ -6092,6 +6092,7 @@ class LeaveBalanceSettingsChange(Decision):
 class LeaveBalanceSettings(Schema):
     revision: int | None = None
     configuration: LeaveBalanceConfiguration
+    default_starts_on_min: date | None = None
 
 
 class LeaveBalance(Schema):
