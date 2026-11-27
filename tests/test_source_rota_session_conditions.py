@@ -16,6 +16,7 @@ from packages.domain.generation import generate as greedy_generate
 from packages.domain.rule_map import reach_details, rule_map
 from packages.domain.time import aware
 from packages.domain.validation import evaluate
+from .governance_support import retire_rule
 from .test_rule_conditions import OCT, SHIFT, data, line, tree
 
 
@@ -109,8 +110,7 @@ def test_usual_people_rule_scope_has_review_undo_audit_and_reference_permissions
         'expected_policy_id': active['id'], 'expected_revision': active['revision']})['record']
     newer = h.command('approver', 'policy.activate', {'reason': 'Review provider change'},
                       proposed['id'], proposed['revision'])['record']
-    assert h.command('approver', 'policy.retire', {'reason': 'Undo provider configuration'},
-                     newer['id'], newer['revision'])['restored_ids'] == [active['id']]
+    assert retire_rule(h, newer, 'Undo provider configuration')['restored_ids'] == [active['id']]
     saved = next(p for p in h.get('auditor', '/api/policies?status=active')['policies'] if p['id'] == active['id'])
     assert saved['definition']['rule']['lines'][0]['where'] == original['where']
     with transaction(h.app.state.engine) as db:

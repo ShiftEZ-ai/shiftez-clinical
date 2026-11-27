@@ -16,6 +16,7 @@ from packages.domain.conditions import active_rules
 from packages.domain.validation import evaluate
 from packages.domain.cp_sat import generate
 from packages.domain.generation import generate as greedy
+from .governance_support import retire_rule
 
 pytestmark = pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
 
@@ -199,7 +200,7 @@ def test_conversion_discovery_tracks_only_unowned_legacy_sources(h):
     assert shown() == 0
     current = activate(h, waiting)
     assert shown() == 0
-    h.command('approver', 'policy.retire', {'reason': 'Retire governed conversion'}, current['id'], current['revision'])
+    retire_rule(h, current, 'Retire governed conversion')
     assert shown() == 0
 
 
@@ -441,7 +442,7 @@ def test_conversion_freezes_publication_and_future_cutover_then_retire(h):
     assert 'legacy' in leadership.requirements(current,shift,START,END)[0]
     shifted={**shift,'start':'2026-10-05T08:00:00+03:00','end':'2026-10-05T12:00:00+03:00'}
     assert 'policy' in leadership.requirements(current,shift,shifted['start'],shifted['end'])[0]
-    h.command('approver','policy.retire',{'reason':'Retire approved leadership with visible review'},p['id'],p['revision'])
+    retire_rule(h, p, 'Retire approved leadership with visible review')
     with transaction(h.app.state.engine) as db:
         from apps.api.snapshots import domain_snapshot
         retired=domain_snapshot(db,db.get(m.Workspace,w['id']),current_scheduling=True)

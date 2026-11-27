@@ -10,13 +10,15 @@ from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from apps.api.serialization import record
 from packages.contracts.rule_catalogue import GREEDY_NOT_APPLIED
-from packages.contracts.schemas import PolicyDefinition
+from packages.contracts.schemas import PolicyDefinition, safety_rule
 from packages.domain import rule_groups
 from packages.domain.rule_catalogue_migration import held_reasons, id_map, plan
 from packages.domain.rule_groups import expanded
 from packages.domain.rule_lines import duplicates, outranking
 from packages.domain.validation import evaluate
+from .governance_support import retire_rule
 from .test_rule_catalogue_guard import legacy_rules, world
 from .test_rule_simplification import (LABELS, PERSON, PROGRAMME, SERVICE, WEEK_START, configure_baseline_rehearsal,
                                       production_families, quota, rule)
@@ -312,7 +314,7 @@ def test_migration_through_governance_checks_the_same_and_undoes(h):
         assert {p.id for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))} == {r['id'] for r in result['records']}
     for record in result['records']:  # undo: retiring a catalogue rule brings back the rules it took over
         live = next(p for p in h.get('approver', '/api/policies?status=active')['policies'] if p['id'] == record['id'])
-        restored = h.command('approver', 'policy.retire', {'reason': 'Undo the catalogue'}, live['id'], live['revision'])['restored_ids']
+        restored = retire_rule(h, live, 'Undo the catalogue')['restored_ids']
         assert sorted(restored) == sorted(record['definition']['merged_ids'])
     # TEST-STALE: undo retires the converted non-safety rules; review that retirement into the draft too.
     w = h.refresh_draft_baseline(h.detail(w)['workspace'])
@@ -336,8 +338,16 @@ def test_the_script_dry_run_and_baseline(h, monkeypatch, capsys):
         made = [p for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))]
         assert made and all(p.kind == 'catalogue' for p in made)
         assert all(db.get(m.Identity, p.created_by).disabled and db.get(m.Identity, p.approved_by).disabled for p in made)
+        safety_ids = {p.id for p in made if safety_rule(p.definition)}
     tool.baseline(h.app.state.engine, SimpleNamespace(**{**vars(args), 'baseline': True, 'undo': True, 'reason': 'Undo the rehearsal',
                                                          'only_reason': 'Baseline rehearsal'}))
+    with transaction(h.app.state.engine) as db:
+        pending = [record(p) for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))
+                   if p.id not in original]
+    assert safety_ids and {p['id'] for p in pending} == safety_ids
+    assert f'{len(pending)} retirement approvals need another authorised person.' in capsys.readouterr().out
+    for row in pending:
+        retire_rule(h, row, 'Undo the rehearsal')
     with transaction(h.app.state.engine) as db:
         assert {p.id for p in db.scalars(select(m.Policy).where(m.Policy.status == 'active'))} == original
     h.workspace()

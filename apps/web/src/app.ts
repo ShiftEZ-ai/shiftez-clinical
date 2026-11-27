@@ -122,7 +122,7 @@ import {signInConfigPage} from './sign_in_config.js';
 import {readinessRegion,requirementEvidence,currency,notCompared,SUPERSEDED,type Currency} from './planning_context.js';
 import {openAmendment} from './published_amendment.js';
 import {publishedSession,changesChip,markChanges,loadChanges,forgetChanges,changeable,replaceNext,stagedCoverage,changedSessions,markDiff,type ChangeDiff,type PublishedHooks} from './published_changes.js';
-import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText} from './rule_catalogue.js';
+import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText,safetyRetirement,SAFETY_RETIREMENT_NOTICE} from './rule_catalogue.js';
 import {simplifyPanel,conversions,conversion} from './rule_simplify.js';
 import {restoreRulesViews,restoreRulesScroll} from './rules_tree.js';
 import {enhanceSelects,forgetRecent,openPicker} from './picker.js';
@@ -4763,8 +4763,10 @@ async function departmentSettingsPage(target:HTMLElement){
   about(sendTime.wrap,sendTime.input,'For announcements that start on a later day, in the scheduling timezone.');
   const reminderDays=field('Remind people who have not read after (days)','number',d.announcement_auto_reminder_days??'',{min:1,step:1,placeholder:'No automatic reminders'});
   const reminderGap=field('Hours between reminders','number',d.announcement_reminder_interval_hours??24,{required:true,min:1,step:1});
-  // RUL-03: how many different approvers must agree before a rule is retired or restored (1 = at once).
+  // The setting can raise the safety retirement minimum, which also applies at the default of one.
   const retireApprovals=field('Approvals to retire or restore a rule','number',d.policy_retire_approvals_required??1,{required:true,min:1,max:MAX_APPROVALS_REQUIRED,step:1});
+  retireApprovals.input.setAttribute('aria-describedby','safety-retirement-minimum');
+  retireApprovals.wrap.append(el('small',{class:'hint',id:'safety-retirement-minimum'},SAFETY_RETIREMENT_NOTICE));
   // One form in tabs, the same layout as Auto-schedule & scoring (C-06): each tab a grid across the panel's width.
   const grid=(...children:Node[])=>el('div',{class:'form-grid'},...children);
   const panels:[string,string,HTMLElement][]=[
@@ -5903,7 +5905,7 @@ function ruleSheet(policy:Row,title:string,inForce:Set<string>=limitsInForce(),r
     if(canEdit)foot.append(compact(button('Change…',change,'ghost'),'edit'));
     foot.append(el('span',{class:'grow'}));
     if(policy.status==='active'&&may('policy.retire'))foot.append(compact(button('Retire rule',()=>confirmAction('Retire rule',
-      `It stops applying to rotas being planned.${merged?` The ${plural(merged,'rule')} it replaced apply again, as they were approved.`:''} Published rotas keep the rules they were approved under.`,
+      `${safetyRetirement(policy)?SAFETY_RETIREMENT_NOTICE+' ':''}It stops applying to rotas being planned.${merged?` The ${plural(merged,'rule')} it replaced apply again, as they were approved.`:''} Published rotas keep the rules they were approved under.`,
       async reason=>{const r=await command<{restored_ids?:string[];approval?:Row}>('policy.retire',{reason},policy.id,policy.revision);close();
         if(notifyWaiting([r],me?.identity_id,refresh)){await refresh();return;}
         // Said before the refresh, so its message carries the retirement's Undo (api.ts UNDO).
@@ -6476,7 +6478,7 @@ async function rulesPage(target:HTMLElement){
       ...(off.length&&canPropose?[{label:`Switch ${off.length} overtime back on`,icon:'check' as const,run:(_:string[],d:()=>void)=>{d();void fixOvertime(off);}}]:[]),
       ...(proposed.length?[{label:`Decline ${proposed.length} proposed`,icon:'close' as const,danger:true,run:(_:string[],d:()=>void)=>confirmAction(`Decline ${proposed.length} proposed rules`,'They never apply. Each stays in History.',async reason=>{await runBulk({collection:'policies',noun:['rule','rules'],destructive:true,verb:'Decline',message:'{n} rules declined.',onDone:async()=>{d();await refresh();},
         body:{item_kind:'policy.decline',items:proposed.map(p=>({target_id:p.id,expected_revision:p.revision})),reason}});},'Decline rules')}]:[]),
-      ...(active.length&&may('policy.retire')?[{label:`Retire ${active.length} active`,icon:'lock' as const,danger:true,run:(_:string[],d:()=>void)=>confirmAction(`Retire ${active.length} active rules`,'They stop applying to rotas being planned. Published rotas keep the rules they were approved under.',async reason=>{await runBulk({collection:'policies',noun:['rule','rules'],destructive:true,verb:'Retire',message:'{n} rules retired.',onDone:async()=>{d();await refresh();},
+      ...(active.length&&may('policy.retire')?[{label:`Retire ${active.length} active`,icon:'lock' as const,danger:true,run:(_:string[],d:()=>void)=>confirmAction(`Retire ${active.length} active rules`,`${active.some(safetyRetirement)?SAFETY_RETIREMENT_NOTICE+' ':''}They stop applying to rotas being planned. Published rotas keep the rules they were approved under.`,async reason=>{await runBulk({collection:'policies',noun:['rule','rules'],destructive:true,verb:'Retire',message:'{n} rules retired.',onDone:async()=>{d();await refresh();},
         body:{item_kind:'policy.retire',items:active.map(p=>({target_id:p.id,expected_revision:p.revision})),reason}});},'Retire rules')}]:[])];
   };
   // Select rules (every line of each) to activate, decline or retire together.

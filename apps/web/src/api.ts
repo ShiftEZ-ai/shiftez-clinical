@@ -504,11 +504,11 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   'policy.create':(p,x)=>({said:'Rule proposed',done:p?.definition?.replaces_id?'Change withdrawn.':'Proposal withdrawn.',undo:back('policy.decline',{reason:WITHDRAWN},x?.record)}),
   // Calendar entries added on the way stay (they are not rules): then only the proposals could be undone, so none is.
   'policy.group':(_,x)=>({said:'Rules proposed',done:(x?.records||[]).length===1?'Proposal withdrawn.':`${(x?.records||[]).length} proposals withdrawn.`,undo:x?.calendar_entries?[]:(x?.records||[]).flatMap((r:Row)=>back('policy.decline',{reason:WITHDRAWN},r))}),
-  'policy.activate':(_,x)=>activationUndo(x?.record?[x.record]:[],x?.replaced),
+  'policy.activate':(_,x)=>activationUndo(x?.record?[x.record]:[],x?.replaced,served(x)),
   // SW3-B-16 (D42): a retirement is undone by retiring what it brought back, then restoring the rule (the server refuses
   // a restore while a rule it replaced is in force). One still waiting for other approvers changed nothing: no Undo.
   'policy.retire':(_,x)=>({said:'Rule retired',done:'Retirement undone: the rule applies again.',
-    undo:x?.approval&&!x.approval.complete?[]:[...(x?.restored||[]).flatMap((r:Row)=>back('policy.retire',{reason:'Undo retirement'},r)),...back('policy.restore',{reason:'Undo retirement'},x?.record)]}),
+    undo:x?.approval&&!x.approval.complete?[]:x?.undo?served(x):[...(x?.restored||[]).flatMap((r:Row)=>back('policy.retire',{reason:'Undo retirement'},r)),...back('policy.restore',{reason:'Undo retirement'},x?.record)]}),
   // A catalogue rule's proposal is withdrawn by Undo (as a legacy policy.create is); a declined or withdrawn proposal
   // comes back waiting for approval (policy.restore_proposal keeps its independent approval).
   'rule.propose':(_,x)=>({said:'Rule proposed',done:'Proposal withdrawn.',undo:back('policy.decline',{reason:WITHDRAWN},x?.record)}),
@@ -522,7 +522,7 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   ...Object.fromEntries(['person.workload','person.overtime','calendar.protection'].flatMap(f=>[
     [f+'.propose',(_:unknown,x:any)=>({said:'Proposed for approval',done:'Proposal withdrawn.',undo:back(f+'.undo',{reason:WITHDRAWN},x?.fact)})],
     ...['activate','retire'].map(a=>[`${f}.${a}`,(_:unknown,x:any)=>({said:a==='activate'?'Approved':'Retired',undo:back(f+'.undo',{reason:'Undo'},x?.fact)})])])),
-  'policy.activate_many':(_,x)=>activationUndo(x?.records||[],x?.replaced),
+  'policy.activate_many':(_,x)=>activationUndo(x?.records||[],x?.replaced,served(x)),
   // Governance: a self-approval permission added is ended again; a delegation recorded is revoked. One ended or revoked is
   // restored by the server from that record (its original delegator or creator, scope, route revision and dates, checked
   // again), never recreated as the person pressing Undo; an expired delegation cannot be restored.
@@ -546,10 +546,10 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
 // A rule's new version names the version it replaces (a catalogue version in merged_ids, a legacy one in replaces_id):
 // undoing it brings that one back.
 const replacesVersion=(r:Row)=>!!r.definition?.replaces_id||r.definition?.rule?.kind==='catalogue'&&!!r.definition?.merged_ids?.length;
-const activationUndo=(made:Row[],replaced:Row[]=[]):Undo=>({said:made.length>1?`${made.length} rules activated`:'Rule activated',
+const activationUndo=(made:Row[],replaced:Row[]=[],stored:Command[]=[]):Undo=>({said:made.length>1?`${made.length} rules activated`:'Rule activated',
   done:!replaced.length&&made.length&&made.every(replacesVersion)?`Activation undone: the previous version${made.length>1?'s apply':' applies'} again.`
     :`Activation undone: ${made.length>1?'the rules are':'the rule is'} retired${replaced.length?' and what '+(made.length>1?'they':'it')+' replaced applies again':''}.`,
-  undo:[...made.flatMap(r=>back('policy.retire',{reason:'Undo activation'},r)),...replaced.flatMap(r=>back('policy.restore',{reason:'Undo activation'},r))]});
+  undo:stored.length?stored:[...made.flatMap(r=>back('policy.retire',{reason:'Undo activation'},r)),...replaced.flatMap(r=>back('policy.restore',{reason:'Undo activation'},r))]});
 let undoBatch:Undo[]=[],undoTimer=0,undoing=false,holding=0;
 // A change nobody reports within 1.2 s gets its own "Saved" message with Undo, unless a run of changes holds the batch.
 const unclaimed=()=>{window.clearTimeout(undoTimer);if(holding||!undoBatch.length)return;
@@ -620,6 +620,11 @@ export function takeUndo():{said:string;done?:string;run:()=>Promise<Undone>}|nu
     try{for(const c of steps){
       requireSession(generation);
       const r:any=await command(c.kind,c.payload,c.target_id??undefined,(c.target_id&&seen.get(c.target_id))||c.expected_revision||undefined);done.push({kind:c.kind,result:r});
+      if(c.kind==='bulk.apply'&&c.payload?.undo_of){
+        const pending=r?.items?.[0]?.results?.[0];
+        if(awaitingApproval([pending]).length){done.push({kind:'policy.'+pending.approval.action,result:pending});break;}
+      }
+      if(awaitingApproval([r]).length)break;
       if(Number(r?.kept)>0)kept=`${Number(r.removed??r.reverted??0)} undone; ${r.kept} changed since and kept.`;
       for(const row of [r?.record,r?.workspace,r?.department,r?.view,...(r?.records||[])])if(row?.id)seen.set(row.id,row.revision);}}
     catch(e){if(sessionChanged(e))throw e;const why=undoRefused(e) as Error;throw done.length?new Error(`${done.length} of ${steps.length} undone. Stopped: ${why.message}`):why;}
