@@ -230,7 +230,8 @@ def test_change_own_password(acc, monkeypatch):
     same = client.post("/api/account/password", json={"current_password": PASSWORD, "new_password": PASSWORD})
     assert same.status_code == 422
     changed = client.post("/api/account/password", json={"current_password": PASSWORD, "new_password": "fresh passphrase 56"})
-    assert changed.status_code == 200 and changed.json()["sessions_ended"] == 1
+    assert changed.status_code == 200
+    assert changed.json() == {"changed": True, "sessions_ended": 1}
     assert client.get("/api/me").status_code == 200  # this session stays
     assert other.get("/api/me").status_code == 401  # the other one ended
     with transaction(acc.app.state.engine) as db:
