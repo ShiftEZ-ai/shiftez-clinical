@@ -78,7 +78,7 @@ def command_roles(command):
         return list(s.PERMISSIONS["notification.policy.update"])
     if kind in {"pwa.system.update", "pwa.provider.resume"}:
         return ["operator"]
-    if kind == "absence_report.settings":
+    if kind in {"absence_report.settings", "department.leave_balance_settings"}:
         return ["admin"]
     if kind.startswith("publication.change"):
         return ["coordinator"]
@@ -523,6 +523,9 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
             return training.request_swap(db, actor, command)
         if kind in {"trainee_note.create", "trainee_note.update", "trainee_note.delete", "trainee_note.restore"}:
             return training.note_command(db, actor, command)
+    if kind == "department.leave_balance_settings":
+        from .services import leave_balances
+        return leave_balances.update(db, actor, command)
     if kind == "request.create":
         return availability.create_request(db, actor, command)
     if kind in {"request.edit", "request.undo_edit"}:
@@ -1213,7 +1216,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
             made = {'id': (result.get('group') or {}).get('group_id')}
         if command.kind == 'department.create':
             made = result['department']
-        if command.kind.startswith('planning.settings'):
+        if command.kind.startswith('planning.settings') or command.kind == 'department.leave_balance_settings':
             made = {'id': actor.department_id}
         listed = command.payload.get("catalogue")
         from .services.audit_log import event_action, subject_detail
@@ -1259,6 +1262,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                                                        **({"catalogue": listed} if isinstance(listed, str) else {}),
                                                        **({"source_date_set_id": command.target_id}
                                                           if command.kind == 'date_set.copy_next_year' else {}),
+                                                       **({"leave_balance_overdrawn": True} if result.get("leave_balance_overdrawn") else {}),
                                                        **({"self_approved": used} if (used := db.info.pop("self_approved", None)) else {}),
                                                         **({"entered_on_behalf_by": sorted(enterers)}
                                                            if (enterers := db.info.pop("entered_on_behalf_by", None)) else {}),

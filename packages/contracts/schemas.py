@@ -6050,14 +6050,68 @@ class OptionalApprovalDecision(ApprovalNote):
         return self
 
 
+class LeaveAllowanceLine(Schema):
+    leave_type_id: ID
+    days: int = Field(ge=0, le=366, strict=True)
+    person_id: ID | None = None
+    starts_on: date | None = None
+
+    @model_validator(mode='after')
+    def dated_person_line(self):
+        if (self.person_id is None) != (self.starts_on is None):
+            raise ValueError('Supply a person and start date together for an individual allowance')
+        return self
+
+
+class LeaveBalanceConfiguration(Schema):
+    year_start_month: int = Field(default=1, ge=1, le=12, strict=True)
+    year_start_day: int = Field(default=1, ge=1, le=31, strict=True)
+    carry_over_days: int = Field(default=0, ge=0, le=366, strict=True)
+    allowances: list[LeaveAllowanceLine] = Field(default_factory=list, max_length=2000)
+
+    @model_validator(mode='after')
+    def valid_calendar_and_lines(self):
+        try:
+            date(2001, self.year_start_month, self.year_start_day)
+        except ValueError:
+            raise ValueError('Choose a leave year start that occurs every year') from None
+        keys = {(line.leave_type_id, line.person_id, line.starts_on) for line in self.allowances}
+        if len(keys) != len(self.allowances):
+            raise ValueError('Use one allowance per leave type, person and start date')
+        return self
+
+
+class LeaveBalanceSettingsChange(Decision):
+    configuration: LeaveBalanceConfiguration | None
+
+
+class LeaveBalanceSettings(Schema):
+    revision: int | None = None
+    configuration: LeaveBalanceConfiguration
+
+
+class LeaveBalance(Schema):
+    leave_type_id: ID | None
+    leave_type_name: str
+    starts_on: date
+    ends_on: date
+    allowance_days: int
+    carried_days: int
+    used_days: int
+    remaining_days: int
+    projected_days: int | None = None
+
+
 class RequestDecision(OptionalApprovalDecision):
     decision: Literal["approve", "reject", "withdraw"]
+    balance_confirmation: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 
 class RequestDecisionItem(Schema):
     id: ID
     expected_revision: int = Field(ge=1)
     source: Literal["request", "pattern"] = "request"
+    balance_confirmation: Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$")] | None = None
 
 
 class RequestDecisionAccess(Schema):
@@ -9270,13 +9324,18 @@ class SwapEligibility(Schema):
     findings: list[SwapBlockingFinding] = Field(default_factory=list)
 
 
+class SwapNote(Schema):
+    # A step both people agree to needs no typed reason: the message is optional and stored empty when left out.
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ''
+
+
 class SwapOfferInput(Schema):
     kind: SwapKind = "exchange"
     publication_id: ID
     assignment_id: ID
     recipient_person_id: ID | None = None
     expires_at: datetime
-    reason: Reason
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)] = ''
 
     @field_validator("expires_at")
     @classmethod
@@ -9286,7 +9345,7 @@ class SwapOfferInput(Schema):
         return _utc_instant(value)
 
 
-class SwapCounterofferInput(Decision):
+class SwapCounterofferInput(SwapNote):
     assignment_id: ID
 
 
@@ -10276,6 +10335,8 @@ def _bulk_action_fields(key, name, action):
         exclude.update({'workspace_id', 'shift_id', 'shift_ids', 'keys'})
     if kind == 'availability.record':
         exclude.add('leave_type')  # legacy free text; new forms choose the existing leave-type reference
+    if kind == 'request.decide':
+        exclude.add('balance_confirmation')
     return _bulk_fields(cls, inputs=True, exclude=exclude)
 
 

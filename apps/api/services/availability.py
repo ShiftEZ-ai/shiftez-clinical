@@ -548,6 +548,10 @@ def owns_request(actor, row):
             or actor.person_id is not None and row.person_id == actor.person_id)
 
 
+def _leave_has_started(row):
+    return aware(row.start) <= m.now()
+
+
 def require_request_decision(db, actor, row, decision, *, approval_context=None):
     if decision == "withdraw":
         require(owns_request(actor, row),
@@ -602,12 +606,14 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     require_request_decision(db, actor, row, value.decision, approval_context=approval_context)
     expected(row, command.expected_revision)
     overtime = row.kind == "overtime_availability"
-    require(row.status == "submitted" or overtime and row.status == "approved" and value.decision == "withdraw",
-            "WORKFLOW_STATE", "Only a waiting request can be decided; an approved overtime offer may also be withdrawn", 409)
+    withdraw_approved = row.status == "approved" and value.decision == "withdraw" and (overtime or row.kind == "leave")
+    require(row.status == "submitted" or withdraw_approved, "WORKFLOW_STATE",
+            "Only waiting requests can be decided. Approved leave and overtime can be withdrawn.", 409)
     inputs_changed = False
     conflicts = []
     affected = 1
     self_approval = None
+    overdrawn = False
     if value.decision == "withdraw":
         if overtime:
             overtime_availability.require_unlocked(db, actor, row)
@@ -617,6 +623,25 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
                             "previous_decision_reason": row.decision_reason,
                             "previous_decided_at": json_value(row.decided_at)}
             inputs_changed = bool(retired)
+        if row.kind == "leave" and withdraw_approved:
+            from .leave_balances import BALANCE_LEAVE_KINDS
+            require(not _leave_has_started(row), "LEAVE_ALREADY_STARTED",
+                    "Ask an approver to correct leave that has already started", 409)
+            require(row.workspace_id is None, "REQUEST_UNDO_LINKED",
+                    "Remove the linked rota before withdrawing approved leave", 409)
+            absences = list(db.scalars(select(m.Availability).where(
+                m.Availability.department_id == actor.department_id, m.Availability.request_id == row.id,
+                m.Availability.kind.in_(BALANCE_LEAVE_KINDS), m.Availability.retracted.is_(False))))
+            for absence in absences:
+                absence.retracted = True
+                absence.revision += 1
+            row.details = {**(row.details or {}), "withdrawn_approval": {
+                "at": json_value(row.decided_at),
+                "absences": [{"id": absence.id, "revision": absence.revision} for absence in absences]}}
+            affected += len(absences)
+            inputs_changed = bool(absences)
+            if inputs_changed and not batch:
+                bump_inputs(db, actor, availability=True)
         row.status = "withdrawn"
         row.details = {**(row.details or {}), "withdrawn_by": actor.identity_id}
     else:
@@ -624,6 +649,9 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
                 "SELF_APPROVAL", "A different authorised person must decide this request", 403)
         self_approval = independence.ensure_subject(db, actor, "request.decide", decision_subjects(row), row.created_by,
             "A different authorised person must decide this request", value.reason, row.id, context=approval_context)
+        if value.decision == "approve" and row.kind == "leave":
+            from .leave_balances import confirm_approval
+            overdrawn = bool(confirm_approval(db, actor, row, value.balance_confirmation))
         row.status = "approved" if value.decision == "approve" else "rejected"
         row.decided_by = actor.identity_id
         if value.decision == "approve" and overtime:
@@ -654,7 +682,8 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
                 bump_inputs(db, actor, availability=True)
     if overtime and inputs_changed and not batch:
         bump_inputs(db, actor, availability=True)
-    row.decision_reason = value.reason
+    if not (row.kind == "leave" and withdraw_approved):
+        row.decision_reason = value.reason
     row.decided_at = m.now()
     row.private_undo_note = None
     row.revision += 1
@@ -669,11 +698,12 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     if self_approval is not None:
         item["self_approved"] = True
     replace_action = (row.details or {}).get("replace_action") if row.kind == "absence_report" and row.status == "approved" else None
+    balance_audit = {'leave_balance_overdrawn': True} if overdrawn else {}
     if batch:
-        return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected,
+        return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected, **balance_audit,
                 'conflicts': conflicts, 'warnings': [finding['message'] for finding in conflicts]}
     return {"record": leave_types.names(db, actor.department_id, [item])[0], "affected_count": affected,
-            **({"replace_action": replace_action} if replace_action else {}),
+            **balance_audit, **({"replace_action": replace_action} if replace_action else {}),
             'conflicts': conflicts, 'warnings': [finding['message'] for finding in conflicts],
             "message": "Decision saved. Schedule changes and replacement cover require a reviewed rota amendment."}
 
@@ -763,9 +793,27 @@ def undo_decision(db, actor, command, *, batch=False):
             inputs_changed = True
             if not batch:
                 bump_inputs(db, actor, availability=True)
-    if not overtime:
+    withdrawn_approval = (row.details or {}).get("withdrawn_approval") if row.kind == "leave" and row.status == "withdrawn" else None
+    if withdrawn_approval is not None:
+        from .leave_balances import require_undo_balance
+        for ref in withdrawn_approval["absences"]:
+            absence = scoped(db, m.Availability, ref["id"], actor)
+            require(absence.retracted and absence.request_id == row.id and absence.revision == ref["revision"],
+                    "STALE_REVISION", "The approved leave record has changed", 409)
+            require_undo_balance(db, actor, absence)
+            findings = rotation_leave_conflicts(db, actor, absence={**record(absence), "retracted": False})
+            require_rotation_leave(findings)
+            absence.retracted = False
+            absence.revision += 1
+            affected += 1
+            inputs_changed = True
+        row.status = "approved"
+        row.decided_at = aware(withdrawn_approval["at"]) if withdrawn_approval["at"] else None
+        if inputs_changed and not batch:
+            bump_inputs(db, actor, availability=True)
+    elif not overtime:
         row.status, row.decided_by, row.decision_reason = "submitted", None, None
-    row.details = {key: value for key, value in (row.details or {}).items() if key != "withdrawn_by"}
+    row.details = {key: value for key, value in (row.details or {}).items() if key not in {"withdrawn_by", "withdrawn_approval"}}
     if row.status == "submitted":
         row.decided_at = None
     row.revision += 1
@@ -777,7 +825,7 @@ def undo_decision(db, actor, command, *, batch=False):
     if batch:
         return {"record": item, "inputs_changed": inputs_changed, "affected_count": affected, **details}
     return {"record": leave_types.names(db, actor.department_id, [item])[0], "affected_count": affected, **details,
-            "message": "Undone: the previous request state is restored." if overtime else "Undone: the request waits for a decision again."}
+            "message": "Undone: the previous request state is restored." if overtime or withdrawn_approval is not None else "Undone: the request waits for a decision again."}
 
 
 def link_request_rota(db, actor, command):
@@ -1126,6 +1174,8 @@ def _project(db, actor, team, source, row, names, recorded_details=False, swap_c
         if row.kind == "absence_report":
             from .published_changes import own_absence_summary
             item.update(own_absence_summary(row, actor))
+        if row.kind == "leave" and row.status == "approved":
+            item['can_withdraw_approved_leave'] = owns_request(actor, row) and row.workspace_id is None and not _leave_has_started(row)
         if row.kind == "rotation_change":
             from .training import change_summary
             item["summary"] = change_summary(db, row, rotation_names)
@@ -1658,7 +1708,8 @@ def _history(db, actor, source, row, item):
         linked = or_(linked, m.AuditEvent.id.in_(
             _untargeted_recording_events(row.department_id, [row.id]).with_only_columns(m.AuditEvent.id)))
     return events + [{"action": e.action, "at": json_value(e.created_at), "actor": by(e.actor_id), "reason": "" if e.reason == e.action else e.reason,
-                      **({"self_approved": True} if (e.detail or {}).get("self_approved") else {})}
+                      **({"self_approved": True} if (e.detail or {}).get("self_approved") else {}),
+                      **({"leave_balance_overdrawn": True} if (e.detail or {}).get("leave_balance_overdrawn") else {})}
                      # A refused command changed nothing: it stays in the audit trail, not in what was done to the request.
                      for e in db.scalars(select(m.AuditEvent).where(m.AuditEvent.department_id == row.department_id, linked,
                                                                     m.AuditEvent.action != 'command.refused')
