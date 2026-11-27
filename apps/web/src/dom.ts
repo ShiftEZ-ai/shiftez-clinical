@@ -1425,8 +1425,10 @@ export function notify(message: string, tone = 'success', action?: {label:string
   return done;
 }
 /** What an Undo did; a draft's Undo offers Redo (SW3-A-06), whose own message then offers Undo again. */
-export function notifyUndone(done:Undone,message:string){
-  const w=redoable(done);notify(message,'success',w?{label:'Redo',run:()=>redoDraft(w).catch(e=>reportError(e))}:undefined);}
+export function notifyUndone(done:Undone,message:string|[before:string,name:string,after:string]){
+  const w=redoable(done);
+  notify(typeof message==='string'?message:message[0]+isolate(message[1])+message[2],
+    'success',w?{label:'Redo',run:()=>redoDraft(w).catch(e=>reportError(e))}:undefined);}
 /** Toasts live in the top-most open modal dialog (a modal makes the rest of the page inert, so an Undo behind it could
  *  not be pressed, e.g. a change made from the People side panel), else in the page. Dialogs open in document order. */
 function trayHost():HTMLElement{const open=[...document.querySelectorAll('dialog')].filter(d=>d.open&&d.matches(':modal'));return open[open.length-1]||document.body;}

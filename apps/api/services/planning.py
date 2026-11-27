@@ -634,7 +634,7 @@ def assignment_validation_scope(data, before, previous):
 
 def changed(db, actor, workspace, before, reason, *, content_changed=True, undoable=True,
             external_snapshot=None, shared_inputs=None, prepared=None, defer_assignments=False, review_rejection=False,
-            staffed_creation=False, generation_apply=False):
+            staffed_creation=False, generation_apply=False, edit_action=None):
     """Every draft edit: one ChangeSet (one Undo) and a synchronous check. The reply says what changed, the same for a forward
     edit, an undo and a Resolve issues batch: the rota and its health summary, the sessions changed or removed, and the
     issues that came and went, so the open page patches it in place instead of reading the rota again."""
@@ -662,12 +662,15 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     else:
         before = {**before, '_review_action': 'return'}
     bulk = db.info.get("bulk")
-    edit_action = 'bulk.apply' if bulk is not None else db.info.get('_draft_edit_action')
+    edit_action = edit_action or db.info.get('_draft_edit_action')
     changes = bulk.setdefault("workspace_changes", {}) if bulk is not None else {}
     change = changes.get(workspace.id) if undoable else None
     # A failed preview savepoint expunges a newly created change set; never reuse that entry.
     if change is not None and change in db and not change.undone:
         change.resulting_content_revision = workspace.content_revision
+        edit_action = 'bulk.apply'
+        if change.before_snapshot.get('_edit_action') != edit_action:
+            change.before_snapshot = {**change.before_snapshot, '_edit_action': edit_action}
     else:
         change = m.ChangeSet(workspace_id=workspace.id,
                              before_snapshot={**before, '_edit_action': edit_action} if undoable and edit_action else before,

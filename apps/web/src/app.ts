@@ -8,7 +8,7 @@ import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
 import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {bidi,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
@@ -8720,8 +8720,9 @@ function undoBarButton(w:Row,reading=false){
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
 async function undoLast(w:Row,edit:UndoEdit){
   const done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo',undo_of:edit.id},w.id,edit.revision).catch(e=>{throw undoRefused(e);})}];
-  const author=edit.own?'you':edit.author?isolate(edit.author):'another rota editor';
-  await applyUndone(done);notifyUndone(done,`Undone. The rota is back to before ${author} ${edit.label}.`);
+  const before='Undone. The rota is back to before ',after=` ${edit.label}.`;
+  await applyUndone(done);
+  notifyUndone(done,!edit.own&&edit.author?[before,edit.author,after]:before+(edit.own?'you':'another rota editor')+after);
 }
 // Its "Redone." message (the undo registry) offers Undo again.
 async function redoLast(){await redoDraft(redoAfter?.id===workspaceId&&knownRevision(workspaceId)===redoAfter.revision?redoAfter:await draftOnScreen());}
@@ -8745,18 +8746,17 @@ let seenActivity:number|null=null;
 /** The page's own saves whose pulses have not come yet, by the pulse value their replies named (several saves of what
  *  the value does not count, settings or rules, share one): each such pulse is already on screen (ownPulse in onPulse). */
 let ownSaves={activity:NaN,n:0};
-// Your own Undo's reply: Redo is offered on the rota it left, at that revision (any later change moves the revision),
-// in the bar already on screen at once: the redraw waits for the draft to be read again.
+// The command reply updates the visible Undo target and Redo before a full planner redraw can finish.
 window.addEventListener('rota-saved',e=>{const {kind,result}=(e as CustomEvent).detail||{},w=result?.workspace;
   if(!w?.id||plannerRota?.id!==w.id&&kind!=='workspace.undo')return;
-  // Any other change to the rota on screen (a Redo too) takes Redo off at once.
-  if(kind!=='workspace.undo'){document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();return;}
-  redoAfter={id:String(w.id),revision:Number(w.revision)};
+  const undone=kind==='workspace.undo';
+  if(undone)redoAfter={id:String(w.id),revision:Number(w.revision)};
+  else document.querySelector('.planner-bar [data-shortcut="redo"]')?.remove();
   const undo=plannerRota?.id===w.id?document.querySelector<HTMLButtonElement>('.planner-bar [data-undo-edit]'):null;
-  if(!undo)return;
+  if(!undo||!undone&&!('undo_edit' in w))return;
   const focused=document.activeElement===undo,next=undoBarButton(w);
   undo.replaceWith(next);if(focused)focusQuietly(next);
-  if(!next.parentElement!.querySelector('[data-shortcut="redo"]'))next.after(redoBarButton());});
+  if(undone&&!next.parentElement!.querySelector('[data-shortcut="redo"]'))next.after(redoBarButton());});
 // The page's own change: its reply names the pulse value it leads to, so that pulse does not refresh a second time.
 // The page's own edit (not a run: job.* commands drop the jobs read) keeps the last jobs read current, so the redraw
 // after it does not read the jobs again (PL-03).

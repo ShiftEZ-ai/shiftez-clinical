@@ -146,9 +146,12 @@ def test_old_toast_cannot_undo_an_earlier_edit_after_toolbar_undo(browser, live_
         saved_undo = toast.get_by_role('button', name='Undo', exact=True)
         expect(saved_undo).to_be_visible()
         toolbar_undo = page.locator('.planner-bar').get_by_role('button', name='Undo last edit')
+        target = h.detail(workspace)['workspace']['undo_edit']
+        expect(toolbar_undo).to_have_accessible_name(re.compile(rf'^Undo last edit, You {re.escape(target["label"])} · '))
         with command(page, 'workspace.undo') as undone:
             toolbar_undo.click()
         assert undone.value.ok, undone.value.text()
+        assert undone.value.request.post_data_json['payload']['undo_of'] == target['id']
         revision = undone.value.json()['workspace']['revision']
         with command(page, 'workspace.undo') as stale:
             saved_undo.click()
