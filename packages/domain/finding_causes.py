@@ -215,17 +215,13 @@ class FindingCauses:
         return self.capacities[key]
 
     def quota(self, policy, pid, a, b, amount, *, state=None, actual=None, proration=None):
-        from .quotas import quota_contribution
-        from .validation import person_rows, participation_for, lead_qualified
+        from .quotas import quota_opportunity
+        from .validation import person_rows, lead_qualified
         data, rule = self.data, policy['definition']['rule']
         selector = {**policy, 'definition': {**policy['definition'], 'scope': session_prefill_scope(policy['definition']['scope'])}}
 
         def contribution(shift, person):
-            participant = {'id': 'opportunity', 'person_id': person or pid, 'start': shift['start'], 'end': shift['end'],
-                           'participation': participation_for(data, person, shift, aware(shift['start']), aware(shift['end']))
-                               if person is not None else (rule['participation'] or ['staff'])[0],
-                           'overtime': rule['overtime'] == 'only', 'team_lead': rule['metric'] == 'lead_turns'}
-            return quota_contribution(data, policy if person is not None else selector, person, shift, participant, [], a, b)
+            return quota_opportunity(data, policy if person is not None else selector, person, shift, a, b, subject=pid)
 
         def matches(shift):
             if inactive(shift) or data['types'][shift['assignment_type_id']]['department_id'] != policy['department_id']:

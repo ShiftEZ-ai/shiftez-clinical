@@ -1435,7 +1435,7 @@ const SETTING_WORDS:Record<string,string>={include_overtime:'Counts overtime',ov
   to_type_ids:'Not these duty types',within_days:'Within days',series_length:'After a run of',rest_days:'Days off after',from_location_id:'From place',to_location_id:'To place',person_ids:'People',
   when_person_ids:'Only when these people are on duty',mode:'Together or apart',level:'On the same',aggregation:'Counted',assignment_type_ids:'Duty types',service_ids:'Clinics',trainee_category_ids:'Trainee ranks',
   volunteer_required:'Only when they volunteer',overflow_maximum:'Extra places',overflow_category_ids:'Ranks that may use extra places',holder:'Across',maximum_gap:'Maximum gap',required_policy_ids:'Under the limits of',shape:'Shape',participation:'Who counts',rounding:'Round a share',
-  prorate_department_days:'Adjust for time in the department',reference_days:'Days for the full number',leave_buffer_days:'Days around leave',period:'Period',period_days:'Days back',aim:'Aim',share_by:'Share by',pairing:'A pair counts when',partners:'Partners',
+  proration_basis:'Proration basis',prorate_department_days:'Adjust for time in the department',reference_days:'Days for the full number',leave_buffer_days:'Days around leave',period:'Period',period_days:'Days back',aim:'Aim',share_by:'Share by',pairing:'A pair counts when',partners:'Partners',
   priority:'Priority',session_priority:'Session order',overtime_priority:'Overtime order',supervisor_relationship:'Supervisor',balance_by:'Balance',balance_weight:'Balance importance',
   balance_window:'Balance over',balance_window_days:'Days in the run',balance_target_mode:'Mode to aim for',balance_target_share:'Share to aim for (0–1)',
   share_adjustment:'Share of a fair amount',tolerance_percent:'Leeway around the aim (%)',tolerance_units:'Leeway of at least',
@@ -1450,6 +1450,7 @@ const KIND_SETTING_WORDS:Record<string,string>={'block_quota.window_days':'Days 
 /** `e`: the catalogue entry, whose own labels (`setting_labels`) come first. */
 export const settingWords=(kind:string,f:string,e?:Pick<RuleCatalogueEntry,'setting_labels'>)=>e?.setting_labels?.[f]||KIND_SETTING_WORDS[`${kind}.${f}`]||SETTING_WORDS[f]||words(f);
 const SETTING_HELP:Record<string,string>={continuity:'The same lead: one person leads from start to end. Hand over: people present for part of the duty may each lead their part.',repeat:'With no counting end, counting follows the line’s Valid dates.',window_anchor_on:'Blocks repeat from this date. Empty: from the first counting date.',prorate_department_days:'Someone in the department for part of the period gets a matching share of the number.',
+  proration_basis:'Rotation weekdays use the rotation clinic’s opening days, or department days if the clinic has no calendar. Countable session days use the dates of matching sessions. Maximums stay fixed.',
   reference_days:'Someone in the department this many days gets the whole number.',rounding:'How a part share becomes a whole number.',
   window_days:'Used when counted over any run of days.',balance_window_days:'Used when balanced over any run of days.',period_days:'Days or months back, not both.',period_months:'Days or months back, not both.',
   leave_buffer_days:'Also keep this many days free before and after leave.',overflow_maximum:'Places allowed above the number, for the ranks below.',

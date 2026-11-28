@@ -3047,6 +3047,10 @@ def quota_target_amount(metric, amount):
     return amount
 
 
+QuotaProrationBasis = Literal['department_days', 'rotation_weekdays', 'countable_session_days']
+DEFAULT_QUOTA_PRORATION_BASIS = 'department_days'
+
+
 class BlockQuota(Schema):
     """A department-owned block commitment or recurring calendar limit, never a payroll entitlement."""
     kind: Literal["block_quota"]
@@ -3071,6 +3075,8 @@ class BlockQuota(Schema):
     window_anchor_on: date | None = None
     prorate_partial_windows: bool = False
     prorate_department_days: bool = False
+    proration_basis: QuotaProrationBasis = Field(default=DEFAULT_QUOTA_PRORATION_BASIS,
+        exclude_if=lambda value: value == DEFAULT_QUOTA_PRORATION_BASIS)
     reference_days: int = Field(default=28, ge=1, le=366, strict=True)
     rounding: Literal['down', 'nearest', 'up'] = 'nearest'
 
@@ -4427,6 +4433,7 @@ class QuotaProration(Schema):
     ends_on: date
     calendar_id: ID | None
     rounding: Literal['up'] = 'up'
+    basis: QuotaProrationBasis | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class FindingCause(Schema):
@@ -10978,6 +10985,7 @@ TEAM_PROBLEM_WORDS = {
 
 
 FINDING_MESSAGES = {
+    'QUOTA_STRUCTURAL_SHORTFALL': 'Workload minimum exceeds available work',
     'COVERAGE_GAP': 'Fewer people than the minimum — this session still needs someone',
     'COVERAGE_TARGET': 'Fewer people than the preferred number (advisory)',
     'TIME_OVERLAP': 'This person is already working at this time',

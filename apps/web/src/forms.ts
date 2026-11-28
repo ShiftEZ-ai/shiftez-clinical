@@ -1805,7 +1805,8 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
         config.append(limits.wrap,metric.wrap,overtime.wrap,types.wrap,participation.wrap,
           el('fieldset',{class:'span-2 form-grid quota-period'},el('legend',{},'Period'),dateRange('Dates',blockStart,blockEnd),repeat.wrap,windowDays.wrap,prorate.wrap,referenceDays.wrap,rounding.wrap,
             el('p',{class:'hint span-2'},'Weeks start on the department’s first day of the week. Duties count on the day they start.')));
-        readRule=()=>({kind:value,...limits.read(),prorate_department_days:prorate.input.checked,reference_days:Number(referenceDays.input.value),rounding:rounding.input.value,
+        readRule=()=>({kind:value,...limits.read(),...(given.proration_basis?{proration_basis:given.proration_basis}:{}),
+          prorate_department_days:prorate.input.checked,reference_days:Number(referenceDays.input.value),rounding:rounding.input.value,
           window_days:inBlocks()?Number(windowDays.input.value):null,window_alignment:repeat.input.value==='once'?'rolling':repeat.input.value,
           starts_on:blockStart.input.value,ends_on:blockEnd.input.value,metric:metric.input.value,overtime:overtime.input.value,assignment_type_ids:types.values(),participation:participation.values()});
       }else if(value==='max_consecutive_weekends'){

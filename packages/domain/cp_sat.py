@@ -1581,12 +1581,18 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     control.check()
     from .cp_sat_quotas import add_quotas
     quota_demand = set()
+    quota_shortfalls = []
     issues = add_quotas(model, data, by_person, penalise, diagnostic_proposal=diagnostic_proposal, leads=lead_terms,
                         score_items=None if feasibility_only else quota_items,
                         score_strengths=quota_strengths, target_group=fill_priority.target if fill_priority.enabled else None, strict_minima=strict_constraints,
                         diagnostic_domains=diagnostic_domains if not feasibility_only else None,
                         staffing_targets=staffing_targets if options.scoring.weights.rules else None,
-                        staffing_demand=quota_demand if staffing_limits else None)
+                        staffing_demand=quota_demand if staffing_limits else None,
+                        structural_shortfalls=quota_shortfalls)
+    if quota_shortfalls:
+        shortages.extend(quota_shortfalls)
+        publish_issues(quota_shortfalls, 'unresolved', 'preparing')
+        result.update(diagnostics=shortages, diagnostics_complete=False)
     if issues:
         return {**result, 'status': 'invalid_inputs', 'issues': issues}
     # A quota's actual candidate contributions decide where it can need an extra place.

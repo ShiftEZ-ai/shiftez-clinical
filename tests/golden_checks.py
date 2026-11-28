@@ -294,6 +294,60 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
+def check_quota_proration(data, ids, spec):
+    expected = spec['expect']
+    amounts = expected['validator']
+    person = ids[expected['counterfactual']['person']]
+    sessions = [ids[key] for key in expected['counterfactual']['sessions']]
+    rule = ids['workload']
+
+    def observed(work):
+        report = evaluate(work)['quota_report']
+        assert report['complete'], report
+        [row] = [r for r in report['rows'] if r['policy_id'] == rule and r['person_id'] == person]
+        return row
+
+    def change_basis(basis):
+        work = copy.deepcopy(data)
+        [policy] = [p for p in work['policies'] if p['id'] == rule]
+        [line] = policy['definition']['rule']['lines']
+        line['settings']['block_quota']['proration_basis'] = basis
+        return work
+
+    row = observed(data)
+    assert row['amount'] == amounts['amount']
+    assert (row['proration']['basis'], row['proration']['working_days'], row['proration']['full_working_days']) == (
+        amounts['basis'], amounts['rotation_days'], amounts['department_days'])
+    assert observed(change_basis('department_days'))['amount'] == amounts['default_amount']
+    structural = expected['precheck']
+    too_little = change_basis(structural['basis'])
+    assert observed(too_little)['amount'] == structural['required']
+
+    progress = []
+    result = generate(too_little, 5, workers=1, feasibility_only=True, progress=progress.append)
+    assert any(update['stage'] == 'preparing' and any(item['code'] == structural['code']
+               and {'rule_id': rule, 'person_id': person} in item['samples'] for item in update['precheck_issues'])
+               for update in progress if update.get('precheck_issues')), progress
+    [warning] = [r for r in result['diagnostics'] if r['code'] == structural['code']]
+    assert (warning['required'], warning['available_upper_bound'], warning['proven']) == (
+        structural['required'], structural['available'], True)
+    assert result['status'] == 'requirements_conflict', result
+
+    counted = set()
+    for seed in expected['seed_robustness']['seeds']:
+        result = solve(data, seed, feasibility_only=True)
+        assert result['status'] == expected['counterfactual']['on'], result
+        candidate = feasible(data, result)
+        assert all(person in {p['person_id'] for p in shift(candidate, sid)['participants']} for sid in sessions)
+        without_one = copy.deepcopy(candidate)
+        place(without_one, sessions[0], [])
+        reduced = observed(without_one)
+        assert reduced['status'] == 'below_minimum' and reduced['actual'] == amounts['amount'] - 1
+        counted.update(sessions)
+    return {'assertions': {'validator', 'counterfactual', 'precheck', 'seed_robustness'},
+            'bindings': {'workload': len(counted)}}
+
+
 def check_scenario(data, ids, spec):
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
@@ -311,5 +365,5 @@ def check_scenario(data, ids, spec):
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
-            'A-WEEKLY-LIMIT-01': check_weekly_limit,
+            'A-WEEKLY-LIMIT-01': check_weekly_limit, 'A-QUOTA-PRORATION-01': check_quota_proration,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

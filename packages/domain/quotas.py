@@ -14,7 +14,7 @@ import io
 import json
 import math
 from zoneinfo import ZoneInfo
-from packages.contracts.schemas import TypeDefinition
+from packages.contracts.schemas import DEFAULT_QUOTA_PRORATION_BASIS, TypeDefinition
 from .recurrence import inactive
 from .participation import presence_intervals
 from .conditions import (active_rules, bind_level_window, conditions_match, scope_tree, counting_key, counting_views,
@@ -37,9 +37,11 @@ MAX_SHIFTS = 10000
 MAX_PARTICIPANTS = 40000
 MAX_ROWS = 10000
 MAX_SUBJECT_CONTEXTS = SCOPE_CONTEXT_BUDGET  # one report-wide ceiling, not multiplied by people or quota windows
+DEPARTMENT_PRORATION_TEXT = ("Partial minimums and targets use department weekend days or the selected operating calendar "
+                             "override and round up; maxima are unchanged.")
 BASIS = ("Minimums and maximums include current department publications over the complete block; targets count the effective rota overlap. "
          "other drafts, other departments, external work and attendance are excluded. "
-         "Partial minimums and targets use department weekend days or the selected operating calendar override and round up; maxima are unchanged. "
+         f"{DEPARTMENT_PRORATION_TEXT} "
          "Approved leave, recorded leave and actual absence reduce the in-scope working days for minimums and targets; maxima are unchanged. Credits are planned, not completed training or pay.")
 
 
@@ -182,6 +184,17 @@ def period_bounds(policy, zone):
             local_stamp(date.fromisoformat(rule["ends_on"]), "00:00", zone))
 
 
+def quota_context_bounds(policy, zone, *, effective=None):
+    """The session-based denominator needs the entire nominal window in the snapshot."""
+    rule = policy['definition']['rule']
+    if rule.get('proration_basis') == 'countable_session_days' and rule['comparison'] != 'maximum':
+        full = policy.get('_quota_full_window')
+        if full:
+            first, last = (date.fromisoformat(day) for day in full)
+            return local_stamp(first, '00:00', zone), local_stamp(last, '00:00', zone)
+    return effective or period_bounds(policy, zone)
+
+
 def membership_overlaps(row, start, end):
     return row["starts_on"] < end and (not row.get("ends_on") or start < row["ends_on"])
 
@@ -275,11 +288,101 @@ def departmental_days(data, person_id, scope, first, last, *, budget=None):
     return len(departmental_dates(data, person_id, scope, first, last, budget=budget))
 
 
+def calendar_working_dates(data, calendar_id, first, last, cache, *, weekend=None):
+    from .resources import closed_intervals
+
+    key = ('proration_calendar', calendar_id, tuple(weekend) if weekend is not None else None, first, last)
+    if key not in cache:
+        working = set()
+        calendar = data.get('operating_calendars', {}).get(calendar_id)
+        zone = data['organisation']['timezone']
+        for n in range((last - first).days):
+            day = first + timedelta(days=n)
+            if weekend is not None:
+                if day.weekday() not in weekend:
+                    working.add(day)
+                continue
+            a, b = local_midnight(day, zone), local_midnight(day + timedelta(days=1), zone)
+            if sum(duration_hours(x, y) for x, y in closed_intervals(calendar, a, b, data=data)) < duration_hours(a, b):
+                working.add(day)
+        cache[key] = working
+    return cache[key]
+
+
+def rotation_working_days(data, pid, present, first, last, department_days, cache):
+    from .validation import person_rows
+
+    department_id = data['workspace']['department_id']
+    rotations = [row for row in person_rows(data, 'rotations', pid)
+                 if row['department_id'] == department_id and row.get('service_id')]
+    result = set()
+    for day in present:
+        active = [data.get('services', {}).get(row['service_id']) for row in rotations
+                  if row['starts_on'] <= day.isoformat() < row['ends_on']]
+        if any(clinic is None or clinic['department_id'] != department_id for clinic in active):
+            raise ValueError('A rotation clinic is unavailable in this quota window')
+        calendars = {clinic.get('calendar_id') for clinic in active}
+        if not calendars or None in calendars:
+            if day in department_days:
+                result.add(day)
+        for calendar_id in calendars - {None}:
+            calendar = data.get('operating_calendars', {}).get(calendar_id)
+            if not calendar or calendar['department_id'] != department_id or not calendar.get('active', True):
+                raise ValueError('A rotation clinic needs an active operating calendar in this department')
+            if day in calendar_working_dates(data, calendar_id, first, last, cache):
+                result.add(day)
+    return len(result)
+
+
+def countable_session_days(data, policy, pid, present, first, last, cache, budget):
+    from .finding_causes import session_prefill_scope
+
+    rule = policy['definition']['rule']
+    full = dated(policy, starts_on=first.isoformat(), ends_on=last.isoformat(), comparison='maximum')
+    selector = {**full, 'definition': {**full['definition'], 'scope': session_prefill_scope(full['definition']['scope'])}}
+    day_policy = full['definition']['rule']
+    key = ('proration_sessions', first, last, json.dumps([
+        selector['definition']['scope'], policy.get('starts_on'), policy.get('ends_on'),
+        {f: day_policy[f] for f in ('metric', 'assignment_type_ids', 'participation', 'overtime')}],
+        sort_keys=True))
+    zone = ZoneInfo(data['organisation']['timezone'])
+    a, b = period_bounds(full, zone.key)
+
+    def can_count(check, person, shift):
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise ScopeContextLimit('Countable session days exceed the quota scope budget')
+        data.get('_check_budget', lambda: None)()
+        credit = quota_opportunity(data, check, person, shift, a, b, subject=pid)
+        metric = rule['metric']
+        if credit is None:
+            return False
+        if metric in {'duties', 'lead_turns'}:
+            return credit['duty']
+        if metric == 'session_units':
+            return credit['session_units'] > 0
+        if metric.endswith('credit'):
+            return credit['credits'] > 0
+        return bool(credit['intervals'])
+
+    if key not in cache:
+        days = defaultdict(list)
+        for shift in data['shifts']:
+            if inactive(shift) or data['types'][shift['assignment_type_id']]['department_id'] != data['workspace']['department_id']:
+                continue
+            day = aware(shift['start']).astimezone(zone).date()
+            if first <= day < last and can_count(selector, None, shift):
+                days[day].append(shift)
+        cache[key] = days
+    days = cache[key]
+    # The full-window session pattern is shared. The person still has to match the rule where they can work.
+    personal = dated(full, starts_on=rule['starts_on'], ends_on=rule['ends_on'])
+    return (sum(any(can_count(personal, pid, shift) for shift in days.get(day, ())) for day in present), len(days))
+
+
 def window_proration(data, policy, pid, amount, cache, budget):
     """Resolve a person's lower bound once, before any scheduler consumes the report."""
     from .conditions import quota_day_scope
-    from .resources import closed_intervals
-    from .time import duration_hours
     rule = policy['definition']['rule']
     if rule['comparison'] == 'maximum':
         return amount, None
@@ -294,8 +397,13 @@ def window_proration(data, policy, pid, amount, cache, budget):
     if key not in cache:
         cache[key] = departmental_dates(data, pid, scope, start, stop, budget=budget)
     present = cache[key]
-    if len(present) == (hi-lo).days:
+    basis = rule.get('proration_basis', DEFAULT_QUOTA_PRORATION_BASIS)
+    if basis == DEFAULT_QUOTA_PRORATION_BASIS and len(present) == (hi-lo).days:
         return amount, None  # Full windows retain even fractional configured amounts.
+    if basis == 'countable_session_days':
+        days, full_days = countable_session_days(data, policy, pid, present, lo, hi, cache, budget)
+        # With no matching sessions the configured minimum remains visible for the shortfall check.
+        return prorated_window(amount, days, full_days, first, last, None, basis)
     department = data.get('department', {})
     calendar_id = department.get('operating_calendar_id')
     calendar = data.get('operating_calendars', {}).get(calendar_id)
@@ -307,29 +415,32 @@ def window_proration(data, policy, pid, amount, cache, budget):
         weekend = department.get('weekend_days', [4, 5])
         if not isinstance(weekend, list) or any(type(day) is not int or not 0 <= day <= 6 for day in weekend):
             raise ValueError('Department weekend days cannot be resolved')
-    key = ('proration_calendar', calendar_id, tuple(weekend) if weekend is not None else None, first, last)
-    if key not in cache:
-        working = set()
-        for n in range((hi-lo).days):
-            day = lo + timedelta(days=n)
-            if weekend is not None:
-                if day.weekday() not in weekend:
-                    working.add(day)
-                continue
-            a, b = local_midnight(day, data['organisation']['timezone']), local_midnight(day+timedelta(days=1), data['organisation']['timezone'])
-            if sum(duration_hours(x, y) for x, y in closed_intervals(calendar, a, b, data=data)) < duration_hours(a, b):
-                working.add(day)
-        cache[key] = working
-    working = cache[key]
+    working = calendar_working_dates(data, calendar_id, lo, hi, cache, weekend=weekend)
     if not working:
         raise ValueError('The department working-day definition has no working days in this quota window')
-    days = len(working.intersection(present))
-    if days == len(working):
+    days = (rotation_working_days(data, pid, present, lo, hi, working, cache) if basis == 'rotation_weekdays'
+            else len(working.intersection(present)))
+    return prorated_window(amount, days, len(working), first, last, calendar_id, basis)
+
+
+def prorated_window(amount, days, full_days, first, last, calendar_id, basis):
+    if days >= full_days:
         return amount, None
-    prorated = min(amount, max(0, math.ceil(Fraction(str(amount)) * days / len(working))))
+    prorated = min(amount, max(0, math.ceil(Fraction(str(amount)) * days / full_days)))
     return prorated, {'configured_amount': amount, 'amount': prorated, 'working_days': days,
-        'full_working_days': len(working), 'starts_on': first, 'ends_on': last,
-        'calendar_id': calendar_id, 'rounding': 'up'}
+        'full_working_days': full_days, 'starts_on': first, 'ends_on': last, 'calendar_id': calendar_id, 'rounding': 'up',
+        **({'basis': basis} if basis != DEFAULT_QUOTA_PRORATION_BASIS else {})}
+
+
+def quota_opportunity(data, policy, pid, shift, a, b, *, subject):
+    from .validation import participation_for
+
+    rule = policy['definition']['rule']
+    participant = {'id': 'opportunity', 'person_id': pid or subject, 'start': shift['start'], 'end': shift['end'],
+                   'participation': participation_for(data, pid, shift, aware(shift['start']), aware(shift['end']))
+                       if pid is not None else (rule['participation'] or ['staff'])[0],
+                   'overtime': rule['overtime'] == 'only', 'team_lead': rule['metric'] == 'lead_turns'}
+    return quota_contribution(data, policy, pid, shift, participant, [], a, b)
 
 
 def quota_contribution(data, policy, pid, shift, participant, members, a, b):
@@ -402,8 +513,13 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
         policies = [p for p in policies if p["definition"]["rule"]["starts_on"] <= hi and lo < p["definition"]["rule"]["ends_on"]]
     if not policies:
         return None
+    basis = BASIS
+    if any(p['definition']['rule'].get('proration_basis', DEFAULT_QUOTA_PRORATION_BASIS) != DEFAULT_QUOTA_PRORATION_BASIS
+           and p['definition']['rule']['comparison'] != 'maximum' for p in policies):
+        basis = BASIS.replace(DEPARTMENT_PRORATION_TEXT,
+            "Minimums and targets round up using their selected basis: department days, rotation weekdays or matching session days.")
     report = {"metric_version": METRIC_VERSION, "timezone": data["organisation"]["timezone"],
-              "basis": BASIS, "fingerprint": data.get("fingerprint"),
+              "basis": basis, "fingerprint": data.get("fingerprint"),
               "source_state": data["workspace"]["status"], "rows": [], "complete": True,
               "source_publications": copy.deepcopy(data.get("quota_context", {}).get("publications", [])),
               "candidate_workspace_id": data["workspace"]["id"],
@@ -475,10 +591,11 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
         rule, scope = policy["definition"]["rule"], policy["definition"]["scope"]
         try:
             a, b = period_bounds(policy, report["timezone"])
+            needed_start, needed_end = quota_context_bounds(policy, report["timezone"], effective=(a, b))
         except ValueError:
             unresolved("QUOTA_TIME_AMBIGUOUS", "The quota block has an ambiguous or nonexistent local-midnight boundary", policy)
             continue
-        if context_start > a or context_end < b:
+        if context_start > needed_start or context_end < needed_end:
             unresolved("QUOTA_CONTEXT_MISSING", "The complete configured quota interval was not loaded", policy)
             continue
         from .validation import scope_intervals

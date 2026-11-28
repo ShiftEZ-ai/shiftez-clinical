@@ -103,6 +103,7 @@ def test_non_leave_fix_list_actions_keep_their_order():
         'TIME_OVERLAP': ['open_line', 'clash'],
         'TYPE_VERSION_CHANGED': ['refresh_sessions'],
         'QUOTA_BELOW_MINIMUM': ['autoschedule_scoped'], 'QUOTA_ABOVE_MAXIMUM': ['autoschedule_scoped'],
+        'QUOTA_STRUCTURAL_SHORTFALL': ['open_line'],
     }
     for code in sorted(codes):
         finding = {'code': code, 'severity': 'warning', 'shift_id': 'session', 'person_id': 'person'}
