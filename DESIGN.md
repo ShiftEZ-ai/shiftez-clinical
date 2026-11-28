@@ -1048,6 +1048,8 @@ and a desktop window narrowed below it gets the same rule at once.
 - Paper is always light (`.export-sheet` redeclares the light tokens): title block (view, department · period,
   status; a draft in error red), hairline under it, footer 9 px muted (printed by/date left, page numbers right),
   optional signature line. Greyscale: each duty hue also gets a pattern so types stay apart without colour.
+- The Rules page prints every rule it lists opened to its lines, whatever is open on screen (Print and the browser's
+  own print); its more menu also downloads the department's rules in plain words, one text file by question.
 
 ## Constraints
 

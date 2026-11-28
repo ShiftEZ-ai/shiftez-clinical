@@ -4,7 +4,7 @@
  *  so it prints as it shows. PDF goes through the browser's print window (vector, searchable text), PNG through the
  *  feedback capture's renderer one page per image at the chosen image quality (never the screen's pixel density), CSV from
  *  the view's table (a view without one is drawn as the List). Always in the light theme. */
-import {el,button,withIcon,select,check,field,notify,showDialog,popover} from './dom.js';
+import {el,button,withIcon,select,check,field,notify,showDialog,popover,download,fileName} from './dom.js';
 import {segment} from './view_settings.js';
 import {render} from './feedback_capture.js';
 import {printPages,type PrintData} from './schedule_print.js';
@@ -328,11 +328,6 @@ export function csvOf(view:HTMLElement):string|null{
   // Columns without a visible heading (row actions) are not data.
   const named=[...table.rows[0]?.cells||[]].map(c=>!!text(c));
   return csvText([...table.rows].map(r=>[...r.cells].filter((_,i)=>named[i]!==false).map(text)));
-}
-const fileName=(name:string)=>name.replace(/[\\/:*?"<>|]+/g,'-');
-export function download(blob:Blob,name:string){
-  const a=el('a',{href:URL.createObjectURL(blob),download:fileName(name)}) as HTMLAnchorElement;
-  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10_000);
 }
 
 // ---- The dialog ----
