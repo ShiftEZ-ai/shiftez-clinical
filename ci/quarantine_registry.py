@@ -3,8 +3,10 @@ from collections import Counter
 from datetime import date, datetime, timezone
 import hashlib
 import json
+import os
 import re
 
+ALLOWANCE_DATE_ENV = "CI_ALLOWANCE_DATE"
 QUARANTINE = "tests/quarantine.json"
 QUARANTINE_RETIRED = "tests/quarantine-retired.json"
 QUARANTINE_XFAIL_PREFIX = "QUARANTINED ("
@@ -28,8 +30,25 @@ def canonical_node(node):
     return base + "[case-" + fingerprint + "]"
 
 
+def utc_calendar_date():
+    return datetime.now(timezone.utc).date()  # real clock: bound the pinned CI allowance date
+
+
+def validate_allowance_date(pinned):
+    try:
+        day = date.fromisoformat(pinned)
+    except (TypeError, ValueError):
+        raise ValueError("Invalid CI allowance date") from None
+    if day.isoformat() != pinned:
+        raise ValueError("Invalid CI allowance date")
+    if not 0 <= (utc_calendar_date() - day).days <= 1:
+        raise ValueError("CI allowance date must be today or yesterday in UTC")
+    return day
+
+
 def utc_today():
-    return datetime.now(timezone.utc).date()  # real clock: quarantine expiry is UTC policy
+    pinned = os.getenv(ALLOWANCE_DATE_ENV)
+    return utc_calendar_date() if pinned is None else validate_allowance_date(pinned)
 
 
 def decode_registry(raw, today):
