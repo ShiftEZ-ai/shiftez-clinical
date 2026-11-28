@@ -113,7 +113,7 @@ export function rotationLayer(ctx:Context,key:Legend,days:string[],on:boolean){
   const page=(offset:number,into:Map<string,TimelineItem[]>):Promise<Map<string,TimelineItem[]>>=>get<TimelineResponse>(`/api/timeline?start=${start}&end=${end}&layers=rotation,protected_time&limit=200&offset=${offset}`)
     .then(r=>{for(const p of r.people)into.set(p.id,p.items);return r.has_more&&r.people.length?page(offset+r.people.length,into):into;});
   // A failed read says so beside the grid with Retry; it is never cached. A session change or a page left stays silent.
-  const status=el('div',{class:'pg-leave-status'});
+  const status=el('div',{class:'pg-rot-status'});
   const read=()=>{status.replaceChildren();
     if(rotationCache?.key!==cacheKey)rotationCache={key:cacheKey,read:page(0,new Map())};
     const held=rotationCache;

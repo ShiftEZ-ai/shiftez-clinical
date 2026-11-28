@@ -1551,7 +1551,7 @@ tr.dt-linked>td{background:var(--accent-soft)}
 
 /* people view */
 .ppl{display:flex;flex-direction:column;gap:10px}
-.pg-leave-status:empty{display:none}  /* the leave read's failed note only (planner_people.ts leaveLayer) */
+.pg-leave-status:empty,.pg-rot-status:empty{display:none}  /* each read's failed note only (planner_people.ts leaveLayer, rotationLayer) */
 
 .pg-leave-key{width:18px;height:14px;border-radius:4px;border:1px solid var(--line-2);background:repeating-linear-gradient(135deg,var(--sub) 0 3px,transparent 3px 6px)}
 .pg-group>*{background:var(--subtle)}
