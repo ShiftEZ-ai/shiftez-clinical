@@ -359,6 +359,27 @@ class ImporterV34Tests(unittest.TestCase):
                 if deferred:
                     self.assertIn('Nightly suites deferred', summary.read_text())
 
+    def test_checks_allowance_date_reaches_the_plan_shards_and_verdict(self):
+        workflows = HELPERS.parent / 'workflows'
+        jobs = yaml.load((workflows / 'ci.yml').read_text(), Loader=yaml.BaseLoader)['jobs']
+        checks = jobs['checks']
+        capture, = [step for step in checks['steps'] if step.get('id') == 'allowances']
+        plan, = [step for step in checks['steps'] if step.get('id') == 'plan']
+        self.assertIn('date -u +%F', capture['run'])
+        self.assertLess(checks['steps'].index(capture), checks['steps'].index(plan))
+        source = '${{ steps.allowances.outputs.date }}'
+        self.assertEqual(checks['outputs']['allowance_date'], source)
+        self.assertEqual(plan['env']['CI_ALLOWANCE_DATE'], source)
+
+        decision = '${{ needs.checks.outputs.allowance_date }}'
+        for suite in ('unit', 'browser'):
+            self.assertEqual(jobs[suite]['with']['allowance_date'], decision)
+        shards = yaml.load((workflows / 'ci-tests.yml').read_text(), Loader=yaml.BaseLoader)
+        shard, = [step for step in shards['jobs']['tests']['steps'] if step.get('name') == 'Run the exact planned shard once']
+        self.assertEqual(shard['env']['CI_ALLOWANCE_DATE'], '${{ inputs.allowance_date }}')
+        verdict, = [step for step in jobs['ci-gate']['steps'] if 'trusted_verdict.py --plan' in step.get('run', '')]
+        self.assertEqual(verdict['env']['CI_ALLOWANCE_DATE'], decision)
+
     def test_shard_workflow_keeps_browser_diagnostics_separate(self):
         workflow = HELPERS.parent / "workflows/ci-tests.yml"
         job = yaml.load(workflow.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)["jobs"]["tests"]

@@ -545,6 +545,133 @@ def test_phone_schedule_legend_overflow_has_a_44px_target_on_one_line(browser, l
         context.close()
 
 
+DESKTOP = {'width': 1440, 'height': 900}
+HIT_AREA = r"""nodes => nodes.map(n => {
+  // The region that takes the pointer: the box, grown by an absolute ::before (a pseudo-element's clicks land on its
+  // element); each corner of it must land on the control itself, never on a neighbour or a clipping parent.
+  n.scrollIntoView({block: 'center', inline: 'center'});
+  // A table's columns that stick to an edge (its first column and its actions on a phone) cover what scrolls under
+  // them, so a target in another column is brought to the middle of the space between them.
+  const cell = n.closest('td'), scroller = cell?.closest('.table-scroll');
+  if (scroller && getComputedStyle(cell).position !== 'sticky') {
+    const stuck = [...cell.parentElement.children].filter(c => getComputedStyle(c).position === 'sticky')
+      .map(c => [getComputedStyle(c).left !== 'auto', c.getBoundingClientRect()]);
+    const s = scroller.getBoundingClientRect(), t = n.getBoundingClientRect();
+    const from = Math.max(s.left, ...stuck.filter(([l]) => l).map(([, e]) => e.right));
+    const to = Math.min(s.right, ...stuck.filter(([l]) => !l).map(([, e]) => e.left));
+    scroller.scrollLeft += (t.left + t.right) / 2 - (from + to) / 2;
+  }
+  const r = n.getBoundingClientRect(), b = getComputedStyle(n, '::before');
+  const grown = b.content !== 'none' && b.position === 'absolute';
+  const x = grown ? Math.max(0, -parseFloat(b.left) || 0) : 0, y = grown ? Math.max(0, -parseFloat(b.top) || 0) : 0;
+  const box = {left: r.left - x, top: r.top - y, right: r.right + x, bottom: r.bottom + y};
+  // A corner with a radius does not take the pointer outside its curve, so each corner is probed on the curve (45 degrees).
+  const shape = grown ? b : getComputedStyle(n), side = (r => Math.min(r.right - r.left, r.bottom - r.top));
+  // A radius is never more than half the box (a pill's 999px is its height's half).
+  const inset = (v, s) => 1 + Math.ceil(Math.min(v.endsWith('%') ? parseFloat(v) / 100 * s : parseFloat(v) || 0, s / 2) * (1 - Math.SQRT1_2));
+  const corners = [['TopLeft', box.left, box.top, 1, 1], ['TopRight', box.right, box.top, -1, 1],
+    ['BottomRight', box.right, box.bottom, -1, -1], ['BottomLeft', box.left, box.bottom, 1, -1]]
+    .map(([c, cx, cy, dx, dy]) => { const k = inset(shape[`border${c}Radius`], side(box)); return [c, cx + dx * k, cy + dy * k, dx, dy]; });
+  // A clipping parent (a scroll box) whose own corner with a radius holds this corner shapes it the same way: the probe
+  // moves onto that parent's curve when it lies further in.
+  const onParentCurve = ([c, px, py, dx, dy]) => {
+    const hit = document.elementFromPoint(px, py);
+    if (!hit || hit === n || !hit.contains(n)) return [px, py];
+    const a = hit.getBoundingClientRect(), k = inset(getComputedStyle(hit)[`border${c}Radius`], side(a));
+    const qx = (dx > 0 ? a.left : a.right) + dx * k, qy = (dy > 0 ? a.top : a.bottom) + dy * k;
+    return dx * (qx - px) > 0 && dy * (qy - py) > 0 ? [qx, qy] : [px, py];
+  };
+  // What each corner that misses lands on instead, so a failure names the neighbour or parent in the way.
+  const misses = corners.map(onParentCurve)
+    .map(([px, py]) => [px, py, document.elementFromPoint(px, py)]).filter(([, , hit]) => !hit || !(hit === n || n.contains(hit)))
+    .map(([px, py]) => `${Math.round(px)},${Math.round(py)} ` + document.elementsFromPoint(px, py).slice(0, 3)
+      .map(e => e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + [...e.classList].map(c => '.' + c).join('')).join(' < '));
+  const name = n.getAttribute('aria-label') || n.querySelector('[aria-label]')?.getAttribute('aria-label') || n.textContent.trim();
+  return {name, width: box.right - box.left, height: box.bottom - box.top, lands: !misses.length, misses};
+})"""
+# The Rules list's row and head, a line, a line panel's reach links and the legend's "+N", built as the client builds
+# them (rules_tree.ts, rule_catalogue.ts, rule_line_reach.ts, dom.ts legend), in #main so the work container applies.
+RULE_CONTROLS = r"""() => {
+  const host = document.createElement('div'); host.id = 'probe-targets'; document.querySelector('#main').prepend(host);
+  const box = label => `<label class="dt-check-hit"><input type="checkbox" class="bulk-check" aria-label="${label}"></label>`;
+  host.innerHTML = '<div class="rt"><div class="rt-lhead">' + box('Select all lines shown')
+    + '<button type="button" class="icon-button bare rt-toggle" aria-label="All rules">&gt;</button><span>Rule</span></div>'
+    + '<ul class="rt-list"><li class="rt-item"><div class="rt-row">' + box('Select a rule')
+    + '<button type="button" class="icon-button bare rt-toggle" aria-label="A rule lines">&gt;</button>'
+    + '<input type="checkbox" role="switch" class="switch" aria-label="A rule on or off" checked>'
+    + '<div class="rt-main"><div class="rt-title">A rule</div></div></div>'
+    + '<ul class="rt-lines"><li class="rt-ln">' + box('Select line 1 of a rule')
+    + '<span class="rt-n">1</span><span class="rt-ln-who">Everyone</span></li></ul></li></ul></div>'
+    + '<p>Applies on <button type="button" class="rc-reach-link">line 3</button> to'
+    + ' <button type="button" class="rc-reach-link">1 person</button>.</p>'
+    + '<ul class="view-legend" aria-label="Key"><li>Key</li><li class="lg-more">'
+    + '<button type="button" class="pill-more" aria-label="3 more"><span class="lg-more-mark" aria-hidden="true">+3</span></button></li></ul>';
+}"""
+
+
+@pytest.mark.parametrize('viewport', [DESKTOP, PHONE], ids=['1440', '390'])
+def test_selection_boxes_switches_links_and_search_reach_the_target_size(browser, live_server, h, viewport):
+    """Issue 1341 (WCAG 2.2 SC 2.5.8; 44 px on a phone, DESIGN.md Touch targets): a row's and select-all's selection box,
+    a person's name in a list, the Search field, the Rules list's box, open and on/off, a line's box, the legend's "+N"
+    and a line panel's reach links (a link inside a sentence: 24 px at both widths) each take the whole target."""
+    from .test_browser import set_layout, whole_list
+    from .test_browser_requests import day, leave
+
+    phone = viewport == PHONE
+    size = 44 if phone else 24
+    for offset in (3, 4):
+        leave(h, on=day(offset))
+    context, page = sign_in(browser, live_server, 'approver', viewport, has_touch=phone)
+
+    def measure(locator, at_least=size):
+        expect(locator.first).to_be_attached()
+        found = locator.evaluate_all(HIT_AREA)
+        # Chromium lays boxes out in 1/64 px units, so a 24 px reach can measure one unit short.
+        small = [t for t in found if min(t['width'], t['height']) < at_least - 1 / 64 or not t['lands']]
+        assert found and not small, f"{viewport['width']}: " + '; '.join(f"{t['name']} {t['width']:.0f}x{t['height']:.0f} misses {t['misses']}" for t in small)
+
+    try:
+        navigate(page, 'requests')
+        whole_list(page)
+        main = page.locator('#main')
+        # The Search box, its edge and padding too, takes the tap and focuses the field.
+        search_box = main.locator('.dt-toolbar .dt-search-wrap:visible')
+        measure(search_box)
+        edge = search_box.first.bounding_box()
+        assert edge
+        page.mouse.click(edge['x'] + edge['width'] - 3, edge['y'] + edge['height'] / 2)
+        expect(main.locator('.dt-toolbar .dt-search:visible')).to_be_focused()
+        set_layout(page, 'Table')
+        table = main.locator('.dt-table')
+        measure(table.locator('tbody td.dt-check .dt-check-hit'))
+        measure(table.locator('th .dt-check-head .dt-check-hit'))
+        measure(table.locator('tbody td .link-button.person-link:not(.pchip):visible'))
+        set_layout(page, 'Cards')
+        cards = main.locator('.dt-card')
+        measure(cards.locator('.dt-check-hit'))
+        measure(cards.locator('.link-button.person-link:not(.pchip):visible'))
+        page.evaluate(RULE_CONTROLS)
+        probe = page.locator('#probe-targets')
+        measure(probe.locator('.rt-lhead > .dt-check-hit, .rt-lhead > .rt-toggle'))
+        measure(probe.locator('.rt-row > .dt-check-hit, .rt-row > .rt-toggle, .rt-row > input.switch'))
+        measure(probe.locator('.rt-ln > .dt-check-hit'))
+        measure(probe.locator('.view-legend .pill-more'))
+        measure(probe.locator('.rc-reach-link'), 24)
+        # The label still ticks its box from its edge, and the switch turns from beyond its drawn track.
+        row_box = probe.locator('.rt-row > .dt-check-hit')
+        hit = row_box.bounding_box()
+        assert hit
+        page.mouse.click(hit['x'] + 1, hit['y'] + 1)
+        expect(row_box.get_by_role('checkbox')).to_be_checked()
+        switch = probe.get_by_role('switch', name='A rule on or off')
+        track = switch.bounding_box()
+        assert track
+        page.mouse.click(track['x'] + track['width'] / 2, track['y'] + track['height'] / 2 - (size / 2 - 1))
+        expect(switch).not_to_be_checked()
+    finally:
+        context.close()
+
+
 def test_disabled_primary_is_distinguishable_dark(browser, live_server, h):
     """LIVE-12: a disabled primary button (Rules › Propose with nothing to propose) keeps its disabled look under the pointer."""
     context, page = sign_in(browser, live_server, 'coordinator')

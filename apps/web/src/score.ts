@@ -23,14 +23,14 @@ const scoreWords=(s:Row)=>shownScore(s)==null?`Schedule score n/a${s.gate?.messa
 
 const lastScore=new Map<string,number>();
 /** Planner pill: the score, a short delta after an edit, and a popover explaining the lost points. */
-export function scorePill(key:string,score:Row,nameOf:(personId:string)=>string,openShift:(shiftId:string)=>void,review?:()=>void):HTMLElement{
+export function scorePill(key:string,score:Row,nameOf:(personId:string)=>string,openShift:(shiftId:string)=>void,review?:()=>void,open?:()=>void):HTMLElement{
   const value=shownScore(score),before=lastScore.get(key),delta=before===undefined||value==null?0:Math.round((value-before)*10)/10;if(value!=null)lastScore.set(key,value);
   const label=scoreWords(score);
   const b=el('button',{type:'button',class:`health-pill score-pill ${scoreTone(score)}`,'aria-haspopup':'dialog','aria-expanded':'false','aria-label':label,'data-ctip':label},
     icon('chart'),el('span',{class:'num'+(delta?' num-moved':'')},String(value??'n/a')),el('span',{class:'label'},' score'),
     delta?el('span',{class:'pill-extra score-delta '+(delta>0?'up':'down')},' '+signed(delta)):'');
   // The footer's one delegated handler (dom.ts footerAct, maintenance); a redrawn footer hands the open "Why" to the new pill.
-  footerAct(b,'score-pill',()=>popover(b,(panel,close)=>panel.append(...scoreWhy(score,nameOf,shiftId=>{close();openShift(shiftId);},review&&(()=>{close();review();}))),{label:'Why this score',placement:'below-end',key:'score-pill'}));
+  footerAct(b,'score-pill',open||(()=>popover(b,(panel,close)=>panel.append(...scoreWhy(score,nameOf,shiftId=>{close();openShift(shiftId);},review&&(()=>{close();review();}))),{label:'Why this score',placement:'below-end',key:'score-pill'})));
   queueMicrotask(()=>adoptPopover('score-pill',b));
   return b;
 }

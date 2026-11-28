@@ -11,10 +11,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / ".github/scripts"), str(ROOT / "ci")]
+import quarantine_registry as registry
 import queue_reuse as reuse
 
 BASE, HEAD, TREE, OTHER = (letter * 40 for letter in "abcd")
 REPO = "ShiftEZ-ai/shiftez-clinical"
+CHECKS_DATE = "2026-01-01"
 FILES = [
     "tests/test_alpha.py", "tests/test_beta.py",
     "tests/test_browser_alpha.py", "tests/test_browser_beta.py",
@@ -24,7 +26,7 @@ FILES = [
 def plan(width):
     return {
         "schema": 1, "sha": HEAD, "tree": TREE, "base_sha": BASE, "replicas": [1],
-        "smoke": False, "inventory_sha256": reuse.hosted.digest(FILES), "duration_sha256": "a" * 64,
+        "smoke": False, "allowance_date": CHECKS_DATE, "inventory_sha256": reuse.hosted.digest(FILES), "duration_sha256": "a" * 64,
         "suites": {
             suite: {"shards": [{"files": names[i::width]} for i in range(width)]}
             for suite, names in (("unit", FILES[:2]), ("browser", FILES[2:]))
@@ -42,7 +44,7 @@ def archive(files):
 
 @pytest.fixture
 def packet(tmp_path, monkeypatch):
-    monkeypatch.setattr(reuse, "utc_today", lambda: date(2026, 1, 1))
+    monkeypatch.setattr(registry, "utc_calendar_date", lambda: date.fromisoformat(CHECKS_DATE))
     repo = {"id": reuse.policy.REPOSITORY, "full_name": REPO, "default_branch": "main"}
     event = {"repository": repo, "ref": reuse.MAIN, "before": BASE, "after": HEAD,
              "created": False, "deleted": False, "forced": False}
@@ -68,7 +70,7 @@ def packet(tmp_path, monkeypatch):
              "trusted_sha": BASE, "sha": HEAD, "tree": TREE, "base_sha": BASE}
     gate = {"name": "ci-gate", "status": "completed", "conclusion": "success",
             "id": 32, "run_id": 30, "run_attempt": 2, "head_sha": HEAD,
-            "started_at": reuse.utc_today().isoformat() + "T00:00:00Z"}
+            "started_at": CHECKS_DATE + "T00:00:00Z"}
     verdict = {"passed": True}
     source = {"id": 30, "head_sha": HEAD, "head_branch": run["head_branch"],
               "repository_id": repo["id"], "head_repository_id": repo["id"]}
@@ -163,6 +165,39 @@ def test_full_plan_can_reuse_exact_queue_attempt_with_other_shard_width(monkeypa
     assert json.loads((reports / reuse.PROOF).read_bytes())["plan_attempt"] == 1
     assert json.loads((reports / "node-census.json").read_bytes())["summary"] == "collect=+0/-0"
     assert "/actions/runs/30" in (tmp_path / "summary").read_text()
+
+
+def test_reuse_survives_midnight_between_checks_and_gate(monkeypatch, tmp_path, packet):
+    monkeypatch.delenv("CI_ALLOWANCE_DATE", raising=False)
+    assert registry.utc_today().isoformat() == CHECKS_DATE
+    invoke(monkeypatch, packet)
+    assert (tmp_path / "output").read_text().strip() == "run=30:2"
+
+    monkeypatch.setattr(registry, "utc_calendar_date", lambda: date(2026, 1, 2))
+    assert registry.utc_today().isoformat() == "2026-01-02"
+    reports = tmp_path / "reports"
+    invoke(monkeypatch, packet, "--require-run", "30:2", "--reports", str(reports))
+    assert json.loads((reports / "verdict.json").read_bytes())["passed"] is True
+
+
+def test_reuse_gate_refuses_a_two_day_old_checks_plan(monkeypatch, tmp_path, packet):
+    invoke(monkeypatch, packet)
+    assert (tmp_path / "output").read_text().strip() == "run=30:2"
+
+    packet["queries"].clear()
+    monkeypatch.setattr(registry, "utc_calendar_date", lambda: date(2026, 1, 3))
+    reports = tmp_path / "reports"
+    with pytest.raises(SystemExit, match="Queue reuse verification failed: CI allowance date must be today or yesterday in UTC"):
+        invoke(monkeypatch, packet, "--require-run", "30:2", "--reports", str(reports))
+    assert not reports.exists()
+    assert not packet["queries"]
+
+
+def test_reuse_refuses_a_queue_plan_pinned_before_its_gate_started(monkeypatch, tmp_path, packet, capsys):
+    packet["queue_plan"]["allowance_date"] = "2025-12-31"
+    invoke(monkeypatch, packet)
+    assert not (tmp_path / "output").exists()
+    assert "Queue and push plans have different allowance dates" in capsys.readouterr().out
 
 
 def test_gate_log_with_terminal_escapes_can_still_bind_the_artifact(monkeypatch, tmp_path, packet, capsys):
