@@ -6,8 +6,12 @@ The backend contracts (maintenance fix_list_before/after, maintenance conflict, 
 job read as their contracts describe them, so the rendering is checked before those branches are merged."""
 import json
 import re
+import uuid
+from urllib.parse import urlsplit
 import pytest
 from playwright.sync_api import expect
+from apps.api import models as m
+from apps.api.db import transaction
 from .test_browser import browser, live_server, route_fetch
 from .test_browser_autoschedule_review import _open, _run, FOUR, DESKTOP
 from .browser_acceptance_support import shot
@@ -62,7 +66,7 @@ def test_receipt_labels_the_incomplete_proposal_separately_from_the_solved_model
         _run(page, h, panel)
         receipt = panel.locator('.solver-receipt')
         expect(receipt).to_contain_text('Proposal status: UNKNOWN')
-        expect(receipt).to_contain_text('search finished')
+        expect(receipt).to_contain_text('Stop reason: search finished, then the checks changed the proposal')
         expect(receipt).not_to_contain_text('proven best')
         expect(receipt.get_by_role('button', name='About Solver status')).to_have_attribute(
             'data-tip', re.compile('model ended OPTIMAL'))
@@ -238,4 +242,36 @@ def test_inputs_changed_during_the_run_applies_what_still_fits(browser, live_ser
             assert body['addition_indexes'] == [0] and body['removal_indexes'] == []
     finally:
         page.unroute_all(behavior='ignoreErrors')
+        context.close()
+
+
+def test_a_finished_runs_message_is_skipped_while_its_rotas_panel_is_open(browser, live_server, h):
+    w, other = _workspace(h, 'Run message rota'), _workspace(h, 'Run message other rota')
+    recipient = h.get('coordinator', '/api/me')['identity_id']
+    title = 'Auto-schedule found conflicting requirements'
+    context, page, panel = _open(browser, live_server, h, w, DESKTOP, 'dark')
+    try:
+        expect(panel).to_be_visible()
+        # The minute's check: the first only records the unread count; a message is said only for a rise after it.
+        with page.expect_request_finished(lambda r: urlsplit(r.url).path == '/api/pulse', timeout=15000):
+            page.clock.run_for(60_000)
+        toasts = page.locator('#toast-tray .toast', has_text=title)
+        for workspace, said in ((w, 0), (other, 1)):
+            # The rise's own read of the newest message (the badge's reads carry a limit).
+            with page.expect_response(lambda r: urlsplit(r.url).path == '/api/notifications' and not urlsplit(r.url).query):
+                with transaction(h.app.state.engine, write=True) as db:
+                    event = m.Outbox(department_id=h.seed['department_id'], event_key=str(uuid.uuid4()), kind='generation_finished',
+                                     payload={'job_id': str(uuid.uuid4()), 'workspace_id': workspace['id'], 'outcome': 'infeasible'},
+                                     state='available_in_app', next_attempt_at=m.now())
+                    db.add(event)
+                    db.flush()
+                    db.add(m.Notification(outbox_id=event.id, identity_id=recipient, title=title,
+                                          message='Open Auto-schedule to review the run.'))
+                page.clock.run_for(60_000)
+            page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+            # This rota's run is on screen in its open panel: no message. Another rota's run still says so, with Open inbox.
+            expect(toasts).to_have_count(said)
+        expect(toasts.get_by_role('button', name='Open inbox', exact=True)).to_be_visible()
+        expect(panel).to_be_visible()
+    finally:
         context.close()

@@ -211,7 +211,7 @@ export function searchEnded(r:Row|null|undefined):string{
 }
 /** A run continued past a rule conflict (on_conflict continue_flagged): its breaks are must-fixes, said where the result is. */
 export const breaksNote=(r:Row|null|undefined)=>{const n=r?.on_conflict==='continue_flagged'?((r.breaks||[]) as Row[]).length:0;
-  return n?el('p',{class:'auto-stale auto-breaks',role:'status'},icon('alert'),`Continued with ${plural(n,'break')} · each must be fixed before publishing`):'';};
+  return n?el('p',{class:'auto-stale auto-breaks',role:'status'},icon('alert'),`Continued with ${n} must fix · each blocks publishing until fixed`):'';};
 /** A score change as the other tiles say a change: "+3.2", "−1", and "±0" when nothing moved. */
 const scoreChangeWords=(d:number)=>{const r=round(d);return r?`${r>0?'+':'−'}${Math.abs(r)}`:'±0';};
 /** The run in Fix-list terms (A3): one outcome sentence and three numbers. Null when the result has no Fix list yet.
@@ -358,7 +358,9 @@ export function clashCard(conflict:Row,h:ClashHooks):HTMLElement{
     el('span',{},...[span(r.starts_on,r.ends_on)?el('span',{class:'rule-num muted'},span(r.starts_on,r.ends_on)+' '):'',badge('Mandatory','ok'),r.safety?badge('Safety','neutral'):''].filter(Boolean)));};
   const pair=rules.length===2?el('div',{class:'clash'},card(rules[0]),el('span',{class:'clash-vs'},'and'),card(rules[1])):el('div',{class:'clash clash-many'},...rules.map(card));
   const ev:Row=cause.evidence||{};
-  const math=[ev.complete&&ev.required_places!=null&&ev.maximum_possible!=null?`${plural(Number(ev.required_places),'place')} needed, ${ev.maximum_possible} possible.`:'',String(ev.message||cause.message||'')].filter(Boolean).join(' ');
+  // An established total says its sessions and caps; otherwise the cause's own sentence names the requirements that
+  // cannot be met (where and when is the line above). The evidence's note on a total not established is never shown.
+  const math=[ev.complete&&ev.required_places!=null&&ev.maximum_possible!=null?`${plural(Number(ev.required_places),'place')} needed, ${ev.maximum_possible} possible.`:'',String((ev.complete&&ev.message)||cause.message||'')].filter(Boolean).join(' ');
   const safe=rules.filter(r=>r.safety),decided=(cause.decisions||[]) as Row[],decisions:HTMLElement[]=[];
   const row=(title:string,sub:string,act:HTMLElement)=>el('li',{},el('span',{},el('strong',{},title),sub?el('small',{},sub):''),act);
   // One relax card per non-safety line (its people are the server's cap decisions for that line).

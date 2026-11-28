@@ -15,6 +15,12 @@ from .test_browser_qa_planner import clinic, settled as planner_settled
 
 pytestmark = pytest.mark.browser
 PHONE = {'width': 390, 'height': 844}
+# A control a person can see and press: its box is fully inside the screen and nothing else is drawn over it (the topmost
+# element at its left, middle and right is it or its own content).
+IN_SIGHT = """el => {const r = el.getBoundingClientRect();
+  const inside = r.width > 0 && r.height > 0 && r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+  const hit = [0.1, 0.5, 0.9].every(f => {const n = document.elementFromPoint(r.left + r.width * f, r.top + r.height / 2); return !!n && el.contains(n);});
+  return inside && hit;}"""
 
 
 def booked(h):
@@ -730,5 +736,43 @@ def test_list_columns_are_saved_with_the_schedule_view(browser, live_server, h):
         pick_view(page, 'All columns (test)')
         expect(column('status')).to_have_count(0)
         expect(column('service')).to_have_count(1)
+    finally:
+        context.close()
+
+
+def test_phone_month_header_stays_in_its_grid_under_the_toolbar(browser, live_server, h):
+    """Design review (390, dark): the month's sticky day header and its Week corner are in sight inside the grid, and
+    once the page scrolls the grid under the sticky toolbar they pass beneath it, never over the period row."""
+    _, d = october(h)
+    context, page = sign_in(browser, live_server, 'coordinator', PHONE)
+    try:
+        page.emulate_media(color_scheme='dark')
+        show(page, f"schedule/month/2026-10-04?edit={d['id']}")
+        # A phone opens the month as its list; the grid is one tap away (the capture's view).
+        page.get_by_role('radiogroup', name='Calendar layout').get_by_role('radio', name='Grid', exact=True).click()
+        month = view(page, 'Month')
+        corner, first_day = month.locator('.wk-head > .wk-corner'), month.locator('.wk-head > .wk-day').first
+        nav = page.locator('.planner-toolbar .wk-nav').locator('button:visible, strong:visible')
+        expect(corner).to_have_text('Week')
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        for head in (corner, first_day):
+            assert head.evaluate(IN_SIGHT), 'The month header is cut off or covered'
+        assert nav.count() >= 3
+        # The page (not the grid) scrolls on a phone: take the grid's top 60px under the toolbar. Room below is made so
+        # a short month can scroll that far.
+        overlap = page.evaluate("""() => {
+          const main = document.querySelector('.page-planner .planner-main'), bar = main.querySelector('.planner-toolbar');
+          const grid = main.querySelector('.wk-scroller');
+          main.style.setProperty('padding-bottom', '100vh');
+          let box = grid.parentElement;
+          while (box && !(/(auto|scroll)/.test(getComputedStyle(box).overflowY) && box.scrollHeight > box.clientHeight)) box = box.parentElement;
+          box = box || document.scrollingElement;
+          box.scrollTop += grid.getBoundingClientRect().top - bar.getBoundingClientRect().bottom + 60;
+          const corner = grid.querySelector('.wk-head > .wk-corner').getBoundingClientRect(), b = bar.getBoundingClientRect();
+          return corner.top < b.bottom && corner.bottom > b.top;}""")
+        assert overlap, 'The grid header did not reach the toolbar, so this check proves nothing'
+        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+        for i in range(nav.count()):
+            assert nav.nth(i).evaluate(IN_SIGHT), f'The period row is covered: {nav.nth(i).inner_text() or nav.nth(i).get_attribute("aria-label")}'
     finally:
         context.close()

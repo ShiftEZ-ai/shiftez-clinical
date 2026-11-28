@@ -5156,7 +5156,7 @@
         "properties": {
           "on_conflict": {
             "default": "report",
-            "description": "Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every break is a must-fix and blocks publishing until fixed.",
+            "description": "Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every broken rule is a must-fix and blocks publishing until fixed.",
             "enum": [
               "report",
               "continue_flagged"
@@ -11510,7 +11510,7 @@
         "properties": {
           "on_conflict": {
             "default": "report",
-            "description": "Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every break is a must-fix and blocks publishing until fixed.",
+            "description": "Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every broken rule is a must-fix and blocks publishing until fixed.",
             "enum": [
               "report",
               "continue_flagged"

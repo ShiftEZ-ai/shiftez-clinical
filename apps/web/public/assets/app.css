@@ -1209,7 +1209,7 @@ button.cov-cell:hover{filter:brightness(.97)}
 .wk-nav .muted{font-size:12.5px;margin-left:auto}
 .wk-layout{display:flex;gap:12px;align-items:flex-start;min-width:0}
 .wk-content{flex:1;min-width:0;align-self:stretch}
-.wk-scroller{flex:1;min-width:0;overflow-x:auto;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface)}
+.wk-scroller{flex:1;min-width:0;overflow-x:auto;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);isolation:isolate}  /* its sticky day header and corner stack inside the grid, never over the sticky toolbar a phone page scrolls under */
 .wk-grid{--days:7;--wk-head:var(--sched-head,208px);--wk-col:var(--sched-date,112px);display:grid;grid-template-columns:var(--wk-head) repeat(var(--days),minmax(var(--wk-col),1fr));min-width:calc(var(--wk-head) + var(--days) * var(--wk-col))}
 .wk-row{display:contents}
 .wk-row>*{border-bottom:1px solid var(--line-soft);min-width:0}
@@ -2496,8 +2496,9 @@ th:hover>.dt-resize::after{background:var(--control-line)}
 .dt-card-props:empty{display:none}
 .dt-card-props dt{color:var(--muted)}.dt-card-props dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .dt-card-actions{display:flex;justify-content:flex-end;align-items:center;gap:4px;margin-top:auto}
-.dt-card-group{margin:6px 0 4px;display:flex;align-items:center;gap:2px;min-width:0}
+.dt-card-group{margin:6px 0 4px;display:flex;flex-wrap:wrap;align-items:center;gap:2px;min-width:0}
 .dt-card-group>.dt-group-toggle{text-align:left;min-width:0}
+@media(max-width:720px){.dt-card-group>.dt-group-toggle{flex:1 1 70%}}  /* a phone: the title keeps the line (beside its box) and wraps there; the group's action goes under it, inside the screen */
 .dt-board{display:flex;gap:12px;overflow-x:auto;align-items:flex-start;padding-bottom:6px}
 .dt-lane{flex:0 0 290px;display:flex;flex-direction:column;gap:8px;padding:8px;border-radius:var(--r-lg);background:var(--sub)}
 .dt-lane-head{display:flex;align-items:center;gap:8px;padding:2px 4px;font-size:13px}

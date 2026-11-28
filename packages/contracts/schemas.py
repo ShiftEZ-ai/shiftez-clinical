@@ -2086,7 +2086,7 @@ class GenerationOptions(Schema):
     # request for the least-breaks proposal, whose mandatory findings remain
     # visible and block publication.
     on_conflict: Literal['report', 'continue_flagged'] = Field(default='report', title='If rules conflict',
-        description='Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every break is a must-fix and blocks publishing until fixed.')
+        description='Stop and show the rules that cannot all be met, or continue with the fewest broken rules. Every broken rule is a must-fix and blocks publishing until fixed.')
     # Titles and descriptions are the words every screen uses for these times (GENERATION_TIME_FIELDS, one source).
     search_minutes: int = Field(default=AUTO_SCHEDULE_LIMITS['default_minutes'],
         ge=AUTO_SCHEDULE_LIMITS['minimum_minutes'], le=AUTO_SCHEDULE_LIMITS['maximum_minutes'], strict=True,
@@ -7876,11 +7876,11 @@ class GenerationContinuation(Schema):
 
 # The words for each choice and each stop reason (GenerationOptions.on_conflict, GenerationSearchStop.reason): the
 # client says them as they are written here (tests/test_contracts_generation_stop.py keeps the keys complete).
-GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged': 'Continue with fewest breaks'}
+GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged': 'Continue with fewest broken rules'}
 GENERATION_STOP_REASONS = {'optimal': 'proven best for these priorities', 'time_limit': 'search time used up',
     'plateau': 'stopped when it stopped improving', 'gap': 'close enough to the best possible',
     'score': 'target score reached', 'clock': 'stop time reached', 'operator_stop': 'stopped with Stop and keep best',
-    'model_proven': 'search finished; checks changed the proposal', 'cancelled': 'cancelled',
+    'model_proven': 'search finished, then the checks changed the proposal', 'cancelled': 'cancelled',
     'failed': 'stopped by an error', 'no_search': 'nothing to search',
     'conflict': 'rules conflict'}
 

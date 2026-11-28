@@ -333,7 +333,7 @@ def test_finished_model_and_incomplete_proposal_have_distinct_status_labels(clie
     got = receipt(client_modules, result)
     assert 'Proposal status: UNKNOWN' in got
     assert 'Solver status: UNKNOWN' not in got
-    assert 'search finished' in got and 'proven best' not in got
+    assert 'Stop reason: search finished, then the checks changed the proposal' in got and 'proven best' not in got
     assert "model ended OPTIMAL" in receipt_tip(client_modules, result)
 
 
@@ -439,3 +439,27 @@ def test_solver_receipt_falls_back_to_model_status_without_generation_outcome(cl
     })
     assert 'Solver status: OPTIMAL' in got
     assert 'Stop reason: proven best for these priorities' in got
+
+
+def test_a_run_continued_past_a_conflict_counts_its_rules_broken(client_modules):
+    texts = run(client_modules, "console.log(JSON.stringify(a.map(r=>m.breaksNote(r)?.textContent ?? '')));", [
+        {'on_conflict': 'continue_flagged', 'breaks': [{}]}, {'on_conflict': 'continue_flagged', 'breaks': [{}, {}]},
+        {'on_conflict': 'report', 'breaks': [{}]}])
+    assert texts == ['Continued with 1 must fix · each blocks publishing until fixed',
+                     'Continued with 2 must fix · each blocks publishing until fixed', '']
+
+
+def test_a_capacity_cause_without_a_total_names_its_requirements_not_the_engine_note(client_modules):
+    named = ('These requirements cannot all be met together with eligibility, availability and the other mandatory '
+             'rules: Night cover (line 1, minimum), Weekly cap (line 2, maximum)')
+    cause = {'message': named, 'requirements': [{'kind': 'policy', 'rule_id': 'r1', 'name': 'Night cover'},
+                                                {'kind': 'policy', 'rule_id': 'r2', 'name': 'Weekly cap'}],
+             'evidence': {'complete': False, 'basis': 'not_established', 'required_places': None, 'maximum_possible': None,
+                          'message': 'These named requirements conflict; a staffing total has not been established.'},
+             'decisions': []}
+    got = run(client_modules, """
+        const h={ruleName:id=>id,person:id=>id,clinic:()=>'',openRule:()=>{},eligibility:()=>{},workspace:{id:'w',revision:1},done:async()=>{}};
+        console.log(JSON.stringify(m.clashCard(a,h).querySelector('.clash-math').textContent));
+    """, {'proven': True, 'causes': [cause]})
+    assert got == named
+    assert 'staffing total' not in got
