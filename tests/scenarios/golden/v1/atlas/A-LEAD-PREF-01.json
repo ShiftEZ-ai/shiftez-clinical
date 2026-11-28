@@ -1,0 +1,109 @@
+{
+  "id": "A-LEAD-PREF-01",
+  "revision": 1,
+  "title": "Prefer a qualified team lead",
+  "intent": "Prefer a lead using the allocation rule's Who and Where conditions.",
+  "pressure": "Both people must work and either may lead. Reversing the preference must change only the lead.",
+  "covers": {
+    "kind.allocation_preference.lead_priority": ["preferred_lead"]
+  },
+  "commands": [
+    {
+      "key": "rank", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "categories", "value": {"name": "A-LEAD-PREF-01 Rank", "starts_on": "2020-01-01"}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "service", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "services", "value": {"name": "A-LEAD-PREF-01 Service", "starts_on": "2020-01-01"}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "location_kind", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "location_types", "value": {"name": "A-LEAD-PREF-01 Room type", "starts_on": "2020-01-01"}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "location", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "locations", "value": {"name": "A-LEAD-PREF-01 Room", "starts_on": "2020-01-01", "location_type_id": "$location_kind", "capacity": 2}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "p0", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "people", "value": {"display_name": "A-LEAD-PREF-01 Clinician 1"}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "m0", "role": "admin", "kind": "membership.create",
+      "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2020-01-01"}
+    },
+    {
+      "key": "e0", "role": "admin", "kind": "eligibility.create",
+      "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2020-01-01"}
+    },
+    {
+      "key": "p1", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "people", "value": {"display_name": "A-LEAD-PREF-01 Clinician 2"}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "m1", "role": "admin", "kind": "membership.create",
+      "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2020-01-01"}
+    },
+    {
+      "key": "e1", "role": "admin", "kind": "eligibility.create",
+      "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2020-01-01"}
+    },
+    {
+      "key": "type", "role": "admin", "kind": "catalogue.create",
+      "payload": {"catalogue": "assignment_types", "value": {"name": "A-LEAD-PREF-01 Duty", "starts_on": "2020-01-01", "definition": {"requirements": [{"minimum": 2, "maximum": 2}]}}, "reason": "Synthetic golden setup"}
+    },
+    {
+      "key": "workspace", "role": "coordinator", "kind": "workspace.create",
+      "payload": {"name": "A-LEAD-PREF-01 Rota", "starts_on": "2027-01-03", "ends_on": "2027-01-04"}
+    },
+    {
+      "key": "lead", "role": "coordinator", "kind": "rule.propose",
+      "payload": {
+        "catalogue_id": "team_leads", "catalogue_version": 2, "reason": "Require one lead",
+        "lines": [{
+          "id": "00000000-0000-4000-8000-000000000011",
+          "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$type"]}]},
+          "who": {"conditions": [{"field": "person_ids", "values": ["$p0", "$p1"]}]},
+          "numbers": {"min": {"value": 1, "level": "mandatory"}, "max": {"value": 1, "level": "mandatory"}}
+        }]
+      }
+    },
+    {
+      "key": "lead_active", "role": "approver", "kind": "policy.activate",
+      "target": "$lead", "revision": "$lead.revision", "payload": {"reason": "Independent synthetic review"}
+    },
+    {
+      "key": "pref", "role": "coordinator", "kind": "rule.propose",
+      "payload": {
+        "catalogue_id": "preferences", "catalogue_version": 2, "reason": "Prefer one qualified lead",
+        "lines": [{
+          "id": "00000000-0000-4000-8000-000000000012",
+          "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$type"]}]},
+          "who": {"conditions": [{"field": "person_ids", "values": ["$p1"]}]},
+          "numbers": {"lead_priority": {"value": 8, "level": "medium"}}
+        }]
+      }
+    },
+    {
+      "key": "pref_active", "role": "approver", "kind": "policy.activate",
+      "target": "$pref", "revision": "$pref.revision", "payload": {"reason": "Independent synthetic review"}
+    },
+    {
+      "key": "duty", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace", "assignment_type_id": "$type", "location_id": "$location",
+        "service_ids": ["$service"], "start": "2027-01-03T08:00:00+03:00", "end": "2027-01-03T12:00:00+03:00",
+        "participants": [
+          {"person_id": "$p0", "start": "2027-01-03T08:00:00+03:00", "end": "2027-01-03T12:00:00+03:00"},
+          {"person_id": "$p1", "start": "2027-01-03T08:00:00+03:00", "end": "2027-01-03T12:00:00+03:00"}
+        ]
+      }
+    }
+  ],
+  "expect": {
+    "binding_rules": ["pref"],
+    "preferred_lead": {"preferred": "p1", "alternate": "p0"},
+    "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
+  },
+  "inputs": {"generation_options": {"mode": "fill_gaps", "shortlist_width": 0}}
+}

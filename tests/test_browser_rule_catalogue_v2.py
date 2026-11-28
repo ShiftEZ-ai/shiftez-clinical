@@ -187,6 +187,28 @@ def test_empty_catalogue_and_filtered_empty_keep_the_shared_controls(browser, li
         context.close()
 
 
+def test_preferred_people_can_propose_lead_priority(browser, live_server, h):
+    flag(h, legacy=False)
+    initial = line({'priority': {'value': 1, 'level': 'medium'}})
+    v2_rule(h, 'preferences', [initial])
+    context, page = themed(browser, live_server, 'coordinator')
+    try:
+        navigate(page, f"rules/preferences/{initial['id']}")
+        panel = page.locator('.rc-line-panel')
+        panel.get_by_label('Lead priority', exact=True).fill('8')
+        panel.get_by_role('button', name='Keep change', exact=True).click()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
+        page.locator('.topbar').get_by_role('button', name='Propose 1 change', exact=True).click()
+        reason(page, 'Prefer a qualified lead', 'Propose')
+        expect(page.locator('.rc-waiting')).to_contain_text('waiting for approval')
+        proposals = h.get('coordinator', '/api/policies?status=proposed')['policies']
+        [proposal] = [p for p in proposals if p['definition']['rule'].get('id') == 'preferences']
+        [saved] = proposal['definition']['rule']['lines']
+        assert saved['numbers']['lead_priority'] == {'value': 8, 'level': 'medium'}
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('width,theme', VIEWS, ids=VIEW_IDS)
 def test_workload_measure_period_propose_reload_review_and_undo(browser, live_server, h, width, theme):
     original = converted_world(h)

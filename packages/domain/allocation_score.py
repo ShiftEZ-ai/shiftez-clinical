@@ -128,6 +128,8 @@ def allocation_score_items(data, choices=None, participants=None, pairings=None,
         weight = strengths[policy['definition'].get('strength', 'medium')]
         base = rule.get('priority', 0) + rule.get('session_priority', 0)
         extra = rule.get('overtime_priority', 0)
+        if rule.get('lead_priority') and not (base or extra or rule.get('balance_by', 'none') != 'none'):
+            continue  # Lead priority credits existing lead places, not ordinary assignments.
         multiplier = Fraction(weight, strengths['medium'])
         positive_priority = max(0, base, base + extra)
         positive_coefficients = multiplier * max(0, base), multiplier * max(0, base + extra)

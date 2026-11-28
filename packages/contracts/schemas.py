@@ -3181,6 +3181,7 @@ class AllocationPreference(Schema):
     kind: Literal["allocation_preference"]
     priority: int = Field(ge=-100, le=MAX_SCORE_INPUT, strict=True)
     session_priority: int = Field(default=0, ge=-100, le=MAX_SCORE_INPUT, strict=True)
+    lead_priority: int = Field(default=0, ge=0, le=MAX_SCORE_INPUT, strict=True, exclude_if=lambda value: value == 0)
     overtime_priority: int = Field(default=0, ge=-100, le=MAX_SCORE_INPUT, strict=True)
     supervisor_relationship: Literal['any', 'mentor'] = 'any'
     supervisor_ids: list[ID] = Field(default_factory=list, max_length=100)
@@ -3564,7 +3565,7 @@ class RuleSourceReference(Schema):
 
 class RuleSourceBinding(RuleSourceReference):
     """Immutable identity/slot metadata; clinical values stay in the destination line."""
-    number_key: Literal['min', 'max', 'target', 'priority', 'session_priority', 'apply']
+    number_key: Literal['min', 'max', 'target', 'priority', 'session_priority', 'lead_priority', 'apply']
     primitive_kind: PrimitiveKind
     precedence_partition: str = Field(min_length=1, max_length=200)
     source_order: int = Field(default=0, ge=0, strict=True)
@@ -4340,7 +4341,7 @@ class RuleAdjustmentInput(Schema):
     mode: Literal["off", "set", "clear"]
     amount: float | None = Field(default=None, ge=0, le=100000)
     line_id: ID | None = None
-    number: Literal['min', 'max', 'target', 'priority', 'session_priority', 'apply'] | None = None
+    number: Literal['min', 'max', 'target', 'priority', 'session_priority', 'lead_priority', 'apply'] | None = None
     person_id: ID | None = None
     starts_on: date | None = None
     ends_on: date | None = None
@@ -9875,7 +9876,7 @@ class RuleRelaxInput(Schema):
     workspace_id: ID
     person_id: ID
     binding_line_id: ID
-    number: Literal['min', 'max', 'target', 'priority', 'session_priority', 'apply'] | None = None
+    number: Literal['min', 'max', 'target', 'priority', 'session_priority', 'lead_priority', 'apply'] | None = None
     starts_on: date
     ends_on: date
 
