@@ -13134,6 +13134,50 @@
         "title": "TagDefinition",
         "type": "object"
       },
+      "TimeOfDay": {
+        "additionalProperties": false,
+        "description": "A department's time of day (Configuration \u203a Times of day): a duty belongs to the one whose start is the latest at\nor before the duty's local start; the last runs to the first start the next day.",
+        "properties": {
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "code": {
+            "pattern": "^[A-Z0-9]$",
+            "title": "Code",
+            "type": "string"
+          },
+          "start": {
+            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",
+            "title": "Start",
+            "type": "string"
+          },
+          "colour": {
+            "enum": [
+              "teal",
+              "blue",
+              "violet",
+              "amber",
+              "slate",
+              "coral",
+              "indigo",
+              "pink"
+            ],
+            "title": "Colour",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "code",
+          "start",
+          "colour"
+        ],
+        "title": "TimeOfDay",
+        "type": "object"
+      },
       "ViewProperty": {
         "additionalProperties": false,
         "description": "One thing drawn on each session card, in the view's order; `form` is how it is drawn (chip, icon, text, count).",
@@ -13298,6 +13342,15 @@
       },
       "whereabouts": {
         "$ref": "#/$defs/WhereaboutsSettings"
+      },
+      "times_of_day": {
+        "items": {
+          "$ref": "#/$defs/TimeOfDay"
+        },
+        "maxItems": 12,
+        "minItems": 1,
+        "title": "Times Of Day",
+        "type": "array"
       },
       "reason": {
         "maxLength": 500,
@@ -14257,7 +14310,8 @@
               "service",
               "role",
               "person",
-              "tag"
+              "tag",
+              "time_of_day"
             ],
             "title": "Colour By",
             "type": "string"
@@ -15367,7 +15421,8 @@
           "service",
           "role",
           "person",
-          "tag"
+          "tag",
+          "time_of_day"
         ],
         "title": "Colour By",
         "type": "string"
@@ -59644,7 +59699,8 @@
               "service",
               "role",
               "person",
-              "tag"
+              "tag",
+              "time_of_day"
             ],
             "title": "Colour By",
             "type": "string"
@@ -61902,7 +61958,8 @@
               "service",
               "role",
               "person",
-              "tag"
+              "tag",
+              "time_of_day"
             ],
             "title": "Colour By",
             "type": "string"

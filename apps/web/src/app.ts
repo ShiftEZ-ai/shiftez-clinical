@@ -71,6 +71,7 @@ import {fillOptions} from './candidates.js';
 import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_delta.js';
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
 import {drawnBase} from './settings_base.js';
+import {timesOfDayPage} from './times_of_day.js';
 import {mayDecide} from './independence.js';
 import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
@@ -3233,11 +3234,11 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
         ...(d.key===(rowsNow()==='duty'?'type':rowsNow())?{disabled:true,hint:'Already the rows'}:{})}))],
       setColumns:c=>{gridColumns=c as GridColumn;if(weekView.groupBy===c)weekView.groupBy='none';if(gridSubgroup===c)gridSubgroup='none';void redraw();}},
     openYear:schedView==='year'?undefined:()=>{switchView('year');void redraw();},
-    // Colour by is one rule (colourRule) for every item: a session's hue by duty type or service; a person's duty also by
+    // Colour by is one rule (colourRule) for every item: a session's hue by duty type, service or time of day; a person's duty also by
     // person, rank or tag (tags need the department's tag records, which staff do not hold).
     // Coverage's table is counts by duty type; only its popover lists sessions, so Colour by is not offered there.
-    colour:surface&&schedView!=='coverage'?{options:(Object.entries(PLANNER_COLOUR_LABELS) as [string,string][]).filter(([k])=>personItems||k==='type'||k==='service').filter(([k])=>k!=='tag'||!!personTagChoices().length||weekView.colourBy==='tag'),
-      value:()=>!personItems&&!['type','service'].includes(weekView.colourBy)?'type':weekView.colourBy,set:k=>{weekView.colourBy=k as typeof weekView.colourBy;void redraw();},
+    colour:surface&&schedView!=='coverage'?{options:(Object.entries(PLANNER_COLOUR_LABELS) as [string,string][]).filter(([k])=>personItems||k==='type'||k==='service'||k==='time_of_day').filter(([k])=>k!=='tag'||!!personTagChoices().length||weekView.colourBy==='tag'),
+      value:()=>!personItems&&!['type','service','time_of_day'].includes(weekView.colourBy)?'type':weekView.colourBy,set:k=>{weekView.colourBy=k as typeof weekView.colourBy;void redraw();},
       tags:{options:personTagChoices,value:()=>weekView.colourTags,set:ids=>{weekView.colourTags=ids;void redraw();},limit:PLANNER_COLOUR_TAG_LIMIT}}:undefined,
     density:cardGrid?{value:()=>weekView.compact?'compact':'comfortable',set:k=>{weekView.compact=k==='compact';void redraw();}}:undefined,
     teamRows:cardGrid?{value:()=>weekView.teamRows,set:n=>{weekView.teamRows=n;void redraw();}}:undefined,
@@ -5212,6 +5213,8 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
   async function drawSection(){
   if(setup){await setupGuide(target);return;}
   if(catalogueKind==='names'){namesPage(target);return;}
+  if(catalogueKind==='times_of_day'){timesOfDayPage(target,{department:me!.department,saved:result=>settingsSaved(result),discard:discardSettings,setLeave:dirty=>{leaveCheck=dirty;},
+    moved:(e,slot)=>settingsMoved(e,slot,'times of day',()=>{leaveCheck=null;void refresh();})});return;}
   if(catalogueKind==='board'){await rotationBoard(target,{ctx:ctx(),zone:zone(),mine:false});return;}
   if(catalogueKind==='tags'){tagsPage(target,ctx(),permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR));return;}
   if(catalogueKind==='department'){await departmentSettingsPage(target);return;}

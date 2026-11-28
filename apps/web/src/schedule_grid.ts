@@ -133,7 +133,7 @@ export function scheduleGrid(ctx:Context,data:WorkspaceData,visible:Row[],days:s
     // The place is in its name unless a shown property says it (QA-127a): a row may be a person, not a place.
     const place=parts.some(x=>x.key==='location')?'':', '+labelOf(locations.get(s.location_id));
     b.setAttribute('aria-label',chipName(s,extra,!!clash,b)+place+(words.length?', '+words.join(', '):''));
-    const c=weekView.colourBy==='type'?dutyColour(s):colours.seenChip(s,u.pid,b);b.classList.add('duty-'+c);
+    const c=weekView.colourBy==='type'?dutyColour(s):colours.seenChip(s,u.pid,b);b.classList.add('duty-'+c);colours.codeMark(s,b);
     hoverCard(b,()=>[el('div',{class:'hc-head'},el('span',{class:`hc-badge duty-${c}`},sessionCode(ctx,s)),el('div',{},el('strong',{},s.type_snapshot.name),el('small',{},`${formatDate(s.start,zone)} · ${formatTime(s.start,zone)}–${formatTime(s.end,zone)} · ${labelOf(locations.get(s.location_id))}`))),
       ...clashesOf(s,u.pid||undefined,true).map(x=>el('p',{class:'clash-tag'},clashText(x)))]);
     return b;};

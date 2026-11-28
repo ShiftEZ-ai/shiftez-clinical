@@ -8235,6 +8235,24 @@ class WhereaboutsSettings(Schema):
 
 
 WHEREABOUTS_DEFAULTS = WhereaboutsSettings().model_dump()
+TIMES_OF_DAY_LIMIT = 12
+
+
+class TimeOfDay(Schema):
+    """A department's time of day (Configuration › Times of day): a duty belongs to the one whose start is the latest at
+    or before the duty's local start; the last runs to the first start the next day."""
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    code: Annotated[str, StringConstraints(pattern=r"^[A-Z0-9]$")]
+    start: Annotated[str, StringConstraints(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")]
+    colour: Literal['teal', 'blue', 'violet', 'amber', 'slate', 'coral', 'indigo', 'pink']
+
+
+TIMES_OF_DAY_DEFAULTS = [
+    {'name': 'Morning', 'code': 'M', 'start': '06:00', 'colour': 'blue'},
+    {'name': 'Afternoon', 'code': 'A', 'start': '12:00', 'colour': 'amber'},
+    {'name': 'Evening', 'code': 'E', 'start': '17:00', 'colour': 'coral'},
+    {'name': 'Night', 'code': 'N', 'start': '21:00', 'colour': 'indigo'},
+]
 
 
 class DisplaySettingsInput(Schema):
@@ -8252,6 +8270,9 @@ class DisplaySettingsInput(Schema):
     # The Rules page shows the rule catalogue (owner decision, 19 Nov 2026: the default for new departments).
     rule_catalogue: bool = True
     whereabouts: WhereaboutsSettings = Field(default_factory=WhereaboutsSettings)
+    times_of_day: list[TimeOfDay] = Field(
+        default_factory=lambda: [TimeOfDay(**row) for row in TIMES_OF_DAY_DEFAULTS],
+        min_length=1, max_length=TIMES_OF_DAY_LIMIT)
     reason: Reason
 
     @field_validator('tags')
@@ -8260,6 +8281,18 @@ class DisplaySettingsInput(Schema):
         if len({t.label for t in value}) != len(value):
             raise ValueError('Each tag needs its own short label')
         return value
+
+    @field_validator('times_of_day')
+    @classmethod
+    def distinct_times(cls, value):
+        for field in ('name', 'code', 'start'):
+            seen = {}
+            for row in value:
+                key = getattr(row, field).casefold()
+                if key in seen:
+                    raise ValueError(f'{seen[key]} already uses {getattr(row, field)}')
+                seen[key] = row.name
+        return sorted(value, key=lambda row: row.start)
 
 
 class GenerationExtension(Decision):
@@ -9423,7 +9456,8 @@ ViewSortDirection = Literal["asc", "desc"]
 VIEW_SORT_DIRECTIONS = {"asc": "Ascending", "desc": "Descending"}
 PLANNER_SORT_LABELS = {"time": "Time", "type": "Duty type", "place": "Place", "hours": "Hours, most first", "code": "Short code"}
 PLANNER_PEOPLE_SORT_LABELS = {"hours_desc": "Most hours first", "hours_asc": "Fewest hours first", "name": "Name A–Z", "name_desc": "Name Z–A"}
-PLANNER_COLOUR_LABELS = {"type": "Duty type", "service": "Service", "role": "Rank", "person": "Person", "tag": "Tag"}
+PLANNER_COLOUR_LABELS = {"type": "Duty type", "service": "Service", "role": "Rank", "person": "Person", "tag": "Tag",
+                         "time_of_day": "Time of day"}
 PLANNER_COLOUR_TAG_LIMIT = VIEW_CHOICE_LIMIT
 PLANNER_PERSON_DISPLAYS = {"person": "Matched person", "team": "Recorded supervision team", "duty": "Everyone on matching duties"}
 PLANNER_PERSON_DISPLAY_DEFAULT = "duty"

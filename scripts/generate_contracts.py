@@ -297,7 +297,7 @@ def render():
                  'NAME_PARTICLE_DEFAULTS', 'NAME_LABEL_DEFAULTS', 'PERSON_PROPERTY_DEFINITIONS', 'REFERENCE_ROTATION_FILE_LIMIT',
                  'PERSON_PROPERTY_ALIASES', 'FAIRNESS_METRIC_LABELS',
                  'PLANNER_COLOUR_TAG_LIMIT', 'PRINT_IMAGE_DPI', 'PRINT_IMAGE_DPI_DEFAULT', 'PRINT_WRAP_DEFAULT',
-                 'WHEREABOUTS_DEFAULTS', 'WHEREABOUTS_LIMITS'):
+                 'WHEREABOUTS_DEFAULTS', 'WHEREABOUTS_LIMITS', 'TIMES_OF_DAY_DEFAULTS', 'TIMES_OF_DAY_LIMIT'):
         content += f"export const {name} = " + json.dumps(getattr(s, name)) + " as const;\n"
     content += "export const ENDED_REASON = " + json.dumps(s.ENDED_REASON) + ";\n"
     # Which rule kinds take lines, and the numbers a line may set, first the usual one.

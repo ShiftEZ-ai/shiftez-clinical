@@ -4,7 +4,7 @@ import {ruleReview} from './rule_review.js';
 import {draftImpact} from './draft_impact.js';
 import {helpButton,icon,popover,menuItem,multiPick,type Choice,type IconName,emptyLine,CAPABILITY} from './dom.js';
 import {WEEKDAYS,weekOrder,weekdayOptions,weekdayNames,routineReason,inlineCheck,el,field,area,select,check,multi,button,iconButton,formDialog,formInto,showDialog,note,notify,labelOf,table,dateUnits,formatDate,formatTime,toLocal,spanLabel,confirmAction,roleLabel,statusBadge,type Field} from './dom.js';
-import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES} from './dom.js';
+import {isolate,autoCode,plural,announce,suggested,rankColour,markFields,PROBLEM_HUES,COLOUR_NAMES} from './dom.js';
 import {command,get,instant,knownRevision,plainWords,request,rotaMeta} from './api.js';
 import {fillOptions} from './candidates.js';
 import {overlapChoice,type Overlaps} from './schedule.js';
@@ -1228,7 +1228,7 @@ function requestClash(ctx:Context,form:HTMLElement,read:()=>RequestDates&{person
 /** Duty colour as swatches. The colour follows the duty everywhere in the schedule and calendars. */
 export function colourSwatches(value:string,automatic=false,hint='Shown on every session of this duty in the schedule and calendars.',exclude:readonly string[]=[]){
   const input=el('input',{type:'hidden',value}) as HTMLInputElement;
-  const names:Record<string,string>={...(automatic?{'':'Automatic'}:{}),teal:'Teal',blue:'Sky',violet:'Purple',amber:'Gold',slate:'Slate',coral:'Coral',indigo:'Indigo',pink:'Pink'};
+  const names:Record<string,string>={...(automatic?{'':'Automatic'}:{}),...COLOUR_NAMES};
   const wrap=el('fieldset',{class:'multi-field swatches',role:'radiogroup','aria-label':'Colour'},el('legend',{},'Colour'),
     el('div',{class:'swatch-row'},...Object.entries(names).filter(([v])=>!exclude.includes(v)).map(([v,label])=>{
       const radio=el('input',{type:'radio',name:'duty-colour',value:v,'aria-label':label}) as HTMLInputElement;radio.checked=v===value;
