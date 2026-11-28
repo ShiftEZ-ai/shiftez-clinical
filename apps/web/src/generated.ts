@@ -1447,6 +1447,7 @@ export type DisplaySettingsInput = {
   "tags"?: Array<TagDefinition>;
   "rule_catalogue"?: boolean;
   "whereabouts"?: WhereaboutsSettings;
+  "times_of_day"?: Array<TimeOfDay>;
   "reason": string;
 };
 
@@ -3670,6 +3671,11 @@ export type PlannerLayers = {
   "mode"?: "edit" | "side" | "overlay";
 };
 
+export type PlannerTotal = {
+  "key": string;
+  "on"?: boolean;
+};
+
 export type PlannerViewDefinition = {
   "schema_version"?: 1;
   "mode"?: "week" | "month" | "person" | "list";
@@ -3707,7 +3713,7 @@ export type PlannerViewSettings = {
   "widths"?: Record<string, number> | null;
   "sort_by"?: "time" | "type" | "place" | "hours" | "code";
   "people_sort"?: "hours_desc" | "hours_asc" | "name" | "name_desc" | null;
-  "colour_by"?: "type" | "service" | "role" | "person" | "tag";
+  "colour_by"?: "type" | "service" | "role" | "person" | "tag" | "time_of_day";
   "colour_tags"?: Array<string> | null;
   "compact"?: boolean;
   "density"?: "compact" | "comfortable" | null;
@@ -3720,6 +3726,7 @@ export type PlannerViewSettings = {
   "week_start"?: number | null;
   "time_window"?: ViewTimeWindow | null;
   "properties"?: Array<ViewProperty> | null;
+  "totals"?: Array<PlannerTotal> | null;
   "label"?: PersonLabel | null;
   "layers"?: PlannerLayers | null;
   "show_pairs"?: boolean | null;
@@ -5977,6 +5984,13 @@ export type TierTolerance = {
   "balance"?: number;
 };
 
+export type TimeOfDay = {
+  "name": string;
+  "code": string;
+  "start": string;
+  "colour": "teal" | "blue" | "violet" | "amber" | "slate" | "coral" | "indigo" | "pink";
+};
+
 export type TimeResolveBatchInput = {
   "locals": Array<string>;
 };
@@ -6607,7 +6621,7 @@ export const PLANNER_TIME_AXES = [["day", "Days"], ["week", "Weeks"], ["weekday"
 export const VIEW_SORT_DIRECTIONS = {"asc": "Ascending", "desc": "Descending"} as const;
 export const PLANNER_SORT_LABELS = {"time": "Time", "type": "Duty type", "place": "Place", "hours": "Hours, most first", "code": "Short code"} as const;
 export const PLANNER_PEOPLE_SORT_LABELS = {"hours_desc": "Most hours first", "hours_asc": "Fewest hours first", "name": "Name A\u2013Z", "name_desc": "Name Z\u2013A"} as const;
-export const PLANNER_COLOUR_LABELS = {"type": "Duty type", "service": "Service", "role": "Rank", "person": "Person", "tag": "Tag"} as const;
+export const PLANNER_COLOUR_LABELS = {"type": "Duty type", "service": "Service", "role": "Rank", "person": "Person", "tag": "Tag", "time_of_day": "Time of day"} as const;
 export const PLANNER_PERSON_DISPLAYS = {"person": "Matched person", "team": "Recorded supervision team", "duty": "Everyone on matching duties"} as const;
 export const PLANNER_PERSON_DISPLAY_DEFAULT = "duty" as const;
 export const PLANNER_TEAM_ROWS_DEFAULT = 3 as const;
@@ -6627,11 +6641,15 @@ export const REFERENCE_ROTATION_FILE_LIMIT = 500000 as const;
 export const PERSON_PROPERTY_ALIASES = {"rank": "person.category_ids", "services": "person.eligible_service_ids", "skills": "person.capability_ids", "programme": "person.programme_ids", "tags": "person.tags", "code": "person.short_code", "title": "person.title", "section": "person.directory_section", "phone": "person.contact:f0136000-0000-4000-8000-000000000001", "ext": "person.contact:f0136000-0000-4000-8000-000000000002", "pager": "person.contact:f0136000-0000-4000-8000-000000000003"} as const;
 export const FAIRNESS_METRIC_LABELS = {"duties": "Duties", "hours": "Hours", "session_units": "Session units", "weekends": "Weekends worked", "overtime_duties": "Overtime duties", "overtime_hours": "Overtime hours", "lead_turns": "Team lead turns", "supervision": "Trainee sessions supervised", "pair_exposure": "Duties shared with a partner", "workload": "Workload", "wishes_granted": "Wish points granted", "wishes_declined": "Wish points declined", "wishes_submitted": "Wish points asked for"} as const;
 export const PLANNER_COLOUR_TAG_LIMIT = 50 as const;
+export const PLANNER_TOTAL_MEASURES = {"hours": "Hours", "duties": "Duties", "weekend_days": "Weekend days"} as const;
+export const PLANNER_TOTALS_LIMIT = 50 as const;
 export const PRINT_IMAGE_DPI = {"96": "Screen", "150": "Medium", "200": "High", "300": "Print"} as const;
 export const PRINT_IMAGE_DPI_DEFAULT = 200 as const;
 export const PRINT_WRAP_DEFAULT = true as const;
 export const WHEREABOUTS_DEFAULTS = {"area_share": 25, "max_areas": 2} as const;
 export const WHEREABOUTS_LIMITS = {"area_share": [1, 100], "max_areas": [1, 5]} as const;
+export const TIMES_OF_DAY_DEFAULTS = [{"name": "Morning", "code": "M", "start": "06:00", "colour": "blue"}, {"name": "Afternoon", "code": "A", "start": "12:00", "colour": "amber"}, {"name": "Evening", "code": "E", "start": "17:00", "colour": "coral"}, {"name": "Night", "code": "N", "start": "21:00", "colour": "indigo"}] as const;
+export const TIMES_OF_DAY_LIMIT = 12 as const;
 export const ENDED_REASON = "Ended: its dates are past and no rota covers them";
 export const PER_PERSON_KINDS: readonly string[] = ["allocation_overtime", "allocation_preference", "block_quota", "forbidden_transition", "max_consecutive_days", "max_consecutive_weekends", "max_duties", "max_hours", "min_rest", "restriction"];
 export const LINE_KINDS: readonly string[] = ["allocation_overtime", "allocation_preference", "block_quota", "forbidden_transition", "max_consecutive_days", "max_consecutive_weekends", "max_duties", "max_hours", "maximum_participants", "min_rest", "minimum_cover", "restriction", "spread_evenly", "supervision_limit"];

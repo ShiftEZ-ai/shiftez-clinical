@@ -10,6 +10,7 @@ export interface QuotaRow {
   /** The server's working-day proration of this amount (quotas.py), shown as it was calculated. */
   proration?:{configured_amount:number;amount:number;working_days:number;full_working_days:number}|null;
   difference:number; status:string; severity:string; overtime:string;
+  /** The duty types the quota counts (none: every type). */assignment_type_ids?:string[];
 }
 export interface QuotaReport {metric_version:string; timezone:string; basis:string; complete:boolean; rows:QuotaRow[]; empty_policy_ids?:string[]}
 export const quotaUnits:Record<string,string>={duties:'Duties',session_units:'Session units',scheduled_hours:'Planned presence hours',reserved_hours:'Reserved hours',workload_credit:'Workload credits',training_credit:'Planned educational credits',lead_turns:'Team lead turns'};

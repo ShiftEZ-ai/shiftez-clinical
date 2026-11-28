@@ -15,7 +15,7 @@ from .test_browser_cp_sat import cp_server  # noqa: F401 (one fixture: server an
 
 pytestmark = pytest.mark.browser
 
-GROUPS = {'Scheduling': ['Duty types', 'Recurring sessions', 'Opening hours', 'Resource pools'],
+GROUPS = {'Scheduling': ['Duty types', 'Recurring sessions', 'Opening hours', 'Times of day', 'Resource pools'],
           'Places & services': ['Locations', 'Location types', 'Services'],
           'People': ['Ranks', 'Skills & capabilities', 'Names & codes'],
           'Department': ['Tags', 'Department settings', 'Auto-schedule & scoring', 'Announcements']}

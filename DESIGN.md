@@ -351,6 +351,10 @@ and a desktop window narrowed below it gets the same rule at once.
   administrator can always sign in with a password) shows only with institutional only. Programme set-up stays on Programmes & rotations
   (programme leads own it). The auto-schedule options are one component in five visible groups,
   used for the department defaults and for one run (Schedule › Auto-schedule).
+- Times of day (Configuration › Scheduling, `times_of_day.ts`): the department's named parts of the day, one row each by start
+  (code in its colour, name, one-character code, start, colour, where it ends), the contract's defaults until saved; a name,
+  code or start used twice is said on both rows; Save takes a reason, Undo one step. Colour by › Time of day draws each duty
+  in the part its local start falls in, with the code on People and schedule chips and each part in the key.
 - Score weights are relative: each part shows its share ("35%"); any total is fine and is not said. The warning line
   speaks only when the weights cannot be used, and says why.
 - Score review (`score_review.ts`): Configuration › Auto-schedule & scoring ›
@@ -987,7 +991,9 @@ and a desktop window narrowed below it gets the same rule at once.
   phone agenda; print copies them): what an item says is the view's Properties in order and form, the duty code
   (the duty type's configured short code) included, never hidden by a column's width; each kind of item starts from the
   contract's `VIEW_ITEM_SHOWN_BY_DEFAULT`. Staffing numbers is one switch per view (`PlannerViewSettings.staffing`),
-  also in the export. The List's columns are saved with the view, and the export's key repeats on every page. A
+  also in the export. People's Totals (`PlannerViewSettings.totals`) are kept as Properties are (order, show or hide, add from
+  measures, times of day and duty types); a person quota over the view's days shows n / target with a 4px bar, over
+  target in the warning colour with an alert ("Over target" in the key), and the CSV carries the same columns. The List's columns are saved with the view, and the export's key repeats on every page. A
   setting is offered only where it is drawn.
 - Person names: one renderer (`person_label.ts`) and one parser (`nameWords` in
   `dom.ts`, under the department's title and family-name particle lists) name every person; no screen formats a name,

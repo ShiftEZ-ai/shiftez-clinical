@@ -13,6 +13,8 @@ import type {Row,WorkspaceData} from './types.js';
 import {tag,ruleSummary,dayTitle,addsToSelection,selectSession} from './planner_rules.js';
 import {leaveTypeName,causeText} from './findings.js';
 import {issueMarker,issueLabel,issueList,findingIssue,openMarkerFrom} from './issue_marker.js';
+import {totalsOf,totalName,totalCount,quotaOf,quotaOver,totalText} from './planner_totals.js';
+import {timesOfDay} from './times_of_day.js';
 
 type Group='rank'|'tag'|'team'|'none';type Sort='hours-desc'|'hours-asc'|'name'|'name-desc';
 // Viewer choices for this page visit (not saved). The planner's collection toolbar sets find, group and sort.
@@ -29,7 +31,6 @@ export function refreshPeople(){redrawPeople?.();}
 let leaveCache:{key:string;rows:Row[]}|null=null;
 onSessionReset(()=>{leaveCache=null;});
 
-const HOURS=new Set(['reserved_hours','scheduled_hours']);
 // Wishes to work (on duty, a wanted duty) and wishes for time off (a day off, a duty to avoid) are marked apart.
 const WISH_TONE=(kind:string)=>['prefer_on','prefer_shift_type'].includes(kind)?'on':'off';
 /** Leave and wishes on a person × day grid (D80): People × Days (its Layers switch) and the codes/counts grid (the view's
@@ -81,7 +82,8 @@ export function leaveLayer(ctx:Context,data:WorkspaceData,key:Legend,zone:string
   };
 }
 
-/** People view: one row per person across the rota, grouped by rank, with leave, rule issues and hours against target. */
+/** People view: one row per person across the rota, grouped by rank, with leave, rule issues and the view's totals
+ *  (Hours by default) against the person's quotas. */
 export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hooks:Pick<WeekHooks,'name'|'code'|'details'|'view'|'menu'|'onShowAll'>,filtered:boolean,range?:string[]){
   const zone=ctx.me.organisation.timezone,w=data.workspace;
   const root=el('div',{class:'ppl'});
@@ -100,16 +102,17 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
   for(const f of (w.validation?.findings||[]) as unknown as Row[])if(f.person_id&&!f.shift_id&&f.cause){const t=causeText(f);breaches.set(f.person_id,[...new Set([...(breaches.get(f.person_id)||[]),t])]);}
   const breachMark=(list:string[])=>key.mark(el('span',{class:'pg-breach',role:'img','aria-label':'Rule breach: '+list.join('; '),'data-tip':list.join(' · ')},icon('alert'),'Breach'),
     'breach',el('span',{class:'pg-breach lg-mark','aria-hidden':'true'},icon('alert'),'Breach'),'Breach of their own rule (hover for the cause)');
-  const targets=new Map<string,{amount:number;comparison:string}>();
-  for(const r of w.validation?.quota_report?.rows||[])if(HOURS.has(r.metric)&&!targets.has(r.person_id))targets.set(r.person_id,{amount:r.amount,comparison:r.comparison});
+  // The view's totals after the days, in its order; one whose time of day or duty type is gone is not drawn.
+  const src={times:timesOfDay(ctx.me.department),types:ctx.catalogues.assignment_types||[]};
+  const totals=totalsOf(weekView.totals).filter(t=>t.on&&totalName(t.key,src)),withHours=totals.some(t=>t.key==='hours');
+  const quotas=w.validation?.quota_report?.rows||[];
   const current=(r:Row)=>(!r.starts_on||r.starts_on<=days.at(-1)!)&&(!r.ends_on||r.ends_on>days[0]);
   const roleRow=(pid:string)=>{const m=(ctx.catalogues.memberships||[]).find(r=>r.person_id===pid&&current(r));return m?(ctx.catalogues.categories||[]).find(c=>c.id===m.category_id):undefined;};
   const rankOf=(pid:string)=>roleRow(pid)?labelOf(roleRow(pid)):'No rank';
   // A rank group's band is its rank's one tint (C21), the same key entry as Colour by Rank (c:r:, colourRule); other groups are neutral.
   const groupRank=new Map<string,string>();
   // `only`: the sessions of one supervision team (Group by Supervision team counts each team's own duties).
-  const hoursOf=(pid:string,only?:Set<string>)=>(byPerson.get(pid)||[]).filter(x=>!x.shift.cancelled&&(!only||only.has(x.shift.id))).reduce((a,x)=>a+(Date.parse(x.p.end)-Date.parse(x.p.start))/3600000,0);
-  const maxHours=Math.max(1,...ctx.catalogues.people.map(p=>hoursOf(p.id)));
+  const hoursOf=(pid:string,only?:Set<string>)=>totalCount('hours',(byPerson.get(pid)||[]).filter(x=>!only||only.has(x.shift.id)),zone,src.times);
   // The key lists the duty codes and marks the drawn rows show (collapsed groups and search change it).
   const key=legend('Duty key'),colours=colourRule(ctx,days,key);
   const gridWrap=el('div',{class:'week-scroller',tabindex:0,'aria-label':'People timeline · scrollable'});
@@ -152,11 +155,13 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     const onlyIn=(k:string,pid:string)=>state.group==='team'?scoped.get(k+'|'+pid)||new Set<string>():null;
     layer.clear();key.clear();
     const grid=el('div',{class:'people-grid'+(itemSaysWords(props)?' it-words':''),role:'grid','aria-label':'Duties by person and day'});grid.style.setProperty('--days',String(days.length));
+    grid.style.setProperty('--totals',String(totals.length));grid.classList.toggle('no-totals',!totals.length);
+    const totalClass=(key:string)=>key==='hours'?'pg-hours':'pg-tot';
     // A chip is its duty type's code and hue, and Colour by's entry (dom.ts legend): one stamp for this grid's own chips and
     // the live auto-schedule view's (LiveHost.stamp; null: an open place), so a live chip is keyed like a drawn one.
     const stampChip=(n:Element,shift:Row,pid:string)=>{const code=weekView.colourBy==='type'?dutyColour(shift):'slate';
       key.mark(n,'t:'+shift.assignment_type_id,el('span',{class:`pg-chip duty-${code}`,'aria-hidden':'true'},sessionCode(ctx,shift)),shift.type_snapshot.name,0);
-      return weekView.colourBy==='type'?code:colours.seenChip(shift,pid,n);};
+      colours.codeMark(shift,n);return weekView.colourBy==='type'?code:colours.seenChip(shift,pid,n);};
     const openKey=(n:Element)=>markOpen(key,n,el('span',{class:'pg-chip pg-open lg-mark','aria-hidden':'true'},el('b',{},'+1')));
     const shiftOf=new Map(data.shifts.map(x=>[x.id,x]));
     const placeOf=new Map((ctx.catalogues.locations||[]).map(l=>[l.id,l]));  // each chip names its place (QA-127a)
@@ -164,7 +169,7 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     (grid as LiveHost).stamp=(n,s,p)=>{if(s===null){openKey(n);return;}const x=shiftOf.get(s);if(x)stampChip(n,x,p);};
     grid.append(el('div',{class:'pg-row pg-head',role:'row'},el('div',{class:'pg-name',role:'columnheader'},`${people.length} people`),
       ...days.map(d=>{const we=isWeekend(d);return tag((n=>(we&&markWeekend(key,n),d===today&&markToday(key,n),n))(el('div',{class:'pg-day'+(we?' weekend':'')+(d===today?' today':'')+ctxCls(d),role:'columnheader','aria-label':formatDate(d,zone)},el('small',{},new Intl.DateTimeFormat('en-GB',{weekday:days.length>10?'narrow':'short',timeZone:'UTC'}).format(new Date(d+'T12:00:00Z'))),el('span',{},String(Number(d.slice(8)))))),{kind:'day',label:dayTitle(d),day:d,days:[d],shifts:visible.filter(s=>toLocal(s.start,zone).slice(0,10)===d).map(s=>s.id)},{pin:true});}),
-      el('div',{class:'pg-hours',role:'columnheader'},'Hours')));
+      ...totals.map(t=>el('div',{class:totalClass(t.key),role:'columnheader'},totalName(t.key,src)))));
     scheduleWidths(grid,{row:grid.querySelector<HTMLElement>(':scope>.pg-head>.pg-name'),col:grid.querySelector<HTMLElement>(':scope>.pg-head>.pg-day'),colKey:'date'});
     // Open places, a row under the dates: where a place filled by auto-schedule visibly comes from (dashed, as the
     // Week view's "+ 1 open place"). Only while some day has one.
@@ -172,23 +177,23 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     for(const s of visible)if(!s.context&&!s.cancelled){const n=openPlaces(cover.get(s.id));if(n)open.set(dayOf(s),(open.get(dayOf(s))||0)+n);}
     if(open.size)grid.append(el('div',{class:'pg-row pg-open-row',role:'row'},el('div',{class:'pg-name',role:'rowheader'},el('strong',{class:'truncate'},'Open places')),
       ...days.map(d=>{const n=open.get(d)||0;return el('div',{class:'pg-cell'+ctxCls(d),role:'gridcell','data-day':d,...(n?{'aria-label':`${n} open place${n>1?'s':''}`}:{})},
-        n?openKey(el('span',{class:'pg-chip pg-open','data-open':n,'aria-hidden':'true'},el('b',{},'+'+n))):'');}),el('div',{class:'pg-hours',role:'gridcell'})));
+        n?openKey(el('span',{class:'pg-chip pg-open','data-open':n,'aria-hidden':'true'},el('b',{},'+'+n))):'');}),...totals.map(t=>el('div',{class:totalClass(t.key),role:'gridcell'}))));
     if(!people.length)grid.append(el('div',{class:'wk-empty'},empty(q?'No one matches':filtered?'Hidden by filters':'No people in this view',q?'Try another name, code or tag.':filtered?'People here do not match the filters or search.':'Nobody works these days.',filtered&&hooks.onShowAll?button('Show all',hooks.onShowAll,'secondary'):null,filtered?'filter':'people')));
     for(const [name,list] of [...groups.entries()].sort((a,b)=>nameOfGroup(a[0]).localeCompare(nameOfGroup(b[0])))){
       const scopeOf=(pid:string)=>onlyIn(name,pid),hoursIn=(pid:string)=>{const only=scopeOf(pid);return only?hoursOf(pid,only):hours.get(pid)!;};
       const shut=state.collapsed.has(name),total=list.reduce((a,p)=>a+hoursIn(p.id),0);
       if(state.group!=='none'){
         const rank=groupRank.get(name)||'',hue=rank?rankColour(rank):'';
-        const t=el('button',{type:'button',class:'wk-toggle','aria-expanded':String(!shut)},icon(shut?'chevronRight':'chevronDown'),hue?el('span',{class:`wk-swatch duty-${hue}`,'aria-hidden':'true'}):null,el('strong',{class:'truncate'},nameOfGroup(name)),el('span',{class:'wk-count'},`${list.length} ${list.length===1?'person':'people'} · ${Math.round(total)} h`));
+        const t=el('button',{type:'button',class:'wk-toggle','aria-expanded':String(!shut)},icon(shut?'chevronRight':'chevronDown'),hue?el('span',{class:`wk-swatch duty-${hue}`,'aria-hidden':'true'}):null,el('strong',{class:'truncate'},nameOfGroup(name)),el('span',{class:'wk-count'},`${list.length} ${list.length===1?'person':'people'}${withHours?` · ${Math.round(total)} h`:''}`));
         t.addEventListener('click',()=>{shut?state.collapsed.delete(name):state.collapsed.add(name);refocus=name;draw();});
         const head=el('div',{class:'pg-row pg-group',role:'row'},hue?key.mark(el('div',{class:`pg-group-head wk-group-head duty-${hue}`,role:'rowheader'},t),'c:r:'+rank,'duty-'+hue,nameOfGroup(name),0):el('div',{class:'pg-group-head wk-group-head',role:'rowheader'},t));
         jobs.push(()=>{grid.append(head);if(refocus===name){refocus='';want=t;}});
         if(shut)continue;
       }
       for(const person of list)jobs.push(()=>{
-        const only=scopeOf(person.id),mine=(byPerson.get(person.id)||[]).filter(x=>!only||only.has(x.shift.id)),h=hoursIn(person.id);
-        // A team's row counts that team's duties only, so the person's whole-rota target is not set against it.
-        const target=only&&only.size<(byPerson.get(person.id)||[]).length?undefined:targets.get(person.id);
+        const only=scopeOf(person.id),mine=(byPerson.get(person.id)||[]).filter(x=>!only||only.has(x.shift.id));
+        // A team's row counts that team's duties only, so the person's whole-rota quotas are not set against it.
+        const part=!!only&&only.size<(byPerson.get(person.id)||[]).length;
         // A tag chip's words are its whole meaning (its hue only repeats the tag): no key entry of its own.
         const tags=((person.tags||[]) as string[]).slice(0,2).map(t=>{const c=tagChip(t);c.dataset.lgSelf='';return c;});
         // Colour by person: the dot is that hue's mark (Colour by person reads no session).
@@ -229,21 +234,28 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
           layer.leave(cell,person.id,d,person.id+'|'+d+'|'+name);
           row.append(cell);
         }
-        const over=!!target&&target.comparison!=='minimum'&&h>target.amount;
-        const bar=el('span',{class:'pg-bar'+(over?' over':''),'aria-hidden':'true'},el('span',{}));
-        if(over)key.mark(bar,'over',el('span',{class:'pg-bar over lg-bar','aria-hidden':'true'},el('span',{})),'Hours above target');
-        // Against the target when there is one, otherwise against the busiest person shown.
-        const of=Math.max(1,target?target.amount:maxHours);
-        (bar.firstChild as HTMLElement).style.setProperty('--fill',String(Math.min(1,h/of)));
-        // data-*: the auto-schedule live view moves the hours as duties move (autoschedule_live.ts).
-        row.append(el('div',{class:'pg-hours',role:'gridcell','data-hours':h,'data-of':of,'data-target':target?target.amount:'','aria-label':target?`${Math.round(h)} of ${target.amount} target hours`:`${Math.round(h)} hours`},
-          el('span',{},mine.length?`${Math.round(h)}${target?' / '+target.amount:''} h`:'—'),mine.length?bar:''));
+        for(const t of totals){
+          // A total the person has a quota for over these days shows the quota's own count against its amount, with a bar;
+          // over its maximum or target, the warning colour and an alert. Otherwise the view's count alone.
+          const q=part?undefined:quotaOf(t.key,quotas,person.id,days),over=quotaOver(q),name=totalName(t.key,src);
+          const n=q?q.actual:t.key==='hours'?hoursIn(person.id):totalCount(t.key,mine,zone,src.times);
+          const bar=q?el('span',{class:'pg-bar'+(over?' over':''),'aria-hidden':'true'},el('span',{})):null;
+          (bar?.firstChild as HTMLElement|undefined)?.style.setProperty('--fill',String(Math.min(1,n/Math.max(1e-9,q!.amount))));
+          // data-*: the auto-schedule live view moves the hours as duties move (autoschedule_live.ts).
+          const cell=el('div',{class:totalClass(t.key)+(over?' over':''),role:'gridcell','data-total':t.key,
+            ...(t.key==='hours'?{'data-hours':n,'data-of':q?Math.max(1e-9,q.amount):'','data-target':q?q.amount:''}:{}),
+            'aria-label':`${name}: ${totalText(t.key,n)}${q?` of ${q.amount}`:''}${over?' · over target':''}`},
+            over?icon('alert'):null,el('span',{},mine.length||q?totalText(t.key,n,q?.amount):'—'),bar);
+          if(over)key.mark(cell,'over',el('span',{class:'pg-tot-key','aria-hidden':'true'},icon('alert'),el('span',{class:'pg-bar over lg-bar'},el('span',{}))),'Over target');
+          row.append(cell);
+        }
         grid.append(row);
       });
     }
     // The first rows draw at once; the rest follow in small batches, so a department-size grid never blocks input
-    // for long (one 150-person draw was a ~220 ms task).
-    const serial=++drawSerial,batch=(from:number)=>{if(serial!==drawSerial)return;for(const job of jobs.slice(from,from+40))job();settle();if(from+40<jobs.length)setTimeout(()=>batch(from+40));};
+    // for long (one 150-person draw was a ~220 ms task). Paper and CSV copy the grid right after it is drawn: every row at once.
+    const step=weekView.forPrint?jobs.length:40;
+    const serial=++drawSerial,batch=(from:number)=>{if(serial!==drawSerial)return;for(const job of jobs.slice(from,from+step))job();settle();if(from+step<jobs.length)setTimeout(()=>batch(from+step));};
     batch(0);
     gridWrap.replaceChildren(grid);roving(grid,gridWrap);settle();
   }

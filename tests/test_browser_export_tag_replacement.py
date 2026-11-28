@@ -177,11 +177,11 @@ def test_day_keeps_saved_tag_configuration_dormant(browser, live_server, h, tmp_
         expect(panel.locator('[data-part="tags"]')).to_have_count(0)
         expect(panel.get_by_role('button', name=re.compile('^(Show|Hide) Person tags$'))).to_have_count(0)
         close_popover(page)
-        # Day's bars are sessions: Colour by offers a session's colours only (duty type, service); the saved Tag stays
+        # Day's bars are sessions: Colour by offers a session's colours only (duty type, service, time of day); the saved Tag stays
         # dormant and the bars keep the duty type's colour (never a setting that does nothing).
         panel = view_settings(page.locator('.planner-toolbar'), 'Colour by')
         colours = panel.get_by_role('radiogroup', name='Colour by', exact=True)
-        expect(colours.get_by_role('radio')).to_have_text(['Duty type', 'Service'])
+        expect(colours.get_by_role('radio')).to_have_text(['Duty type', 'Service', 'Time of day'])
         expect(colours.get_by_role('radio', name='Duty type', exact=True)).to_have_attribute('aria-checked', 'true')
         capture(page, tmp_path, 'day-dormant-tag-controls')
         close_popover(page)

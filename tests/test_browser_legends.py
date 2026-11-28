@@ -89,6 +89,13 @@ def test_planner_legend_follows_filters_colour_by_names_and_layouts(browser, liv
         colour_by(page, 'Rank')
         with legend_entries(page, legend) as entries:
             expect(entries.filter(has_text='Demo practitioners')).to_have_count(1)
+        # Colour by time of day (the department's defaults): 08:00 is Morning and 20:00 Evening; only drawn times are keyed.
+        colour_by(page, 'Time of day')
+        with legend_entries(page, legend) as entries:
+            for text in ('Morning from 06:00', 'Evening from 17:00'):
+                expect(entries.filter(has_text=text)).to_have_count(1)
+            for text in ('Afternoon from', 'Night from', 'Clinical review session'):
+                expect(entries.filter(has_text=text)).to_have_count(0)
         colour_by(page, 'Duty type')
         # Codes recover full names on hover/focus/open, without a person dictionary in the key.
         with legend_entries(page, legend) as entries:
@@ -118,6 +125,13 @@ def test_planner_legend_follows_filters_colour_by_names_and_layouts(browser, liv
             expect(entries.filter(has_text='Night cover')).to_have_count(1)
             expect(entries.locator('.pg-chip').filter(has_text='NC')).to_have_count(1)
             expect(entries.filter(has_text='Unused duty')).to_have_count(0)
+        # By time of day each chip also carries its time's code, so colour is not the only cue.
+        colour_by(page, 'Time of day')
+        codes = page.locator('.people-grid .pg-chip > .tod-code')
+        expect(codes).to_have_count(2)
+        assert sorted(codes.all_inner_texts()) == ['E', 'M']
+        colour_by(page, 'Duty type')
+        expect(page.locator('.people-grid .tod-code')).to_have_count(0)
         pick_view(page, 'Coverage')
         with legend_entries(page, key(page)) as entries:
             for text in ('Clinical review session', 'No session'):

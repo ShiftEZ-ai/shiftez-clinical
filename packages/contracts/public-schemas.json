@@ -13134,6 +13134,50 @@
         "title": "TagDefinition",
         "type": "object"
       },
+      "TimeOfDay": {
+        "additionalProperties": false,
+        "description": "A department's time of day (Configuration \u203a Times of day): a duty belongs to the one whose start is the latest at\nor before the duty's local start; the last runs to the first start the next day.",
+        "properties": {
+          "name": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "code": {
+            "pattern": "^[A-Z0-9]$",
+            "title": "Code",
+            "type": "string"
+          },
+          "start": {
+            "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",
+            "title": "Start",
+            "type": "string"
+          },
+          "colour": {
+            "enum": [
+              "teal",
+              "blue",
+              "violet",
+              "amber",
+              "slate",
+              "coral",
+              "indigo",
+              "pink"
+            ],
+            "title": "Colour",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "code",
+          "start",
+          "colour"
+        ],
+        "title": "TimeOfDay",
+        "type": "object"
+      },
       "ViewProperty": {
         "additionalProperties": false,
         "description": "One thing drawn on each session card, in the view's order; `form` is how it is drawn (chip, icon, text, count).",
@@ -13298,6 +13342,15 @@
       },
       "whereabouts": {
         "$ref": "#/$defs/WhereaboutsSettings"
+      },
+      "times_of_day": {
+        "items": {
+          "$ref": "#/$defs/TimeOfDay"
+        },
+        "maxItems": 12,
+        "minItems": 1,
+        "title": "Times Of Day",
+        "type": "array"
       },
       "reason": {
         "maxLength": 500,
@@ -13883,6 +13936,27 @@
         "title": "PlannerLayers",
         "type": "object"
       },
+      "PlannerTotal": {
+        "additionalProperties": false,
+        "description": "One People total, in the view's order; a time of day or duty type that no longer exists is not drawn.",
+        "properties": {
+          "key": {
+            "pattern": "^(hours|duties|weekend_days|time:[A-Z0-9]|type:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            "title": "Key",
+            "type": "string"
+          },
+          "on": {
+            "default": true,
+            "title": "On",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "PlannerTotal",
+        "type": "object"
+      },
       "PlannerViewSettings": {
         "additionalProperties": false,
         "description": "What a saved planner view keeps: its layout (mode), how many days it shows (range), its filters and display.\n\n\"week\" is the calendar layout (duty rows \u00d7 day columns) for any range; older views saved as \"month\"\nopen as the calendar layout over a month. A view without a range uses its layout's default. Every display\nfield is optional: a view saved before it existed opens with the default.",
@@ -14257,7 +14331,8 @@
               "service",
               "role",
               "person",
-              "tag"
+              "tag",
+              "time_of_day"
             ],
             "title": "Colour By",
             "type": "string"
@@ -14406,6 +14481,22 @@
             ],
             "default": null,
             "title": "Properties"
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlannerTotal"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Totals"
           },
           "label": {
             "anyOf": [
@@ -14836,6 +14927,27 @@
           }
         },
         "title": "PlannerLayers",
+        "type": "object"
+      },
+      "PlannerTotal": {
+        "additionalProperties": false,
+        "description": "One People total, in the view's order; a time of day or duty type that no longer exists is not drawn.",
+        "properties": {
+          "key": {
+            "pattern": "^(hours|duties|weekend_days|time:[A-Z0-9]|type:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            "title": "Key",
+            "type": "string"
+          },
+          "on": {
+            "default": true,
+            "title": "On",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "PlannerTotal",
         "type": "object"
       },
       "SearchOptions": {
@@ -15367,7 +15479,8 @@
           "service",
           "role",
           "person",
-          "tag"
+          "tag",
+          "time_of_day"
         ],
         "title": "Colour By",
         "type": "string"
@@ -15516,6 +15629,22 @@
         ],
         "default": null,
         "title": "Properties"
+      },
+      "totals": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/PlannerTotal"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Totals"
       },
       "label": {
         "anyOf": [
@@ -59270,6 +59399,27 @@
         "title": "PlannerLayers",
         "type": "object"
       },
+      "PlannerTotal": {
+        "additionalProperties": false,
+        "description": "One People total, in the view's order; a time of day or duty type that no longer exists is not drawn.",
+        "properties": {
+          "key": {
+            "pattern": "^(hours|duties|weekend_days|time:[A-Z0-9]|type:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            "title": "Key",
+            "type": "string"
+          },
+          "on": {
+            "default": true,
+            "title": "On",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "PlannerTotal",
+        "type": "object"
+      },
       "PlannerViewSettings": {
         "additionalProperties": false,
         "description": "What a saved planner view keeps: its layout (mode), how many days it shows (range), its filters and display.\n\n\"week\" is the calendar layout (duty rows \u00d7 day columns) for any range; older views saved as \"month\"\nopen as the calendar layout over a month. A view without a range uses its layout's default. Every display\nfield is optional: a view saved before it existed opens with the default.",
@@ -59644,7 +59794,8 @@
               "service",
               "role",
               "person",
-              "tag"
+              "tag",
+              "time_of_day"
             ],
             "title": "Colour By",
             "type": "string"
@@ -59793,6 +59944,22 @@
             ],
             "default": null,
             "title": "Properties"
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlannerTotal"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Totals"
           },
           "label": {
             "anyOf": [
@@ -61528,6 +61695,27 @@
         "title": "PlannerLayers",
         "type": "object"
       },
+      "PlannerTotal": {
+        "additionalProperties": false,
+        "description": "One People total, in the view's order; a time of day or duty type that no longer exists is not drawn.",
+        "properties": {
+          "key": {
+            "pattern": "^(hours|duties|weekend_days|time:[A-Z0-9]|type:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+            "title": "Key",
+            "type": "string"
+          },
+          "on": {
+            "default": true,
+            "title": "On",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key"
+        ],
+        "title": "PlannerTotal",
+        "type": "object"
+      },
       "PlannerViewSettings": {
         "additionalProperties": false,
         "description": "What a saved planner view keeps: its layout (mode), how many days it shows (range), its filters and display.\n\n\"week\" is the calendar layout (duty rows \u00d7 day columns) for any range; older views saved as \"month\"\nopen as the calendar layout over a month. A view without a range uses its layout's default. Every display\nfield is optional: a view saved before it existed opens with the default.",
@@ -61902,7 +62090,8 @@
               "service",
               "role",
               "person",
-              "tag"
+              "tag",
+              "time_of_day"
             ],
             "title": "Colour By",
             "type": "string"
@@ -62051,6 +62240,22 @@
             ],
             "default": null,
             "title": "Properties"
+          },
+          "totals": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/PlannerTotal"
+                },
+                "maxItems": 50,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Totals"
           },
           "label": {
             "anyOf": [

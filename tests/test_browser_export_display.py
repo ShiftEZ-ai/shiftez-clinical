@@ -332,7 +332,8 @@ def test_csv_uses_the_original_dates_filter_and_person_search(browser, live_serv
         dialog = page.get_by_role('dialog', name='Print or export', exact=True)
         format_as(dialog, 'Data (CSV)')
         if query == NAMES[0]:
-            expect(dialog.get_by_role('status')).to_contain_text(f'{1 if layout == "day" else 2} rows')
+            # People's CSV is its own grid: one line for the one person found ("1 row", not "1 rows").
+            expect(dialog.get_by_role('status')).to_contain_text({'day': '1 row', 'people': '1 row'}.get(layout, '2 rows'))
             with page.expect_download() as saved:
                 dialog.get_by_role('button', name='Save CSV', exact=True).click()
             path = tmp_path / f'{layout}.csv'
@@ -341,11 +342,21 @@ def test_csv_uses_the_original_dates_filter_and_person_search(browser, live_serv
             assert raw.startswith(b'\xef\xbb\xbf') and raw.endswith(b'\r\n')
             assert b'\n' not in raw.replace(b'\r\n', b'')
             rows = list(csv.reader(io.StringIO(raw.decode('utf-8-sig'), newline='')))
+            if layout == 'people':
+                # Person, the days by their date, then the view's totals (Hours by default), in the view's order.
+                assert rows[0][0] == 'Person' and rows[0][-1] == 'Hours' and len(rows) == 2, rows
+                line = dict(zip(rows[0], rows[1], strict=True))
+                assert 'Staff 01' in line['Person'] and line['4 Oct 2026'] and line['6 Oct 2026'], line
+                assert re.fullmatch(r'\d+( / [\d.]+)? h', line['Hours']), line
+                expect(dialog).to_have_count(0)
+                settled(page)
+                expect(search).to_have_value(query)
+                assert screen_state(page) == before
+                return
             assert rows[0] == ['When', 'Duty', 'Place', 'Service', 'People', 'Status']
             # Constructed from the fixture, never read from the List or the CSV preview. A session search draws the person
-            # it names first (SW3-A-31, e5a7e55b9), whatever the random ids' order; the People layout's search finds rows
-            # of people and leaves each session's people in their own order (app.ts weekView.matchPeople).
-            people = sorted(zip(h.seed['people'][:2], NAMES, strict=True)) if layout == 'people' else zip(NAMES, NAMES)
+            # it names first (SW3-A-31, e5a7e55b9), whatever the random ids' order.
+            people = zip(NAMES, NAMES)
             expected = {'When': '4 Oct 2026 08:00–12:00', 'Duty': 'QA clinic', 'Place': place,
                         'Service': service, 'People': '; '.join(name for _, name in people), 'Status': 'Covered'}
             expected_rows = [expected]

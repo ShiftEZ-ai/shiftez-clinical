@@ -2,7 +2,7 @@
  *  opens its own page (Properties › Person label, Days, Colour by, Layers), Density, and Duplicate /
  *  Reset at the foot. Group, Sort and Filter live on the toolbar only (S-10: never twice). The page owns the state; this only draws it and reports choices. */
 import {el,icon,button,withIcon,iconButton,select,field,check,colourOf,WEEKDAYS,type IconName,type Choice} from './dom.js';
-import {LABEL_PARTS,LABEL_PART_DEFINITIONS,LABEL_SEPARATORS,LABEL_HONORIFIC_MODES,PLANNER_TEAM_ROWS_LIMIT,type PersonLabel,type ViewProperty} from './generated.js';
+import {LABEL_PARTS,LABEL_PART_DEFINITIONS,LABEL_SEPARATORS,LABEL_HONORIFIC_MODES,PLANNER_TEAM_ROWS_LIMIT,PLANNER_TOTALS_LIMIT,type PersonLabel,type ViewProperty,type PlannerTotal} from './generated.js';
 import {ROW_FACTS} from './planner_week.js';
 import {PROPERTY_NAMES,PROPERTY_FORMS,PROPERTY_EXAMPLES,FORM_NAMES,ITEM_DRAWS} from './schedule_item.js';
 import {LABEL_NAMES,type LabelPart} from './person_label.js';
@@ -35,6 +35,9 @@ export interface ViewSettingsSpec{
   /** Staffing numbers (places filled / needed under each day, group totals, a grid's Staffed / needed row): shown or
    *  hidden for this view (PlannerViewSettings.staffing) and, in display mode, for this export. */
   staffing?:{value:()=>boolean;set:(on:boolean)=>void};
+  /** People: the totals after the days (PlannerViewSettings.totals), shown or hidden and in order, added from `choices`
+   *  (measures, times of day, duty types). `name` is '' for one whose time of day or duty type is gone (kept, not listed). */
+  totals?:{value:()=>PlannerTotal[];set:(totals:PlannerTotal[])=>void;choices:()=>Choice[];name:(key:string)=>string;example:(key:string)=>string};
   /** `preview`: a real person named with this label; `part`: what one part shows for them. */
   label:{value:()=>PersonLabel;set:(label:PersonLabel)=>void;preview:(label:PersonLabel)=>string;part:(part:LabelPart,label:PersonLabel)=>string};
   /** What each session card shows, in order, and how (the calendar honours it). */
@@ -164,11 +167,12 @@ export function viewSettings(spec:ViewSettingsSpec,panel:HTMLElement,close:()=>v
   }
   /** What this layout's items draw and this reader may see: the one set the Properties page lists and its summary names
    *  (a property the layout does not draw is never named, e.g. Rule marks on Coverage). */
+  const totalsRow=()=>spec.totals?row('Totals','sort',`${spec.totals.value().filter(t=>t.on!==false&&spec.totals!.name(t.key)).length} shown`,()=>totalsPage()):null;
   const offered=(k:ViewProperty['key'])=>(spec.properties.drawn?.(k)??ITEM_DRAWS.card.has(k))&&(spec.properties.supports?.(k)??true);
   function main(){
     if(spec.display){
       panel.replaceChildren(el('div',{class:'vs-sec'},...axes(),
-        row('Properties','eye',[summary(spec.label.value()),...spec.properties.value().filter(p=>p.on&&p.key!=='label'&&offered(p.key)).map(p=>PROPERTY_NAMES[p.key].replace(/ \(.*\)$/,''))].join(', '),properties),
+        row('Properties','eye',[summary(spec.label.value()),...spec.properties.value().filter(p=>p.on&&p.key!=='label'&&offered(p.key)).map(p=>PROPERTY_NAMES[p.key].replace(/ \(.*\)$/,''))].join(', '),properties),totalsRow(),
         spec.colour?row('Colour by','palette',colourHint(),()=>colourPage()):null,
         spec.columns?row('Columns','eye','Shown, order and wrap',()=>page('Columns',b=>spec.columns!.build(b,changed))):null,
         ...(spec.density?segment('Density',[['compact','Compact'],['comfortable','Comfortable']],spec.density.value(),k=>spec.density!.set(k),changed):[]),teamRowsField(),staffingField()),foot);
@@ -186,7 +190,7 @@ export function viewSettings(spec:ViewSettingsSpec,panel:HTMLElement,close:()=>v
           n.input.addEventListener('change',()=>{const v=Math.round(Number(n.input.value));if(v>=1&&v<=62){spec.custom.set(v);changed();}else n.input.value=String(spec.custom.value());});return n.wrap;})()]:[]),
         ...(spec.openYear?[(()=>{const y=el('button',{type:'button',class:'link-button vs-link'},'Open the year overview');y.addEventListener('click',()=>{close();spec.openYear!();});return y;})()]:[])),
       el('div',{class:'vs-sec'},
-        row('Properties','eye',[summary(spec.label.value()),...spec.properties.value().filter(p=>p.on&&p.key!=='label'&&offered(p.key)).map(p=>PROPERTY_NAMES[p.key].replace(/ \(.*\)$/,''))].join(', '),properties),
+        row('Properties','eye',[summary(spec.label.value()),...spec.properties.value().filter(p=>p.on&&p.key!=='label'&&offered(p.key)).map(p=>PROPERTY_NAMES[p.key].replace(/ \(.*\)$/,''))].join(', '),properties),totalsRow(),
         row('Days','calendar',daysHint(),daysPage),
         spec.colour?row('Colour by','palette',colourHint(),()=>colourPage()):null,
         row('Layers','layers',spec.layers.hint(),()=>page('Layers',b=>spec.layers.build(b))),
@@ -256,6 +260,21 @@ export function viewSettings(spec:ViewSettingsSpec,panel:HTMLElement,close:()=>v
           // The shared dropdown (dom.ts select, opened by the picker); its label is read by screen readers only.
           const f=select(`Show ${PROPERTY_NAMES[k]} as`,forms.map(x=>({value:x,label:FORM_NAMES[x]})),of(k).form||forms[0]);f.input.classList.add('vs-as');f.wrap.classList.add('vs-as-field');
           f.input.addEventListener('change',()=>set(now.map(p=>p.key===k?{...p,form:f.input.value as ViewProperty['form']}:p),`[data-part="${k}"] select`));return f.wrap;}});
+    },main,focus);
+  }
+  /** Totals: the People columns after the days, as Properties are kept (order, show or hide), and more added from the
+   *  measures, times of day and duty types. One whose time of day or duty type is gone keeps its place, unlisted. */
+  function totalsPage(focus=''){
+    const t=spec.totals!,all=t.value(),now=all.filter(x=>t.name(x.key)),gone=all.filter(x=>!t.name(x.key)),keys=now.map(x=>x.key),of=(k:string)=>now.find(x=>x.key===k)!;
+    const set=(next:PlannerTotal[],again='')=>{t.set([...next,...gone]);changed();totalsPage(again);};
+    page('Totals',b=>{
+      orderRows(b,keys,{on:k=>of(k).on!==false,name:t.name,example:t.example,locked:()=>false,
+        move:(k,to)=>set(moved(keys,k,to).map(of),`[data-part="${k}"] .grip`),
+        toggle:k=>set(now.map(x=>x.key===k?{...x,on:x.on===false}:x),`[data-part="${k}"] .vs-eye`)});
+      const free=t.choices().filter(c=>!all.some(x=>x.key===c.value));
+      if(free.length&&all.length<PLANNER_TOTALS_LIMIT){const add=select('Add total',[{value:'',label:'Add total'},...free],'');
+        add.input.addEventListener('change',()=>{const k=add.input.value;if(k)set([...now,{key:k,on:true}],`[data-part="${k}"] .vs-eye`);});
+        b.append(el('div',{class:'vs-fields'},add.wrap));}
     },main,focus);
   }
   /** Person label: the shared editor (labelBody), for this view. */

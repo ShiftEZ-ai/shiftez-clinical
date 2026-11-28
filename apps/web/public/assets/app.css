@@ -949,7 +949,7 @@ button.cov-cell:hover{filter:brightness(.97)}
 .cov-popover{width:340px;max-width:calc(100vw - 24px)}
 .cov-list{display:flex;flex-direction:column;gap:6px;padding:10px;max-height:60vh;overflow:auto}
 
-.people-grid{--days:31;--pg-head:var(--sched-head,200px);--pg-col:var(--sched-date,30px);display:grid;grid-template-columns:var(--pg-head) repeat(var(--days),minmax(var(--pg-col),1fr)) 96px;min-width:calc(var(--pg-head) + 98px + var(--days)*var(--pg-col));border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);overflow:clip}  /* clip, not hidden: hidden would trap the sticky day header and names */
+.people-grid{--days:31;--pg-head:var(--sched-head,200px);--pg-col:var(--sched-date,30px);display:grid;grid-template-columns:var(--pg-head) repeat(var(--days),minmax(var(--pg-col),1fr)) repeat(var(--totals,1),96px);min-width:calc(var(--pg-head) + 2px + var(--days)*var(--pg-col) + var(--totals,1)*96px);border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);overflow:clip}  /* clip, not hidden: hidden would trap the sticky day header and names */
 .pg-row{display:contents}
 .pg-row>*{border-bottom:1px solid var(--line-soft);min-width:0}
 .pg-head>*{position:sticky;top:0;z-index:2;background:var(--subtle);border-bottom:1px solid var(--line);font-size:11.5px;color:var(--muted);font-weight:600}
@@ -969,7 +969,8 @@ button.cov-cell:hover{filter:brightness(.97)}
 .pg-chip:hover{border-color:var(--duty)}
 .pg-chip>.iss-mark{margin-inline-start:2px;cursor:pointer}  /* the shared issue mark (D78) inside a People chip */
 .pg-chip.cancelled{--duty-bg:var(--sub);--duty-ink:var(--muted);background:var(--sub);color:var(--muted);border-color:var(--line);text-decoration:line-through}
-.pg-hours{display:flex;align-items:center;justify-content:flex-end;padding:0 10px;font-family:var(--mono);font-size:11.5px;font-weight:600;border-left:1px solid var(--line)}
+.people-grid.no-totals{grid-template-columns:var(--pg-head) repeat(var(--days),minmax(var(--pg-col),1fr))}
+:is(.pg-hours,.pg-tot){display:flex;align-items:center;justify-content:flex-end;padding:0 10px;font-family:var(--mono);font-size:11.5px;font-weight:600;border-left:1px solid var(--line)}
 
 .person.draggable{cursor:grab;border-radius:5px;padding:1px 3px;margin-left:-3px;margin-right:-3px}
 .person.draggable:hover{background:color-mix(in srgb,var(--duty) 12%,transparent)}
@@ -1564,7 +1565,11 @@ tr.dt-linked>td{background:var(--accent-soft)}
 .pg-cell.leave-soft{outline:1px dashed var(--muted);outline-offset:-3px}
 .pg-leave-key.soft{background:none;border-style:dashed;border-color:var(--muted)}
 .pg-day.today{box-shadow:inset 0 -2px 0 var(--accent)}.pg-day.today span{color:var(--accent-text);font-weight:700}
-.pg-hours{flex-direction:column;align-items:stretch;justify-content:center;gap:3px;text-align:right}
+:is(.pg-hours,.pg-tot){flex-direction:column;align-items:stretch;justify-content:center;gap:3px;text-align:right}
+/* Over a person quota's maximum or target: the warning colour and an alert beside the number (never colour alone). */
+:is(.pg-hours,.pg-tot).over{color:var(--warn-text);position:relative}
+:is(.pg-hours,.pg-tot).over>svg{position:absolute;left:6px;top:50%;width:12px;height:12px;transform:translateY(-50%)}
+.pg-tot-key{display:inline-flex;align-items:center;gap:4px;color:var(--warn-text)}.pg-tot-key svg{width:12px;height:12px}.pg-tot-key .pg-bar{width:18px}
 .pg-bar{display:block;height:4px;border-radius:var(--r-full);background:var(--sub);overflow:hidden}
 .pg-bar>span{display:block;height:4px;background:var(--accent);transform:scaleX(var(--fill,1));transform-origin:left}
 .pg-bar.over>span{background:var(--warn)}
@@ -4092,6 +4097,14 @@ html:has(.selection-bar:not([hidden])) .rk-spot{bottom:calc(var(--status-footer-
 .vs-prop .grip{cursor:grab;color:var(--muted)}  /* an operable handle, not decoration: 3:1 (SC 1.4.11) */
 .vs-eye[aria-pressed=true]{color:var(--accent-text)}
 .vs-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:6px 8px 2px}
+/* Times of day (times_of_day.ts): the code in its colour (settings rows, the key); on a chip, the code before its words. */
+.tod-code{display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 2px;box-sizing:border-box;border:1px solid var(--duty,currentColor);border-radius:4px;background:var(--duty-bg,transparent);color:var(--duty-ink,inherit);font-family:var(--mono);font-size:10px;font-weight:700;line-height:1;flex:none}
+.pg-chip>.tod-code{min-width:13px;height:13px;margin-right:2px;border-color:currentColor;background:transparent;color:inherit;font-size:9px}
+.tod-list{display:grid;gap:10px}
+.tod-row{display:grid;grid-template-columns:auto minmax(8rem,2fr) 4.5rem 6.5rem minmax(7rem,1fr) auto auto;gap:8px;align-items:end}
+.tod-row>.tod-code{min-width:30px;height:30px;margin-bottom:4px;font-size:13px}
+.tod-until{padding-bottom:10px;color:var(--muted);font-size:12px;white-space:nowrap}
+@media (max-width:720px){.tod-row{grid-template-columns:4.5rem 1fr 1fr}.tod-row>.field:nth-of-type(1){grid-column:2/-1}.tod-row>.tod-until{grid-column:1/3}}
 .vs-preview{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .vs-preview small{color:var(--muted);font-size:11.5px}
 .vs-preview .pchip{cursor:default;max-width:220px}
