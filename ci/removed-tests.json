@@ -63,6 +63,11 @@
       "reason": "Lines are now grouped by place with the broadest line first and its exceptions under it; that order is asserted by the rule exception tree tests."
     },
     {
+      "node": "tests/test_bulk_contracts.py::test_generated_recursive_contracts_typecheck_with_the_pinned_compiler",
+      "owner": "maintainer",
+      "reason": "The recursive interface assertions remain in test_generated_recursive_contracts_export_interfaces. The Static checks job compiles generated.ts through the web TypeScript project with the locked compiler."
+    },
+    {
       "node": "tests/test_bulk_rule_lines.py::test_overlapping_personal_lines_have_explicit_end_or_keep_resolutions[case-dlpmiejdobjndppjnhjgoiickgagokiogifbdpbklikebnpplfemclhphgkapnim]",
       "owner": "maintainer",
       "reason": "A group line that outranks a personal line is not a conflict, so bulk add offers no end-or-keep resolution for it; the case remains as the group-None parameter and the keep label is still asserted."

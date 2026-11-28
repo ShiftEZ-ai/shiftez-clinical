@@ -6,7 +6,7 @@
   "engines": {"node": ">=22 <25"},
   "scripts": {
     "build": "python scripts/build_web.py",
-    "typecheck": "tsc --noEmit -p apps/web/tsconfig.json",
+    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit -p apps/web/tsconfig.json",
     "contracts": "python scripts/generate_contracts.py",
     "test": "python -m pytest tests -m 'not browser and not postgres'",
     "check": "npm run typecheck && python scripts/generate_contracts.py --check"

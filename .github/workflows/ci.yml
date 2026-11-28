@@ -780,7 +780,7 @@ jobs:
         python -m ruff check --select F821,F822,F823 --output-format=concise .
         python scripts/check_web_permission_literals.py
         git show --format= --check HEAD
-    - name: Typecheck
+    - name: Typecheck web and generated contracts
       run: npm run typecheck
     - name: Generated contracts
       run: python scripts/generate_contracts.py --check

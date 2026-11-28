@@ -81,7 +81,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   failure ledger in `ci/known-failures.json`.
 - Planted canary tests prove in every run that the reporter reports outcomes honestly.
 - Migrations are checked append-only against the target branch (`migrations/safety.py`, `tests/test_data_safety.py`).
-- `python scripts/generate_contracts.py` must leave no diff.
+- The Static checks job typechecks the web project, including `generated.ts`, with the locked TypeScript compiler.
+  `python scripts/generate_contracts.py` must leave no diff.
 - Delivery tooling retries every GitHub read and fetch on a transport error, a 5xx or an HTTP 499 with back-off (15 s,
   30 s, 60 s, 60 s, about 3 min, longer than the measured 30-90 s bursts on the GitHub edge), and on a rate limit
   (60 s, 120 s, ...). A write retries only when it is idempotent (a fast-forward push of one fixed commit, disabling
