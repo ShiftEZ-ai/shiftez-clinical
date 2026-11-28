@@ -12,11 +12,12 @@ from .time import aware
 from .feasibility import compare_findings
 
 
-def comparison(before, after):
+def comparison(before, after, *, aggregate_coverage=True, severities=('error',)):
     def check(value):
         return {**value, 'status': 'candidate_feasible' if value['valid'] else 'requirements_conflict',
                 'diagnostics': [], 'candidate_evidence': []}
-    result = compare_findings(check(before), check(after), aggregate_coverage=True, protect_intervals=True)
+    result = compare_findings(check(before), check(after), aggregate_coverage=aggregate_coverage,
+                              severities=severities, protect_intervals=True)
     if not all((value.get('quota_report') or {}).get('complete', True) for value in (before, after)):
         result.update(comparison_complete=False, no_new_problems=False)
     return result
@@ -30,7 +31,7 @@ def participant(row):
     return value
 
 
-def overlay(data, result, additions, removals):
+def overlay(data, result, additions, removals, *, transient=False):
     value = copy.deepcopy(data)
     removed = {result['removals'][i]['assignment_id'] for i in removals}
     changes = defaultdict(list)
@@ -43,12 +44,14 @@ def overlay(data, result, additions, removals):
         if row['id'] not in touched:
             continue
         row['participants'] = [p for p in row['participants'] if p['id'] not in removed] + changes[row['id']]
-        row['revision'] += 1
+        if not transient:
+            row['revision'] += 1
         if row.get('series_id'):
             row['series_modified'] = True
-    value['workspace']['content_revision'] += 1
-    value['input_manifest'] = manifest(value)
-    value['fingerprint'] = value['input_manifest']['token']
+    if not transient:
+        value['workspace']['content_revision'] += 1
+        value['input_manifest'] = manifest(value)
+        value['fingerprint'] = value['input_manifest']['token']
     return value
 
 

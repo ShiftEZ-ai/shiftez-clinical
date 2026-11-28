@@ -22,7 +22,7 @@ from .candidate_evidence import candidate_evidence, direct_coverage_shortages, f
 from . import leadership
 from .validation import effective_type_definition, is_open_extra_cover
 from .participation import presence_intervals
-from .generation import allocation_overtime_allowed, duty_labels, assignment_fixed, keep_assignment, replacement_summary, citation_finding_key, coverage_findings
+from .generation import allocation_overtime_allowed, duty_labels, assignment_fixed, keep_assignment, replacement_summary, citation_finding_key, coverage_findings, repair_minima
 from .time import aware, duration_hours, local_midnight, overlaps
 from .conditions import active_rules, counting_key, counting_views, scope_matches_throughout
 from .validation import attached_to, evaluate, finding_observations, capabilities_for, categories_for, exception_for, named_people, policy_applies, applicable_restriction_intervals, scope_intervals, session_scope, within_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
@@ -132,6 +132,15 @@ def generate(snapshot, time_budget_seconds=None, workers=1, *, progress=None, ca
             result = group_generate(snapshot, solve_joint, control=control)
         else:
             result = _generate(snapshot, time_budget_seconds, workers, control, options, feasibility_only, diagnostic_proposal, deterministic, _on_model, _on_objectives, resume_state, checkpoint, _diagnostic_continuation, _candidate_evidence)
+        if (not feasibility_only and '_minimum_repair_people' not in snapshot
+                and '_group_witness_population' not in snapshot and snapshot.get('lookahead') != 'coupled'
+                and result['status'] == 'candidate_with_gaps' and control.stop_reason in {'slice_limit', 'time_limit'}):
+            def repair_cancelled():
+                control.poll()
+                return control.cancelled() or control.stopped or control.clock_stop_due()
+            result = repair_minima(snapshot, result, time_budget_seconds, cancelled=repair_cancelled, deterministic=deterministic)
+            if result.get('minimum_repair'):
+                control.validated_result = result
         if result['status'] == 'requirements_conflict' and not feasibility_only and 'summary' not in result:
             control.phase('summary')
             control.stage('summarizing')
@@ -573,6 +582,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     kept_sessions = {f['shift_id'] for f in protected_conflicts}
     # Greedy repair uses the original generation boundaries and can move its own suggestions.
     greedy_repair = snapshot.get('_greedy_required_cover', False)
+    minimum_repair_people = snapshot.get('_minimum_repair_people')
     generating = not feasibility_only or greedy_repair
     greedy_placements = snapshot.get('_greedy_placements', frozenset())
     if generating:
@@ -665,8 +675,11 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         candidate_data = {**data, 'policies': restriction_policies}
         fixed_people = {pid for pid, participant in original.items() if sid not in editable or (
             keep_assignment(data, shift, participant) if generating else assignment_fixed(shift, participant))}
+        candidate_people = focused_candidate_people(data, shift)
+        if minimum_repair_people is not None and candidate_people:
+            candidate_people = sorted((minimum_repair_people | original.keys()) & candidate_people.keys())
         reports = {}
-        for pid in focused_candidate_people(data, shift):
+        for pid in candidate_people:
             control.check()
             if generating and (not population_allows(data, shift, pid)
                     or pid not in fixed_people and (sid not in editable
@@ -688,7 +701,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 report = {**report, 'fixed': True, 'fixed_reason': reason}
             reports[pid] = report
             evidence.append(report)
-        for pid in data['people'] if sid in editable else original:
+        for pid in candidate_people if sid in editable else original:
             control.check()
             if pid not in original and (not population_allows(data, shift, pid) or not series_candidate_allowed(data, shift, pid)):
                 continue
@@ -729,7 +742,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 by_person[pid].append((shift, participant, aware(participant['start']), aware(participant['end']), x))
             by_shift[sid].append(pid)
 
-    shortages = direct_coverage_shortages({**data, 'focus_ids': selected}, evidence, editable)
+    shortages = (direct_coverage_shortages({**data, 'focus_ids': selected}, evidence, editable)
+                 if minimum_repair_people is None else [])
     publish_issues(shortages, 'unresolved', 'preparing')
     if shortages:
         result.update(diagnostics=shortages, diagnostics_complete=False)
