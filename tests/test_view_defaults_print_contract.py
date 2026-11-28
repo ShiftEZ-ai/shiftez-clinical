@@ -56,11 +56,17 @@ def test_print_bounds_and_all_inclusions():
 
 
 @pytest.mark.parametrize('table,definition', [
-    ('planner', {'print': {}}), ('people', {'print': {}}), ('schedule_print', {}), ('schedule_print', {'print': None}),
+    ('people', {'print': {}}), ('fairness', {'print': {}}), ('schedule_print', {}), ('schedule_print', {'print': None}),
 ])
 def test_print_settings_are_required_only_on_print_presets(table, definition):
     with pytest.raises(ValidationError):
         s.TableViewInput(table_key=table, name='Invalid', definition=definition)
+
+
+def test_a_schedule_view_may_keep_its_last_print_settings():
+    kept = s.TableViewInput(table_key='planner', name='Weekly', definition={'print': {'paper': 'a3'}})
+    assert kept.definition.print.paper == 'a3'
+    assert s.TableViewInput(table_key='planner', name='Weekly', definition={}).definition.print is None
 
 
 @pytest.mark.parametrize('pair', list(combinations(('rows', 'columns', 'group_by', 'subgroup'), 2)))

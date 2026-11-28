@@ -9,7 +9,7 @@ import pypdfium2
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, navigate, planner_tool  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, planner_tool, pick_view  # noqa: F401
 from .test_browser_qa_planner import checked_rota, settled
 
 pytestmark = pytest.mark.browser
@@ -162,6 +162,51 @@ def test_presets_save_share_default_and_delete(browser, live_server, h):
             page.get_by_role('button', name='Undo', exact=True).click()
         preset(page, dialog, 'Ward handout')
         expect(page.get_by_role('menu', name='Presets').get_by_role('menuitemradio', name=re.compile('^Ward handout'))).to_be_visible()
+    finally:
+        context.close()
+
+
+def test_a_saved_view_keeps_the_print_settings_last_used_from_it(browser, live_server, h):
+    checked_rota(h)
+    wide = h.command('coordinator', 'table_view.create', {'table_key': 'schedule_print', 'name': 'Wide margins',
+        'definition': {'print': {'margins': 'wide'}}})['view']
+    h.command('coordinator', 'table_view.set_default', {'table_key': 'schedule_print', 'scope': 'personal',
+        'view_id': wide['id'], 'clear': False})
+    weekly = h.command('coordinator', 'table_view.create', {'table_key': 'planner', 'name': 'Weekly print',
+        'definition': {'planner': {'mode': 'week', 'range': 'week'}}})['view']
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'planner'); settled(page)
+        page.evaluate('() => { window.print = () => { window.__printed = true; }; }')
+        pick_view(page, 'Weekly print'); settled(page)
+        dialog, _ = open_export(page)
+        # Nothing printed from the view yet: the personal default preset applies.
+        expect(dialog.get_by_role('button', name='Preset: Wide margins', exact=True)).to_be_visible()
+        dialog.get_by_label('Paper', exact=True).select_option('a3')
+        with page.expect_response(lambda r: r.url.endswith('/api/commands') and r.request.method == 'POST'
+                                  and r.request.post_data_json.get('kind') == 'table_view.update') as kept:
+            dialog.get_by_role('button', name='Print…', exact=True).click()
+        assert kept.value.ok
+        page.wait_for_function('() => window.__printed === true')
+        page.evaluate("() => window.dispatchEvent(new Event('afterprint'))")
+        stored = page.evaluate("() => fetch('/api/table-views?table=planner').then(r => r.json())")
+        definition = next(v for v in stored['views'] if v['id'] == weekly['id'])['definition']
+        assert definition['print']['paper'] == 'a3' and definition['print']['margins'] == 'wide'
+        assert definition['planner']['mode'] == 'week' and definition['planner']['range'] == 'week'
+    finally:
+        context.close()
+    # A new session: the view's own settings come before this session's and the personal default.
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'planner'); settled(page)
+        dialog, _ = open_export(page)
+        expect(dialog.get_by_label('Paper', exact=True)).to_have_value('a4')
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
+        pick_view(page, 'Weekly print'); settled(page)
+        dialog, _ = open_export(page)
+        expect(dialog.get_by_label('Paper', exact=True)).to_have_value('a3')
+        expect(dialog.get_by_role('radiogroup', name='Margins').get_by_role('radio', name='Wide')).to_have_attribute('aria-checked', 'true')
+        dialog.get_by_role('button', name='Cancel', exact=True).click()
     finally:
         context.close()
 

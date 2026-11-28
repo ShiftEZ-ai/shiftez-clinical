@@ -253,6 +253,24 @@ def test_print_presets_round_trip_reference_visible_planner_views_and_undo(datab
     create(h, 'schedule_print', scope='department', definition={'print': {'view_id': private['id']}}, status=422)
 
 
+def test_a_schedule_view_keeps_its_last_print_settings_with_undo(h):
+    layout = {'planner': {'rows': 'tag', 'columns': 'month', 'group_by': 'type'}}
+    mine = create(h, 'planner', role='staff', definition=layout)['view']
+    kept = {**layout, 'print': {'paper': 'a3', 'colour': 'greyscale'}}
+    changed = h.command('staff', 'table_view.update', {'table_key': 'planner', 'name': mine['name'], 'definition': kept},
+                        mine['id'], mine['revision'])
+    stored = {v['id']: v for v in listing(h, 'planner')['views']}[mine['id']]['definition']
+    assert stored['print']['paper'] == 'a3' and stored['planner'] == changed['view']['definition']['planner']
+    assert 'print' not in changed['previous_view']['definition']  # Undo brings the view back without them
+    # Only someone who may change the view records them on it: a shared view is changed by coordinators and admins.
+    shared = create(h, 'planner', scope='department', definition=layout)['view']
+    h.command('staff', 'table_view.update', {'table_key': 'planner', 'name': shared['name'], 'definition': kept},
+              shared['id'], shared['revision'], status=403)
+    assert {v['id']: v for v in listing(h, 'planner')['views']}[shared['id']]['definition'].get('print') is None
+    # Other lists do not print.
+    create(h, 'people', definition={'print': {}}, status=422)
+
+
 def test_defaults_migration_is_additive_and_preserves_existing_views(h):
     original = create(h, 'planner', definition={'planner': {'mode': 'month', 'compact': True}})['view']
     with h.app.state.engine.begin() as db:

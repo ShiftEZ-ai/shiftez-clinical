@@ -19,6 +19,7 @@ import {rememberedAccount,rememberAccount,forgetAccount,signingInAs,forgetDevice
 import {applyTheme,setTheme,theme,isDark,motionStill,setMotionStill,navPinned,setNavPinned,clearPrefs,nameMode,setNameMode,type Theme,type NameMode,setDepartmentNames,ownNameMode} from './theme.js';
 import {openPalette,compactSearch,type PaletteItem} from './palette.js';
 import {exportDialog,type ExportSource} from './schedule_export.js';
+import {samePrint} from './print_presets.js';
 import {scheduleGrid} from './schedule_grid.js';
 import {DIMENSIONS,TIME_AXES,isDim,personDim,dimOf,type Dim,type Column as GridColumn} from './schedule_dimensions.js';
 import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,linkMoved,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
@@ -98,7 +99,7 @@ import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
 import {conditionBuilder,conditionsText,conditionsSummary,lineMatches,treeMatches,scopeAsConditions,isTyped,typedFields,literalValues,negativeOp,forgetResolved,RULE_FIELDS} from './conditions.js';
 import {dateSetColumns,dateSetDates,entrySummary,importDateSet,copyDateSet,loadUpcoming} from './date_sets.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
-import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
+import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact,PrintSettings} from './generated.js';
 import {personLabel,personLink,labelPart,useLabel,useNames,onPersonOpen,personName,nameText,shortCode,labelFacts,displayName,forgetNames,fullNameOf} from './person_label.js';
 import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
@@ -2042,7 +2043,8 @@ function updateSelectionBar(){selectionUpdate?.();}
 // A saved planner view keeps the view, its filters and how the week grid is shown.
 type PlannerSettings=PlannerViewSettings;
 // The List's columns (shown, order, wrap, widths) are the view's top-level hidden, order, wrap and widths.
-type PlannerSaved={planner:PlannerSettings;conditions?:Conditions|null}&Partial<TableColumns>;
+// `print`: the print settings last used from the view (Print starts with them).
+type PlannerSaved={planner:PlannerSettings;conditions?:Conditions|null;print?:PrintSettings|null}&Partial<TableColumns>;
 let plannerViewId='';
 weekView.onWidth=()=>scheduleSync?.();
 // Views saved before ranges existed: "month" is the calendar layout over a month; people and list showed the whole rota
@@ -3188,7 +3190,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       active:on.map(([,key,value])=>({name:'Only',value,remove:()=>{weekView[key]=false;refilter();}}))};}});
   // The view's name for the View settings button: the built-in view, its range when it differs, and the drafts layer.
   const viewLabel=SCHED_VIEWS.find(v=>v.key===schedView)!.label+(viewRange?' · '+RANGE_NAMES.find(r=>r[0]===viewRange)![1]:'')+(w&&layerMode!=='edit'?` · ${layerMode==='side'?'Side by side':'Overlay'}`:'');
-  const views={key:'planner',noun:'sessions',saved:plannerSaved,activeId:plannerViewId,shareable:permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN),current:plannerDefinition,dirty:(d:PlannerSaved)=>!sameView(d.planner,plannerDefinition().planner)||JSON.stringify(d.conditions||null)!==JSON.stringify(schedConditions)||!sameColumns('planner-list',d),
+  const views={key:'planner',noun:'sessions',saved:plannerSaved,activeId:plannerViewId,shareable:permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN),
+    // Update view keeps the print settings last used from the view.
+    current:():PlannerSaved=>({...plannerDefinition(),...(activeView?.definition.print?{print:activeView.definition.print}:{})}),dirty:(d:PlannerSaved)=>!sameView(d.planner,plannerDefinition().planner)||JSON.stringify(d.conditions||null)!==JSON.stringify(schedConditions)||!sameColumns('planner-list',d),
     // The menu reads these when it opens: a view just saved, renamed or deleted counts before the redraw it starts ends.
     done:(next:SavedView<PlannerSaved>[],id:string)=>{views.saved=next;views.activeId=id;if(plannerMemo)plannerMemo.views=next;plannerViewId=id;
       // The address names the view at once (a reload before the redraw ends opens it, collapsed groups included: SI-35).
@@ -3462,8 +3466,16 @@ function exportView(){
   // Back to the chosen view's own settings (Reset, or another view chosen in What); People stays: it is about the picked person.
   const forget=()=>{over={...(over.people?{people:over.people}:{})};list();};
   const looks=()=>({props:weekView.props,colourBy:weekView.colourBy,colourTags:[...weekView.colourTags],compact:weekView.compact,teamRows:weekView.teamRows,staffing:weekView.staffing});
+  // The saved view on screen keeps the print settings last used from it, when this person can change it.
+  const onScreen=plannerMemo?.views.find(v=>v.id===before.id),own=onScreen&&onScreen.can_edit!==false?onScreen:undefined;
   exportDialog({views:(plannerMemo?.views||[]).map(v=>({id:v.id,name:v.name})),rota:!!exportRota,canShare:permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN),
-    publishedSheet:printSheet,
+    publishedSheet:printSheet,kept:onScreen?.definition.print,
+    keep:own&&(print=>{const now=plannerMemo?.views.find(v=>v.id===own.id);
+      if(!now||(now.definition.print&&samePrint(now.definition.print,print)))return;
+      // The print goes on either way: a refused write (a newer revision) leaves the view as it was.
+      void command<{view:SavedView<PlannerSaved>}>('table_view.update',{table_key:'planner',name:now.name,definition:{...now.definition,print}},now.id,now.revision)
+        // In place: the Schedule's menu and Update view hold this same object (its new revision and print).
+        .then(r=>{Object.assign(now,r.view);}).catch(()=>{});}),
     adjust:scheduleSettings?(panel,close,changed)=>{
       // A choice shows at once in the popover (the state is the drawn one) and is kept in `over` for the next draws;
       // every choice (List columns too) ends in the popover's sync, which draws the preview again.
