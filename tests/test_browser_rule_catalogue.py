@@ -640,20 +640,25 @@ def test_print_opens_every_rule_shown_to_its_lines_and_the_rules_download_in_pla
         rule = main.locator('li.rt-item').filter(has_text='Duties per week')
         expect(rule.locator('.rt-toggle')).to_have_attribute('aria-expanded', 'false')
         expect(lines).to_have_count(0)
-        # Print prints the collapsed rule with its lines; the screen is collapsed again afterwards.
-        page.evaluate("window.print=()=>{window.printedLines=document.querySelectorAll('#main li.rt-ln').length;}")
+        closed = main.locator('li.rt-item .rt-toggle[aria-expanded=false]')
+        # Print prints every rule opened to its lines (this one's two among them); the screen is collapsed again afterwards.
+        page.evaluate("window.print=()=>{const m=document.querySelector('#main');window.printed=["
+                      "m.querySelectorAll('li.rt-item .rt-toggle[aria-expanded=false]').length,"
+                      "[...m.querySelectorAll('li.rt-item')].find(x=>x.textContent.includes('Duties per week')).querySelectorAll('li.rt-ln').length];}")
         rules_action(page, 'Print')
-        assert page.evaluate('window.printedLines') == 2
+        assert page.evaluate('window.printed') == [0, 2]
         expect(lines).to_have_count(0)
         # The browser's own print (Ctrl+P) does the same.
         page.evaluate("dispatchEvent(new Event('beforeprint'))")
-        expect(lines).to_have_count(2)
+        expect(closed).to_have_count(0)
+        expect(rule.locator('li.rt-ln')).to_have_count(2)
         page.evaluate("dispatchEvent(new Event('afterprint'))")
         expect(lines).to_have_count(0)
         # A rule open on screen stays open.
         rule.get_by_role('button', name='Duties per week lines').click()
         rules_action(page, 'Print')
-        expect(lines).to_have_count(2)
+        expect(rule.locator('.rt-toggle')).to_have_attribute('aria-expanded', 'true')
+        expect(rule.locator('li.rt-ln')).to_have_count(2)
         # The rules in plain words: each rule under its question with its level and lines.
         with page.expect_download() as pending:
             rules_action(page, 'Download rules in plain words')
