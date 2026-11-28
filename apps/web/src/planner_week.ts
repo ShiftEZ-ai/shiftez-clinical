@@ -102,6 +102,8 @@ export interface WeekHooks {
   nextDuty?:()=>Promise<{label:string;go:()=>void}|null>;
   /** Places filled / needed per day and group (planners). Staff's own duties are partial data: no tallies (S-19). */
   tallies?:boolean;
+  /** The draft drawn from its window (its whole rota read on demand): no rota-wide hours or rest on a name's card. */
+  windowOnly?:boolean;
   /** Schedule: a published session shown around (or under) the draft opens read-only with this. */
   view?:(shift:Row)=>void;
   /** Shortcuts for a row, day or person. Each opens the canonical form, so settings are never copied into the grid. */
@@ -1142,7 +1144,7 @@ export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Per
   function personFacts(s:Row,pid:string):HTMLElement[]{
     let mine=facts.get(pid);if(!mine){mine=attendance(rota,pid);facts.set(pid,mine);}
     const f=workFacts(mine,s,dayOf,weekFrom),today=mine.filter(x=>x.s.id!==s.id&&dayOf(x.s)===dayOf(s));
-    return [line('info',`${f.week} h this week · ${f.rota} h this rota`,f.rest===null?'No earlier duty':f.rest>=48?`Off ${Math.round(f.rest/24)} days before`:`Rested ${Math.round(f.rest)} h`),
+    return [...hooks.windowOnly?[]:[line('info',`${f.week} h this week · ${f.rota} h this rota`,f.rest===null?'No earlier duty':f.rest>=48?`Off ${Math.round(f.rest/24)} days before`:`Rested ${Math.round(f.rest)} h`)],
       ...(today.length?[line('info','Also today',today.map(x=>`${x.s.type_snapshot.name} ${time(x.s)}`).join(' · '))]:[])];
   }
   /** Lock / Unlock this session: one click, Undo in the message (a person's right-click menu). */
@@ -1602,9 +1604,12 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
   // One session panel (S-09): from a person or an open place, "Whole session" shows this panel's session mode.
   const details=state.kind==='session'?null:el('button',{type:'button',class:'link-button'},'Whole session');details?.addEventListener('click',()=>info.open({kind:'session',shift:shift.id}));
   const acts=state.kind==='session'?hooks.sessionActions?.(shift):undefined;
-  const more=acts?.more.length?el('button',{type:'button',class:'icon-button','aria-label':'More session actions','aria-haspopup':'menu','aria-expanded':'false','data-tip':'More session actions'},icon('dots')):null;
-  more?.addEventListener('click',()=>popover(more,(pop,close)=>pop.append(el('div',{class:'menu-list',role:'menu','aria-label':'More session actions'},
-    ...acts!.more.map(m=>menuItem(m.label,m.icon,()=>{close();info.close();m.run();})))),{label:'More session actions',placement:'above-start'}));
+  const more=acts?.more.length?el('button',{type:'button',class:'icon-button','aria-label':'More session actions','aria-haspopup':'menu','aria-expanded':'false','data-tip':'More session actions','data-panel-session':shift.id},icon('dots')):null;
+  // D-057: a redraw (a check landing, a save's refresh) replaces this panel; the open menu moves to the new panel's
+  // button for the same session and runs that draw's actions, and closes when the session's panel is gone.
+  const moreItems=()=>(acts?.more||[]).map(m=>({...m,run:()=>{info.close();m.run();}}));
+  if(more){menuSource(more,moreItems);
+    more.addEventListener('click',()=>openMenu(more,'More session actions',moreItems,{placement:'above-start',keep:`.wk-panel button[data-panel-session="${CSS.escape(shift.id)}"]`}));}
   // An accent edge says what opened the panel; the schedule rings the same session (the note shows when it does).
   // The shared panel head (SI-38): "Session 3 of 12" with ↑ ↓ through the sessions in view, in time order.
   const at=info.range.findIndex(s=>s.id===shift.id);

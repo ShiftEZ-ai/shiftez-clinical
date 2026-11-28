@@ -892,9 +892,12 @@ export function popover(anchor: HTMLElement, build: (panel: HTMLElement, close: 
   }
   // D-057 (a redraw never loses what the person has open): its button redrawn away, the panel moves to the one `keep`
   // finds for the same record, named open (aria-expanded) and placed against it. False: nothing took its place.
+  // A button in the page being built (alive()) still counts: that page swaps in later, and its frames pass meanwhile.
   const rehome = () => {
     if (state.anchor.isConnected) return true;
-    const next = options.keep?.(); if (!next?.isConnected) return false;
+    if (!options.keep) return false;
+    if (alive(state.anchor)) return true;
+    const next = options.keep(); if (!next || !alive(next)) return false;
     state.anchor = next; next.setAttribute('aria-expanded','true'); placer?.place(); return true;
   };
   const state = {node: panel, anchor, close, tryClose: g.tryClose, key: options.key, place: () => {}, rehome};
@@ -1032,7 +1035,7 @@ export function menuSource(host:Element,source:(anchor:HTMLElement)=>MenuEntry[]
  *  hand-over: the hand-over happens now and the same item of the menu as it is now runs, or the menu closes. True when
  *  the press was handled so (the caller then runs nothing of its own, built from an earlier draw). */
 export function handOver(item:HTMLElement):boolean{
-  const open=openPopover;if(!open?.node.contains(item)||open.anchor.isConnected)return false;
+  const open=openPopover;if(!open?.node.contains(item)||alive(open.anchor))return false;
   const again=open.rehome()?[...open.node.querySelectorAll<HTMLElement>('[role^=menuitem]')].find(b=>b.textContent===item.textContent):null;
   if(again&&again!==item)again.click();else open.close();return true;
 }
@@ -1054,7 +1057,7 @@ export function menu(anchor:HTMLElement,label:string,items:MenuEntry[]|(()=>Menu
   const atEnd=openAtEnd;openAtEnd=false;
   let box:HTMLElement|null=null,shut=()=>{};
   const keep=o.keep?()=>{
-    const next=document.querySelector<HTMLElement>(o.keep!);let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
+    const next=document.querySelector<HTMLElement>(o.keep!)||pageBuilding?.querySelector<HTMLElement>(o.keep!)||null;let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
     for(let n:Element|null=next;n&&!source;n=n.parentElement)source=menuSources.get(n);
     const entries=next&&source?source(next):[];if(!box||!entries.length)return null;
     const at=box.contains(document.activeElement)?document.activeElement!.textContent:null,was=box.querySelector<HTMLElement>('.armed')?.dataset.armedFrom;
@@ -1232,6 +1235,11 @@ export function dropHoverCard(){
 }
 /** Data the open card was waiting for has arrived (e.g. the planner's rule map): build its content again in place. */
 export function refreshHoverCard(){if(hoverNode?.isConnected)hoverRedraw?.();}
+/** The element whose card is open now (hover or focus); null when none is (a dismissed card is not open). */
+export function openCardTarget():HTMLElement|null{return hoverNode?.isConnected?hoverTarget:null;}
+/** The card of an element drawn anew while its old one was still open (the planner drawn whole): shown again on it, as a
+ *  focus card when it holds focus, else as a hover card. Focus is not moved. */
+export function showHoverOn(target:HTMLElement){const c=hoverContent(target);if(!c)return;dismissedHover=null;showHover(c,target===document.activeElement);}
 /** Where a mouse rests: a redraw under it (a live refresh, a save, a check landing) brings back the card it dropped (SI-49),
  *  only on the replacement for the same thing (its rule target or name); something else now under the pointer stays bare. */
 let pointer:{x:number;y:number}|null=null;
@@ -1239,7 +1247,8 @@ const hoverKey=(n:HTMLElement)=>n.dataset.rk||n.getAttribute('aria-label')||'';
 /** Called before a redraw replaces the hovered element; the function it returns runs once the new one is drawn. */
 export function keepHover(){
   const key=hoverTarget&&!helpFromFocus?hoverKey(hoverTarget):'';
-  return ()=>{if(!key||!pointer||hoverNode)return;
+  // A card already on an element of the page as drawn now (e.g. reopened on its chip drawn whole) is kept, never moved.
+  return ()=>{if(!key||!pointer||hoverNode||hoverTarget?.isConnected)return;
     const at=document.elementFromPoint(pointer.x,pointer.y),now=hoverContent(at);
     if(now&&now.target!==hoverTarget&&hoverKey(now.target)===key)at!.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:pointer.x,clientY:pointer.y}));};
 }
@@ -1610,7 +1619,7 @@ function wireFooterActs(){
   document.addEventListener('pointerdown',e=>{const b=at(e.target);down=b?{node:b,key:b.dataset.footerAct||''}:null;},true);
   document.addEventListener('pointerup',e=>{const d=down;down=null;if(!d||d.node.isConnected)return;
     const b=at(document.elementFromPoint(e.clientX,e.clientY));if(b?.dataset.footerAct===d.key&&run(b,e)){ran=true;setTimeout(()=>{ran=false;});}},true);
-  document.addEventListener('click',e=>{if(ran){ran=false;return;}run(at(e.target),e);});
+  document.addEventListener('click',e=>{if(ran&&e.isTrusted){ran=false;return;}run(at(e.target),e);});
 }
 /** A screen's key in the footer: one "? Key" button that opens the explanation above it (never a long legend in the row).
  *  Status items that do not fit the footer also go behind it ("? +N", see fitFooter); without a key it is that only. */
@@ -1740,13 +1749,16 @@ export function saveBar(save:HTMLButtonElement,discard:()=>unknown):HTMLElement{
  *  first press arms it (solid red, "Confirm?"), the second press acts. No time limit (WCAG 2.2.1): it stays armed until
  *  the mouse pointer moves off it, focus leaves it, Escape, or a tap elsewhere; it keeps at least its width so a shorter
  *  "Confirm?" never slides out from under the pointer. Works on any button, menu item or submit button. `when`: for a
- *  button whose press is irreversible only sometimes (a preview found a loss), it arms only while this says so. */
-export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', when?: () => boolean): T {
+ *  button whose press is irreversible only sometimes (a preview found a loss), it arms only while this says so. `key`:
+ *  the action's identity (a session id): a redraw that replaces the armed button (a live update, a late read) arms the
+ *  replacement with the same key, so the second press still confirms. */
+export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', when?: () => boolean, key?: string): T {
   let saved: Node[] | null = null, name: string | null = null, tip: string | undefined;
   // A tap anywhere else disarms it: a touch browser may not move focus off a tapped button (iOS Safari never focuses one).
   const elsewhere = (e: Event) => { if (!b.contains(e.target as Node | null)) disarm(); };
   const disarm = () => {
     if (!saved) return;
+    if (armedNow?.b === b) armedNow = null;
     document.removeEventListener('pointerdown', elsewhere, true); b.replaceChildren(...saved); saved = null; b.classList.remove('armed'); b.style.removeProperty('min-width'); delete b.dataset.armedFrom;
     if (name === null) b.removeAttribute('aria-label'); else b.setAttribute('aria-label', name);
     if (tip !== undefined) b.dataset.tip = tip;
@@ -1757,29 +1769,40 @@ export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', wh
     // A submit button with an incomplete form lets the browser say what is missing first.
     if (b instanceof HTMLButtonElement && b.type === 'submit' && b.form && !b.form.checkValidity()) return;
     e.stopImmediatePropagation(); e.preventDefault();
+    announce(`Press again to confirm: ${arm(b.getBoundingClientRect().width + 'px')}`);
+    // F16 (T2): no time limit; a press that quietly undid itself read as nothing happening. Leaving, focus or Escape disarm.
+  }, {capture: true});
+  function arm(width: string) {
     name = b.getAttribute('aria-label'); tip = b.dataset.tip;
     const plain = (name || b.textContent || '').trim();
-    b.style.setProperty('min-width', b.getBoundingClientRect().width + 'px');
+    b.style.setProperty('min-width', width);
     saved = [...b.childNodes];
     b.replaceChildren(icon('alert'), el('span', {class: 'armed-label'}, confirmLabel));
     // "Confirm retract?" already names the action: its name is not "Confirm retract? Retract".
     const said = confirmLabel.toLowerCase().includes(plain.toLowerCase()) ? confirmLabel : `${confirmLabel} ${plain}`;
     b.classList.add('armed'); b.setAttribute('aria-label', said); b.dataset.armedFrom = plain;
     if (tip !== undefined) b.dataset.tip = said;
-    announce(`Press again to confirm: ${plain}`);
     document.addEventListener('pointerdown', elsewhere, true);
-    // F16 (T2): no time limit; a press that quietly undid itself read as nothing happening. Leaving, focus or Escape disarm.
-  }, {capture: true});
+    if (key) armedNow = {key, b, width, at: () => at};
+    return plain;
+  }
   // Leaving means changing one's mind. Touch has no hover: a finger lifting is not the pointer leaving. A leave at the
   // pointer's last position is the button moving (a layout change above or below it), not the user: it stays armed.
   let at = '';
   const track = (e: PointerEvent) => { at = `${e.clientX},${e.clientY}`; };
   b.addEventListener('pointermove', track); b.addEventListener('pointerdown', track);
   b.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && `${e.clientX},${e.clientY}` !== at) disarm(); });
-  b.addEventListener('focusout', e => { if (!b.contains(e.relatedTarget as Node | null)) disarm(); });
+  // A button removed by a redraw has not lost focus to the user: its replacement may take its armed state over.
+  // Chromium blurs a focused button while removing it, still connected, so whether it went is read after the redraw.
+  b.addEventListener('focusout', e => { if (!b.contains(e.relatedTarget as Node | null)) queueMicrotask(() => { if (b.isConnected) disarm(); }); });
   b.addEventListener('keydown', e => { if (e.key === 'Escape' && saved) { e.preventDefault(); e.stopPropagation(); disarm(); } });
+  // Drawn after a redraw removed the armed button with this key: armed too, at its width and pointer position.
+  const was = key && armedNow?.key === key && !armedNow.b.isConnected ? armedNow : null;
+  if (was) { const pointer = was.at(); arm(was.width); at = pointer; }
   return b;
 }
+/** The armed confirm that has a key (one at a time: a press anywhere else disarms it). */
+let armedNow: {key: string; b: HTMLElement; width: string; at: () => string} | null = null;
 /** The field's own minlength (one number, the input's), counted without outer spaces; the words are problemWords'. */
 export const reasonProblem=(value:string,min:number)=>value&&value.trim().length<min?`At least ${min} characters`:'';
 /** RUL-E04: one person's reason to be assigned against a rule, then the same-button armed confirm: the fill panel's
@@ -2074,6 +2097,9 @@ export function check(label: string, checked=false, hint=''): Field {
   const input=el('input',{type:'checkbox',name:label,checked,...(hint?{'aria-label':label,'aria-describedby':id}:{})});
   return {wrap:el('label',{class:'checkbox'},input,el('span',{class:'check-text'},el('span',{},label),hint?el('span',{class:'hint',id},hint):'')),input};
 }
+/** A selection box with no visible label of its own (a row's, a group's, select-all): a native label around it is its
+ *  target, at least 24 px (WCAG 2.2 SC 2.5.8) and 44 px on a phone (DESIGN.md Touch targets). */
+export const checkTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
 /** One option of any dropdown: `hint` shows beside it, `keywords` are searched but not shown. */
 export type Choice={value:string;label:string;group?:string;hint?:string;keywords?:string;disabled?:boolean;
   /** The group is a fact about the row with a configured place (a person's rank, in the department's rank order): a

@@ -190,7 +190,9 @@ def test_copy_picks_a_target_day_with_presets_and_an_optional_note(browser, live
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         show(page, f"schedule/week/2026-10-14?edit={d['id']}")
-        view(page).locator('.wk-check').first.check()
+        # A draft opens on its window: this first press reads the whole rota, then ticks the box drawn whole.
+        view(page).locator('.wk-check').first.click()
+        expect(view(page).locator('.wk-check').first).to_be_checked()
         bar = page.locator('#selection-bar')
         copy = bar.get_by_role('button', name='Copy', exact=True)
         if copy.count():
@@ -317,7 +319,10 @@ def test_copy_keeps_its_size_limit_when_the_target_day_changes(browser, live_ser
         show(page, f"schedule/week/2026-10-18?edit={w['id']}")
         boxes = view(page).locator('.wk-check')
         expect(boxes).to_have_count(101)
-        boxes.evaluate_all('boxes => boxes.forEach(b => b.click())')
+        # A draft opens on its window: this first press reads the whole rota, then ticks the box drawn whole.
+        boxes.first.click()
+        expect(boxes.first).to_be_checked()
+        boxes.evaluate_all('boxes => boxes.slice(1).forEach(b => b.click())')
         bar = page.locator('#selection-bar')
         expect(bar).to_contain_text('101')
         copy = bar.get_by_role('button', name='Copy', exact=True)

@@ -532,6 +532,14 @@ def test_person_quota_propose_reload_review_change_and_durable_undo(browser, liv
 
 
 def test_overtime_offer_uses_shared_scope_builder_and_independent_review(browser, live_server, h):
+    review_overtime_offer(browser, live_server, h, redraw_during_review=False)
+
+
+def test_overtime_offer_review_survives_a_panel_rebuild_while_its_rota_read_waits(browser, live_server, h):
+    review_overtime_offer(browser, live_server, h, redraw_during_review=True)
+
+
+def review_overtime_offer(browser, live_server, h, redraw_during_review):
     flag(h, legacy=False)
     person = h.seed['people'][1]
     context, page = themed(browser, live_server, 'coordinator', 390, 'dark')
@@ -546,13 +554,31 @@ def test_overtime_offer_uses_shared_scope_builder_and_independent_review(browser
         reason(page, 'Synthetic overtime offer', 'Propose')
         expect(panel.locator('.ph-section').filter(has_text='Waiting for approval')).to_contain_text('Continuity clinic')
         rpanel = facts_panel(review, person)
-        rpanel.get_by_role('button', name=re.compile('^Approve')).click()
-        reason(review, 'Independent offer review', 'Approve')
-        expect(rpanel.locator('.ph-section').filter(has_text='Overtime offers')).to_contain_text('Continuity clinic')
+        approve = rpanel.get_by_role('button', name=re.compile('^Approve'))
+        if redraw_during_review:
+            # The review's rota read can still be open when the person panel is rebuilt.
+            pending = []
+            path = '/api/workspaces?limit=100&current_only=true'
+            review.route(re.compile(re.escape(path) + '$'), lambda route: pending.append(route), times=1)
+            original = rpanel.locator('.ph-section').filter(has_text='Waiting for approval').element_handle()
+            with review.expect_request(lambda r: r.url.endswith(path)):
+                approve.click()
+            review.evaluate("window.dispatchEvent(new Event('rota-recheck'))")
+            review.wait_for_function("section => !section.isConnected", arg=original)
+            expect(approve).to_be_visible()
+            pending.pop().continue_()
+        else:
+            approve.click()
+        with review.expect_response(lambda r: r.url.endswith('/api/commands') and
+                                    (r.request.post_data_json or {}).get('kind') == 'person.overtime.activate') as approved:
+            reason(review, 'Independent offer review', 'Approve')
+        assert approved.value.ok, approved.value.text()
+        assert approved.value.json()['fact']['status'] == 'active'
         facts = h.get('auditor', f'/api/people/{person}/scheduling-facts')
         [offer] = facts['active']
         assert offer['kind'] == 'overtime_offer'
         assert offer['data']['line']['where']['conditions'][0]['values'] == [h.seed['services'][0]]
+        expect(rpanel.locator('.ph-section').filter(has_text='Overtime offers')).to_contain_text('Continuity clinic')
         rpanel.get_by_role('button', name=re.compile('^Undo')).click()
         reason(review, 'Undo the offer', 'Undo')
         expect(rpanel.locator('.ph-section').filter(has_text='Overtime offers')).to_contain_text('No overtime offered.')

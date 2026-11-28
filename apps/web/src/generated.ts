@@ -6409,6 +6409,7 @@ export type WorkspaceCompactDetail = {
   "can_redo": boolean;
   "swap_id": string | null;
   "approvals": Array<Record<string, unknown>>;
+  "planning_context"?: Record<string, unknown> | null;
 };
 
 export type WorkspaceForkInput = {
@@ -6464,6 +6465,7 @@ export type WorkspacePartPage = {
   "coverage": Array<Record<string, unknown>>;
   "coverage_total": number;
   "coverage_has_more": boolean;
+  "wishes"?: Array<Record<string, unknown>>;
 };
 
 export type WorkspacePartQuery = {

@@ -48,13 +48,17 @@ def test_month_cell_pills_keep_a_24px_pitch():
 
 def test_the_phone_touch_block_covers_checkboxes_radios_and_the_legend_more():
     """DESIGN.md touch targets (WCAG 2.2 SC 2.5.5): the one phone block gives a checkbox's or radio's label row 44 px, a
-    row selection box a 44 px native label, and the legend one 44 px line (tests/test_browser_a11y.py measures them)."""
+    row selection box a 44 px native label, a switch a 44 px ::before, the Rules list three 44 px columns, a person's
+    name in a list 44 px, and the legend one 44 px line (tests/test_browser_a11y.py measures them)."""
     css = (SRC.parent / 'public/assets/app.css').read_text(encoding='utf-8')
     block = css[css.index('@media(max-width:720px){\n  :root{--target:44px}'):]
     block = block[:block.index('\n}\n')]
     for rule in (':root label:has(>input:is([type=checkbox],[type=radio])):not(.wk-check-hit){min-width:var(--target);min-height:var(--target)}',
                  ':root .dt-check-hit{display:inline-grid;width:var(--target);height:var(--target);place-items:center;vertical-align:middle;cursor:pointer}',
-                 ':root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}'):
+                 ':root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}',
+                 ':root input.switch::before{inset:min(0px,calc(50% - var(--target)/2))}',
+                 ':root .rt-row{grid-template-columns:repeat(3,var(--target)) minmax(0,1fr);column-gap:0}',
+                 ':root :is(.dt-card,.dt-table td) .link-button.person-link:not(.pchip){min-height:var(--target)}'):
         assert rule in block, rule
 
 

@@ -27,10 +27,10 @@ from packages.domain.input_manifest import digest
 _HOME_CACHE: OrderedDict[tuple, dict] = OrderedDict()
 _HOME_CACHE_LOCK = Lock()
 _HOME_CACHE_LIMIT = 128
-_HOME_PROJECTION_VERSION = 3
+_HOME_PROJECTION_VERSION = 4
 
 
-def _home_stamp(db, actor, now, max_days):
+def _home_stamp(db, actor, now):
     """Return a bounded invalidation stamp without aggregating every history row."""
     latest_audit = db.scalar(select(func.max(m.AuditEvent.created_at)).where(
         m.AuditEvent.department_id == actor.department_id))
@@ -46,17 +46,15 @@ def _home_stamp(db, actor, now, max_days):
     from .rota_summary import validation_job_stamp
     # Dated grants start and expire at the department's midnight.
     today = now.astimezone(ZoneInfo(row.timezone)).date()
-    # A worker can confirm a submitted rota without an audit or validation job change.
+    # A worker can confirm a submitted rota for any date without an audit or job change.
     review_stamps = ()
     delegation_edge = review_refresh_at = None
     if actor.permits("coordinator", "approver", "programme_lead"):
         from .read_projections import CANONICAL_AUDIENCE
         W, C = m.Workspace, m.WorkspaceReadProjection
-        horizon = timedelta(days=max_days)
         review_stamps = tuple((wid, stamp) for wid, stamp in db.execute(
             select(W.id, C.stamp).join(C, C.workspace_id == W.id)
             .where(W.department_id == actor.department_id, W.status == 'submitted', W.archived_at.is_(None),
-                   W.ends_on > today - horizon, W.starts_on < today + horizon,
                    C.kind == 'fingerprint', C.audience == CANONICAL_AUDIENCE).order_by(W.id)))
         if actor.roles & reviews.REVIEW_ROLES:
             G, D = m.ReviewDelegation, m.ReviewDecision
@@ -263,7 +261,7 @@ def _home_uncached(db, actor, *, max_days, now=None):
                 sent = [c for c in (lst.changes if lst else []) if c.get('workspace_id') == mine[0].id and c['status'] != 'withdrawn']
                 reasons = {_disclosed_change(c, db, actor).get('absence_reason') for c in sent}
                 amendment = {'amendment': {'changes': len(sent), 'reasons': sorted(reason for reason in reasons if reason)}}
-            add(20, "reviews", len(mine), **first(mine), **amendment)
+            add(20, "reviews", len(mine), rota_ids=[w.id for w in mine], **first(mine), **amendment)
         if can("coordinator", "approver"):
             approved = [w for w in live if w.status == "approved" and w.id not in outdated]
             add(60, "to_publish", len(approved), **first(approved))
@@ -428,7 +426,7 @@ def home(db, actor, *, settings=None):
     settings = settings or Settings()
     max_days = settings.workspace_read_max_days
     from .notification_audience import is_test_identity
-    revisions, review_refresh_at = _home_stamp(db, actor, now, max_days)
+    revisions, review_refresh_at = _home_stamp(db, actor, now)
     stamp = (_HOME_PROJECTION_VERSION, revisions, settings.publish_test_people_only, is_test_identity(actor))
 
     def response(value):

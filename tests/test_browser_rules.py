@@ -179,6 +179,7 @@ def test_template_numbers_are_edited_as_rows_and_old_copies_group_into_one_rule(
 
 
 def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_server, h):
+    from .governance_support import identity
     from .test_browser import wait_held
     from .test_rule_catalogue_api import approve
 
@@ -206,6 +207,7 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         replacement = review.get_by_role('checkbox', name=re.compile(r'^Rest standard'))
         activate = review.get_by_role('button', name='Activate', exact=True)
         warning = 'This proposal reduces mandatory safety protection and needs independent approval.'
+        pending = review.get_by_text('Selected safety rules stay active pending retirement approval.', exact=True)
         expect(replacement).to_be_checked()
         wait_held(page, held)
         expect(activate).to_be_disabled()
@@ -217,9 +219,11 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         expect(activate).to_be_enabled()
         retry.click()
         expect(review.get_by_text(warning, exact=True)).to_be_visible()
+        expect(pending).to_be_visible()
         expect(activate).to_have_accessible_description(warning)
         replacement.uncheck()
         expect(review.get_by_text(warning, exact=True)).not_to_be_visible()
+        expect(pending).not_to_be_visible()
         expect(activate).to_be_enabled()
         replacement.check()
         expect(review.get_by_text(warning, exact=True)).to_be_visible()
@@ -227,8 +231,13 @@ def test_review_rechecks_safety_when_older_copies_are_selected(browser, live_ser
         review.get_by_label('Reason', exact=True).fill('Independent rest review')
         activate.click()
         expect(review).to_have_count(0)
+        expect(page.get_by_text('Rule activated; 1 retirement waiting for approval.', exact=True)).to_be_visible()
     finally:
         context.close()
+    assert any(p['id'] == old['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
+    identity(h, 'second_retirement_reviewer', ['approver'])
+    h.command('second_retirement_reviewer', 'policy.retire', {'reason': 'Independent retirement review'},
+              old['id'], old['revision'])
     assert any(p['id'] == old['id'] for p in h.get('approver', '/api/policies?status=retired')['policies'])
     assert any(p['id'] == new['id'] for p in h.get('approver', '/api/policies?status=active')['policies'])
 
@@ -416,5 +425,47 @@ def test_convert_preference_to_goal_moves_its_clinic_onto_the_goal(browser, live
         # Who: the preference's people, among those who can work at its clinic (the goal shares among them only).
         assert saved['definition']['scope']['conditions']['conditions'] == [{'field': 'category_ids', 'op': 'any', 'values': [h.seed['trainee_category']]},
                                                                            {'field': 'eligible_service_ids', 'op': 'any', 'values': [clinic]}]
+    finally:
+        context.close()
+
+
+def test_retry_of_safety_protection_question_renews_a_stale_token_once(browser, live_server, h):
+    old = h.policy({'kind': 'min_rest', 'hours': 11})
+    new = h.command('coordinator', 'policy.create', {
+        'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
+        'starts_on': '2020-01-01',
+        'definition': {'replaces_id': old['id'], 'rule': {'kind': 'min_rest', 'hours': 9}}})['record']
+    context, page = sign_in(browser, live_server, 'approver')
+    questions, renewals = [], []
+
+    def review(route):
+        if route.request.method != 'POST':
+            route.continue_()
+            return
+        questions.append(route.request.post_data_json)
+        if len(questions) == 1:
+            route.fulfill(status=503, json={'error': {'code': 'UNAVAILABLE', 'message': 'Protection question unavailable'}})
+        elif len(questions) == 2:
+            route.fulfill(status=403, json={'error': {'code': 'CSRF_FAILED', 'message': 'Refresh your session'}})
+        else:
+            route.continue_()
+
+    try:
+        page.route(f"**/api/policies/{new['id']}/review", review)
+        page.on('response', lambda r: renewals.append(r.status) if r.url.endswith('/auth/refresh') else None)
+        navigate(page, 'rules')
+        row = page.locator(f'.rule-item[data-rule-ids~="{new["id"]}"]')
+        row.get_by_role('button', name=re.compile(r'^Review(?: 1)?$')).click()
+        dialog = page.get_by_role('dialog', name=re.compile(r'^Review '))
+        retry = dialog.get_by_role('button', name='Retry', exact=True)
+        expect(retry).to_be_visible()
+        retry.click()
+        expect(dialog.get_by_text('This proposal reduces mandatory safety protection and needs independent approval.',
+                                  exact=True)).to_be_visible()
+        expect(retry).to_have_count(0)
+        expect(dialog.get_by_role('button', name='Activate', exact=True)).to_be_enabled()
+        expect(page.get_by_role('dialog', name='Sign in')).to_have_count(0)
+        assert renewals == [200] and len(questions) == 3
+        assert questions[1] == questions[2]
     finally:
         context.close()

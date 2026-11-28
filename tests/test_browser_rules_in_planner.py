@@ -5,7 +5,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, pick_view, open_rota, planner_tool, press_escape  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, pick_view, open_rota, planner_tool, press_escape, reconnect, wait_held  # noqa: F401
 from .test_rule_templates import propose, activate
 from .rules_support import rule_action, rule_row
 
@@ -461,13 +461,17 @@ def department_sized_rule_map(browser, live_server, h):
         page.reload()
         expect(page.get_by_role('button', name=re.compile(r'^Account menu, '))).to_be_visible()
         open_planner(page, w)
-        # Ready: the big map (not the rota's own three rules) is drawn onto the grid.
-        # The rule map loads on first use (hover, focus, pin or highlight): hover a day to ask for it.
+        # The large rule map is usable on the window before the first action that needs the whole draft.
         page.locator('.wk-day[data-rk]').first.hover()
-        page.wait_for_function("() => document.querySelector('.planner-main')?.dataset.rkRules === '974'", timeout=60000)
-        # A redraw keeps the old grid on screen until the new one is ready: wait until no redraw is in flight.
-        expect(page.locator('#main[data-loaded-view=schedule]')).to_have_count(1)
-        # Timed in the page (main-thread work only), so a busy CI machine does not turn test overhead into a failure.
+        expect(page.locator('.planner-main')).to_have_attribute('data-rk-rules', '974', timeout=60000)
+        page.locator('.pchip[data-assignment]').first.click()
+        session = page.locator('.wk-panel')
+        expect(session).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(session).to_have_count(0)
+        page.locator('.wk-day[data-rk]').first.hover()
+        expect(page.locator('.planner-main')).to_have_attribute('data-rk-rules', '974', timeout=60000)
+        # Measure in-page work after the whole draft is ready, keeping network time out of the pin budget.
         page.get_by_role('button', name='Rota tools', exact=True).click()  # the menu opens outside the timing
         timings = page.evaluate("""async () => {
             const frame = () => new Promise(r => requestAnimationFrame(() => r()));
@@ -670,7 +674,41 @@ def test_a_rules_panel_shows_the_value_a_revised_mandatory_rule_now_binds(browse
         expect(unchanged).not_to_contain_text('now binds')
         expect(unchanged).not_to_contain_text('Captured')
         if status == 'draft':
-            rule_action(revised, 'Adjust for this rota')
+            # The rota is checked again while a refresh is reading it, and More opens before that read answers: the
+            # redrawn panel reads the rule map again before it has rows, and the open menu waits for the row's new
+            # button instead of closing; its item then opens the same numeric form.
+            expect(page.locator('.app-footer').get_by_text(re.compile(r'^Checking the rota'))).to_have_count(0, timeout=20000)
+            head = revised.locator('.rk-row-head')
+            if head.get_attribute('aria-expanded') != 'true':
+                head.click()
+            drafts, maps = [], []
+            draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+            rule_map = re.compile(rf".*/api/workspaces/{w['id']}/rule-map$")
+            page.route(draft, lambda route: drafts.append(route))
+            page.route(rule_map, lambda route: maps.append(route))
+            now = h.detail(w)['workspace']
+            checked = now['validation']['evaluated_at']
+            h.lifecycle(now, 'validate')
+            assert h.detail(w)['workspace']['validation']['evaluated_at'] != checked
+            reconnect(page)
+            wait_held(page, drafts)
+            more = revised.locator('.rk-more')
+            more.evaluate("b => { b.dataset.drawnBefore = '' }")
+            more.click()
+            item = page.get_by_role('menu', name='More actions').get_by_role('menuitem', name=re.compile('^Adjust for this rota'))
+            expect(item).to_be_visible()
+            for route in drafts:
+                route.continue_()
+            page.unroute(draft)
+            wait_held(page, maps)
+            expect(panel.get_by_text('Working out which rules apply', exact=False)).to_be_visible()
+            expect(item).to_be_visible()
+            for route in maps:
+                route.continue_()
+            page.unroute(rule_map)
+            expect(panel.locator('[data-drawn-before]')).to_have_count(0)
+            expect(more).to_have_attribute('aria-expanded', 'true')
+            item.click()
             field = revised.get_by_label(re.compile(r'^New number for .Weekly duty limit. in this rota, captured 5, now binds 2'))
             expect(field).to_have_value('5')
             expect(field.locator('..')).to_contain_text('now binds 2')  # the field's own row: the number, its unit and the binding value
@@ -721,6 +759,37 @@ def test_rule_tag_sweep_stays_within_budget_at_department_scale(browser, live_se
         page.wait_for_function("() => window.rkSweeps.length > 0")
         worst = page.evaluate("() => Math.max(...window.rkSweeps)")
         assert worst < 100, f'rk-decorate took {worst:.0f} ms for 2,000 nodes'  # 16 ms locally; CI hosts are slower
+    finally:
+        context.close()
+
+
+def test_a_list_row_keeps_one_exception_mark_across_sweeps(browser, live_server, h):
+    """A planner list row draws its exception mark in its first cell; a sweep that walks the row again, without the row
+    being redrawn, replaces that mark rather than adding another beside it."""
+    w, _ = rota(h)
+    shift_ids = [s['id'] for s in h.detail(w)['shifts']]
+    marker = {'kind': 'exception', 'rule_id': 'r0', 'rule_name': 'Synthetic rule 000', 'text': 'Differs for this session', 'by': 'Approver', 'at': None,
+              'people': [], 'services': [], 'locations': [], 'types': [], 'days': None, 'sessions': [0], 'global': False}
+    payload = json.dumps({'days': [f'2026-10-{d:02}' for d in range(4, 11)], 'shifts': shift_ids, 'checked': True, 'fresh': True,
+                          'rules': synthetic_rules(1, h.seed['people'], shift_ids), 'markers': [marker]})
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        page.route(re.compile(r'.*/rule-map$'), lambda route: route.fulfill(status=200, content_type='application/json', body=payload))
+        page.reload()
+        expect(page.get_by_role('button', name=re.compile(r'^Account menu, '))).to_be_visible()
+        open_planner(page, w)
+        page.locator('.wk-day[data-rk]').first.hover()  # the rule map loads on first use
+        page.wait_for_function("() => document.querySelector('.planner-main')?.dataset.rkRules === '1'", timeout=60000)
+        pick_view(page, 'List')
+        row = page.locator(f'tr[data-rk][data-session="{shift_ids[0]}"]')
+        expect(row.locator('.rk-mark-slot > .rk-mark')).to_have_count(1)
+        # Each node added to the view wakes one more sweep over every tagged place, the unchanged row included.
+        page.evaluate("""() => {window.rkSweeps=0;const measure=performance.measure.bind(performance);
+          performance.measure=(name,o)=>{if(name==='rk-decorate')window.rkSweeps++;return measure(name,o);};}""")
+        for sweeps in (1, 2):
+            page.evaluate("() => document.querySelector('.planner-main').append(document.createElement('span'))")
+            page.wait_for_function(f"() => window.rkSweeps >= {sweeps}")
+        expect(row.locator('.rk-mark')).to_have_count(1)
     finally:
         context.close()
 

@@ -395,13 +395,14 @@ def review(db, actor, policy_id, *, decision=None):
     require(policy.status in {'active', 'proposed'}, 'WORKFLOW_STATE', 'Review an active or proposed rule', 409)
     if decision is not None:
         require(policy.status == 'proposed', 'WORKFLOW_STATE', 'Only a proposed policy can be activated', 409)
-    from .policies import activation_weakens_safety
+    from .policies import activation_weakens_safety, deferred_activation_retirements
     replaces_ids = decision.replaces_ids if decision is not None else ()
     predecessors = predecessor_rows(db, actor, [policy], replaces_ids=replaces_ids)
     weakens = policy.status == 'proposed' and activation_weakens_safety(db, actor, policy, replaces_ids, predecessors=predecessors)
     protection = {'policy_id': policy.id}
     if decision is not None:
-        return {**protection, 'weakens_safety': weakens}
+        waiting = sorted(deferred_activation_retirements(db, actor, policy, replaces_ids, predecessors=predecessors))
+        return {**protection, 'weakens_safety': weakens, **({'pending_retirement_ids': waiting} if waiting else {})}
     if weakens:
         protection['weakens_safety'] = True
     skipped_people = {}

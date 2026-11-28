@@ -404,7 +404,8 @@ class TwoObservationGateTests(unittest.TestCase):
                 with self.subTest(event=event, path=path, labels=labels, branch=branch, deleted=deleted, case=index,
                                   default=default), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false",
-                                             "GITHUB_REF": "refs/heads/" + branch}), \
+                                             "GITHUB_REF": "refs/heads/" + branch, "CI_ALLOWANCE_DATE": "2026-01-01"}), \
+                     patch("quarantine_registry.utc_calendar_date", return_value=date(2026, 1, 1)), \
                      patch.object(maker, "at_revision", return_value=self.current) as at_revision, \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \
@@ -421,6 +422,7 @@ class TwoObservationGateTests(unittest.TestCase):
                     at_revision.reset_mock()
                     plan = trusted_ci.plan(event_base, False)
                     self.assertEqual(plan["sha"], candidate)
+                    self.assertEqual(plan["allowance_date"], "2026-01-01")
                     self.assertEqual(plan["base_sha"], base)
                     self.assertEqual(at_revision.call_args_list[0].args, (base,))
                     self.assertEqual(plan["replicas"], replicas)

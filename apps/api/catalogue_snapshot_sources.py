@@ -6,6 +6,7 @@ from sqlalchemy import JSON, Column, MetaData, Table, Text, bindparam, case, cas
 from sqlalchemy.orm import Session
 
 from . import models as m
+from .errors import require
 from .snapshots import snapshot_department_ids, snapshot_input_specs
 from .workspace_baselines import baseline_rows, ranked_baseline_keys, verified_baseline_keys
 
@@ -166,10 +167,17 @@ def capture_catalogue_sources(db, organisation_id, workspaces, *, captured_at, i
     rows[m.Availability.__tablename__] = _raw_rows(db, m.Availability,
         m.Availability.person_id.in_(people) & m.Availability.retracted.is_(False),
         projected={'private_reason': literal(None).label('private_reason')})
-    ordered_sources = (m.Eligibility, m.SchedulingFact, m.StaffWish)
+    ordered_sources = (m.Eligibility, m.Policy, m.SchedulingFact, m.StaffWish)
     seq_scope = or_(*((m.RecordInsertion.table_name == cls.__tablename__)
                       & m.RecordInsertion.record_id.in_(select(cls.id).where(sources[cls])) for cls in ordered_sources))
-    rows[m.RecordInsertion.__tablename__] = _raw_rows(db, m.RecordInsertion, seq_scope)
+    keys, insertions = _raw_rows(db, m.RecordInsertion, seq_scope)
+    rows[m.RecordInsertion.__tablename__] = keys, insertions
+    table_at, record_at = keys.index('table_name'), keys.index('record_id')
+    policy_keys, policies = rows[m.Policy.__tablename__]
+    policy_at = policy_keys.index('id')
+    policy_ordinals = {row[record_at] for row in insertions if row[table_at] == m.Policy.__tablename__}
+    require(all(row[policy_at] in policy_ordinals for row in policies), 'PREVIEW_INPUTS_INCOMPLETE',
+            'The preview could not capture the rule order. No changes were saved.', 409)
     return pickle.dumps((captured_at, rows), protocol=pickle.HIGHEST_PROTOCOL), baselines, issued_sources
 
 

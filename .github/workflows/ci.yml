@@ -55,6 +55,7 @@ jobs:
     timeout-minutes: 7
     outputs:
       bootstrap: ${{ steps.bootstrap.outputs.bootstrap }}
+      allowance_date: ${{ steps.allowances.outputs.date }}
       queue_run: ${{ steps.queue.outputs.run }}
       quota_scope: ${{ steps.affected-scope.outputs.scope }}
       artifact_attempt: ${{ github.run_attempt }}
@@ -75,6 +76,12 @@ jobs:
         HOSTED_KIND: ${{ runner.environment }}
       working-directory: .
       run: test "$HOSTED_KIND" = "github-hosted" || { echo "GitHub-hosted runner required"; exit 1; }
+    - name: Pin the UTC allowance date
+      id: allowances
+      working-directory: .
+      run: |
+        allowance_date=$(date -u +%F)
+        printf 'date=%s\n' "$allowance_date" >> "$GITHUB_OUTPUT"
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         ref: refs/heads/${{ github.event.repository.default_branch }}
@@ -180,6 +187,7 @@ jobs:
       env:
         BASE_SHA: ${{ steps.context.outputs.base_sha }}
         MEASUREMENT: ${{ steps.select.outputs.measurement }}
+        CI_ALLOWANCE_DATE: ${{ steps.allowances.outputs.date }}
       run: python3 -I -S "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" plan --base-sha "$BASE_SHA" --measurement "$MEASUREMENT"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: steps.affected-scope.outputs.scope == ''
@@ -386,6 +394,7 @@ jobs:
       unit_count: ${{ needs.checks.outputs.unit_count }}
       browser_count: ${{ needs.checks.outputs.browser_count }}
       plan_sha256: ${{ needs.checks.outputs.plan_sha256 }}
+      allowance_date: ${{ needs.checks.outputs.allowance_date }}
       artifact_attempt: ${{ needs.checks.outputs.artifact_attempt }}
       replica: ${{ matrix.replica }}
       base_sha: ${{ needs.checks.outputs.base_sha }}
@@ -414,6 +423,7 @@ jobs:
       unit_count: ${{ needs.checks.outputs.unit_count }}
       browser_count: ${{ needs.checks.outputs.browser_count }}
       plan_sha256: ${{ needs.checks.outputs.plan_sha256 }}
+      allowance_date: ${{ needs.checks.outputs.allowance_date }}
       artifact_attempt: ${{ needs.checks.outputs.artifact_attempt }}
       replica: ${{ matrix.replica }}
       base_sha: ${{ needs.checks.outputs.base_sha }}
@@ -576,6 +586,8 @@ jobs:
     - name: Verify the protected scope and run the affected unit test
       if: steps.producers.outputs.run_affected_unit == 'true'
       working-directory: candidate
+      env:
+        CI_ALLOWANCE_DATE: ${{ needs.checks.outputs.allowance_date }}
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/affected_unit_pilot.py" test
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: always() && steps.producers.outputs.run_affected_unit == 'true'
@@ -631,6 +643,7 @@ jobs:
     - name: Trusted source/node/canary/allowance verdict
       if: steps.producers.outputs.run_verdict == 'true' && needs.checks.outputs.queue_run == ''
       env:
+        CI_ALLOWANCE_DATE: ${{ needs.checks.outputs.allowance_date }}
         GH_TOKEN: ${{ github.event_name == 'pull_request' && github.token || '' }}
         CANDIDATE_SHA: ${{ needs.checks.outputs.candidate_sha }}
         MEASUREMENT: ${{ needs.checks.outputs.measurement }}

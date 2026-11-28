@@ -76,7 +76,7 @@ export const EXPORT_SKIP='input,select,textarea,.button,.icon-button,.empty-icon
 function cleanCopy(view:HTMLElement,s:Print,prune=false):HTMLElement{
   const copy=view.cloneNode(true) as HTMLElement;
   copy.removeAttribute('id');
-  copy.querySelectorAll('.wk-more,.rc-panel,.side-panel,.selection-bar,.wk-check,.bulk-check,.popover,.dt-actions-col,[data-export-skip],.wk-toggle svg,.wk-bar,.spinner,.dt-resize').forEach(n=>n.remove());
+  copy.querySelectorAll('.wk-more,.rc-panel,.side-panel,.selection-bar,.wk-check,.bulk-check,.dt-check-hit,.popover,.dt-actions-col,[data-export-skip],.wk-toggle svg,.wk-bar,.spinner,.dt-resize').forEach(n=>n.remove());
   copy.querySelectorAll('[id]').forEach(n=>n.removeAttribute('id'));
   copy.querySelectorAll('.today,.is-today,.is-explained,.rk-hit,.is-new').forEach(n=>n.classList.remove('today','is-today','is-explained','rk-hit','is-new'));
   copy.querySelectorAll('[aria-current]').forEach(n=>n.removeAttribute('aria-current'));
