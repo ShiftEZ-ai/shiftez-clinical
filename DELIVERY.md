@@ -146,6 +146,15 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   variables or its environments.
 - Never copy one environment's database into another, and never copy test identities or rotas into production.
 
+### Bootstrap a new installation
+
+1. On the POSIX host, create an output directory accessible only to its owner.
+2. Run `python scripts/manage.py init-institution` with the first administrator and installation details,
+   the recorded `--reason` and `--output` pointing to a new file in that directory.
+3. Open the file privately and give the one-time setup link to the first administrator. The command prints the
+   file path. If the transaction cannot be confirmed, keep the file private and check whether the installation
+   was initialized before retrying with a new file.
+
 ## Releases
 - Start release-candidate preparation as soon as the milestone's work and candidate criteria are met.
   Track any blocker and its resolution on the affected milestone item.
