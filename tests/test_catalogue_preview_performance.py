@@ -259,7 +259,7 @@ def test_hours_reuse_keeps_counted_and_focal_intervals_distinct():
 
 
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
-def test_create_impact_reuses_workload_calculations_at_department_scale(scale_harness, monkeypatch, backend):
+def test_create_impact_reuses_workload_calculations_at_department_scale(scale_harness, monkeypatch, backend, request):
     freeze_clock(monkeypatch, datetime(2026, 10, 15, 12, tzinfo=timezone.utc))
     h = scale_harness(backend)
     read_department(h)
@@ -287,7 +287,7 @@ def test_create_impact_reuses_workload_calculations_at_department_scale(scale_ha
                    'value': value, 'reason': 'Preview a synthetic catalogue addition'}}
         unchanged = state(h)
         hours = 0
-        result, _ = measure(h, f'{catalogue} impact preview', lambda: preview(h, command))
+        result, preview_timing = measure(h, f'{catalogue} impact preview', lambda: preview(h, command))
         reused_hours = hours
         assert state(h) == unchanged
         prepared = prepared_checks.pop()
@@ -301,8 +301,10 @@ def test_create_impact_reuses_workload_calculations_at_department_scale(scale_ha
         assert 0 < reused_hours < hours, (catalogue, reused_hours, hours)
         print(catalogue, {'reused_hours_calculations': reused_hours, 'original_hours_calculations': hours})
 
-        committed, _ = measure(h, f'{catalogue} save', lambda: apply(h, command, result['source_fingerprint']))
+        committed, save_timing = measure(h, f'{catalogue} save', lambda: apply(h, command, result['source_fingerprint']))
         assert committed['record']['id']
+        request.node.user_properties.extend(((f'{catalogue}_preview_seconds', preview_timing['wall_seconds']),
+                                             (f'{catalogue}_save_seconds', save_timing['wall_seconds'])))
 
 
 def spread_department(h):
