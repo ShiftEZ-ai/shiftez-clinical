@@ -79,6 +79,10 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Planted canary tests prove in every run that the reporter reports outcomes honestly.
 - Migrations are checked append-only against the target branch (`migrations/safety.py`, `tests/test_data_safety.py`).
 - `python scripts/generate_contracts.py` must leave no diff.
+- The standard-client agent check runs on every pull request whose diff can affect it and in the full merge-group
+  suite under the existing `ci-gate`. A pre-registered test client signs in as a test role, approves access through
+  the consent API, lists tools and reads a schedule. With the deployment switch off (the default), check that
+  every agent, authorize, consent, token and metadata endpoint returns 404.
 - Delivery tooling retries every GitHub read and fetch on a transport error, a 5xx or an HTTP 499 with back-off (15 s,
   30 s, 60 s, 60 s, about 3 min, longer than the measured 30-90 s bursts on the GitHub edge), and on a rate limit
   (60 s, 120 s, ...). A write retries only when it is idempotent (a fast-forward push of one fixed commit, disabling
@@ -162,6 +166,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   screenshots. Fix the real blockers it finds first.
 - Engine/compiler, validator, greedy, score and fairness version constants are bumped once per release, in release
   preparation, never per pull request.
+- Run the standard-client agent check on staging for every release candidate before creating the final release tag.
+  Keep the deployment switch off in production until the owner approves enabling it.
 - Release notes are compiled from the pull requests' `Changelog:` lines. They carry a Known issues section built from
   the open issues on the release milestone (blockers and test or CI issues excluded) and a Limitations section; an
   open blocker that ships in a candidate by ruling is added by hand.
@@ -251,6 +257,16 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   The exception table binds historical wheel bytecode findings to a path, class and SHA-256. Image builds disable
   wheel bytecode generation. An unverified input or any other finding blocks publication.
 - Security reports go through GitHub's private vulnerability reporting.
+
+## Data retention
+
+- Each agent tool call records only its time, grant, client, tool, outcome and correlation ID.
+- Retain agent call rows for 90 days by default. Set `agent_call_retention_days` in deployment configuration
+  (30 to 3650 days), following `password_login_audit_retention_days` in `apps/api/settings.py`. Expire rows in
+  batches through the existing authentication-event retention pass in `apps/worker/main.py`.
+- Grant, consent and revocation events stay in the audit log indefinitely. Agent call expiry is a data-loss
+  critical change and needs one independent review. Its first production run requires the owner's approval
+  for the production deploy that ships it, with agent call expiry named in that approval.
 
 ## Speed and quality gates
 - Measure before setting any limit (timeout, deadline, budget, cap). Raising a limit needs a new measurement and
