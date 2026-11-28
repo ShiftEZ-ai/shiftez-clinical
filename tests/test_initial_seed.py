@@ -1,4 +1,5 @@
 """Explicit configuration bootstrap, safe repeats and atomic refusal; no operational data."""
+from datetime import date
 import json
 import os
 from pathlib import Path
@@ -116,8 +117,12 @@ def test_reseed_preserves_operator_edits_records_and_rule_lifecycle(installation
     with transaction(engine, write=True) as db:
         department = db.get(m.Department, first["department_id"])
         operator = m.Identity(issuer="test", subject="seed-operator", display_name="Seed operator (test)")
-        db.add(operator)
+        reviewer = m.Identity(issuer="test", subject="seed-reviewer", display_name="Seed reviewer (test)")
+        db.add_all([operator, reviewer])
         db.flush()
+        for approver in (operator, reviewer):
+            db.add(m.RoleBinding(identity_id=approver.id, department_id=department.id,
+                                 role="approver", starts_on=date(2020, 1, 1)))
         service, archived = list(db.scalars(select(m.Service).order_by(m.Service.id).limit(2)))
         original_name = service.name
         updated, archived, added, proposed = system_command.apply(db, operator, department, [
@@ -145,11 +150,14 @@ def test_reseed_preserves_operator_edits_records_and_rule_lifecycle(installation
              "payload": {"reason": "Independently reviewed the seeded proposal"}}
             for policy in policies
         ], "test-seed-approve", settings)
-        retired = system_command.apply(db, operator, department, [
+        retirement = [
             {"kind": "policy.retire", "target_id": activated[1]["record"]["id"],
              "expected_revision": activated[1]["record"]["revision"],
              "payload": {"reason": "Owner retired the approved template"}},
-        ], "test-seed-retire", settings)[0]
+        ]
+        retired = system_command.apply(db, operator, department, retirement, "test-seed-retire", settings)[0]
+        if not retired.get("approval", {}).get("complete", True):
+            retired = system_command.apply(db, reviewer, department, retirement, "test-seed-retire-review", settings)[0]
         assert updated["record"]["name"] == "Owner configured clinic"
         assert updated["record"]["revision"] == 2 and updated["record"]["mode"] == "virtual"
         assert not archived["record"]["active"]

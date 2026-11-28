@@ -1142,6 +1142,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     'The prepared edit changed; refresh before applying it again', 409, {'recoverable': True})
         # The reply is no longer mutated below its root; retain ready branches instead of copying them again.
         result = {**json_value(compact_reply(reply), copy_containers=False)}
+        if command.kind in {'policy.activate', 'policy.activate_many', 'policy.retire'}:
+            from .services.bulk import governed_policy_undo
+            if undo := governed_policy_undo(db, actor, command, result, receipt_id):
+                result['undo'] = undo
         from .services.workspace_access import audit_envelope, private_operation
         private_operation(db, command, result)
         if command.kind.startswith("catalogue.") or command.kind == "request.decide" or command.kind == "job.create":

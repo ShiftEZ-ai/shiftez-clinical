@@ -15,6 +15,7 @@ from apps.api.services.scoring_defaults import seeded_rows
 from packages.contracts import schemas as s
 from packages.domain.conditions import active_rules, with_tags
 from packages.domain.validation import within_dates
+from .governance_support import retire_rule
 from .test_rule_conditions import line, tree
 
 
@@ -146,7 +147,7 @@ def test_counts_only_rules_in_force_invalidates_after_activate_and_retire(h):
     active = h.command('approver', 'policy.activate', {'reason': 'Independent synthetic review'},
                        proposal['id'], proposal['revision'])['record']
     assert h.get('auditor', '/api/catalogues?counts_only=true')['rules_in_force'] == before + 1
-    h.command('approver', 'policy.retire', {'reason': 'Synthetic rule retired'}, active['id'], active['revision'])
+    retire_rule(h, active, 'Synthetic rule retired')
     assert h.get('auditor', '/api/catalogues?counts_only=true')['rules_in_force'] == before
 
 
