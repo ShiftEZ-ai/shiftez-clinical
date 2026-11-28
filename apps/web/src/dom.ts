@@ -2077,6 +2077,9 @@ export function check(label: string, checked=false, hint=''): Field {
   const input=el('input',{type:'checkbox',name:label,checked,...(hint?{'aria-label':label,'aria-describedby':id}:{})});
   return {wrap:el('label',{class:'checkbox'},input,el('span',{class:'check-text'},el('span',{},label),hint?el('span',{class:'hint',id},hint):'')),input};
 }
+/** A selection box with no visible label of its own (a row's, a group's, select-all): a native label around it is its
+ *  target, at least 24 px (WCAG 2.2 SC 2.5.8) and 44 px on a phone (DESIGN.md Touch targets). */
+export const checkTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
 /** One option of any dropdown: `hint` shows beside it, `keywords` are searched but not shown. */
 export type Choice={value:string;label:string;group?:string;hint?:string;keywords?:string;disabled?:boolean;
   /** The group is a fact about the row with a configured place (a person's rank, in the department's rank order): a

@@ -3,7 +3,7 @@
  *  select-all, one selection bar, and the Needs attention view. A rule row is its name and one count line. Every change goes into
  *  the rules' drafts and is proposed together ("Propose N changes"): one version per rule, each approved by another
  *  person. */
-import {el,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,labelOf,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
+import {el,checkTarget,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,labelOf,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
 import {TABLE_CONDITION_DEFINITIONS,type Conditions} from './generated.js';
 import {command,sessionKey,type Undone} from './api.js';
 import {savingMark,failedMark,conflict} from './loading.js';
@@ -367,7 +367,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     setTriState(b,triStateOf(keys.filter(k=>selected.has(k)).length,keys.length));
     b.addEventListener('change',()=>{for(const k of keys)b.checked?selected.add(k):selected.delete(k);syncSelection();});
     boxes.push([b,keys]);
-    return b;
+    return checkTarget(b);
   }
   /** The selection changed: each box's tri-state, each rule's "N of M selected" and the bar, without a redraw. */
   function syncSelection(){
@@ -592,7 +592,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const tbody=el('tbody',{});
     const kinds=s.group===''?[{kind:'',items:list}]:[...Object.keys(KINDS),...new Set(list.map(x=>x.kind).filter(k=>!KINDS[k]))].map(kind=>({kind,items:list.filter(x=>x.kind===kind)})).filter(g=>g.items.length);
     const pick=(label:string,ids:string[])=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':label}) as HTMLInputElement;
-      setTriState(b,triStateOf(ids.filter(i=>picked.has(i)).length,ids.length));b.addEventListener('change',()=>{for(const i of ids)b.checked?picked.add(i):picked.delete(i);draw();});return b;};
+      setTriState(b,triStateOf(ids.filter(i=>picked.has(i)).length,ids.length));b.addEventListener('change',()=>{for(const i of ids)b.checked?picked.add(i):picked.delete(i);draw();});return checkTarget(b);};
     for(const g of kinds){
       if(g.kind)tbody.append(el('tr',{class:'dt-group rt-kind'},el('td',{class:'dt-check'},canEdit?pick(`Select every ${kindOf(g.kind).label} issue`,g.items.map(x=>x.id)):''),
         el('td',{colspan:'4'},badge(`${kindOf(g.kind).label} ${g.items.length}`,kindOf(g.kind).tone,'',{tip:cap(kindOf(g.kind).about)}))));  // each row says what happens
@@ -668,7 +668,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
     const outcome={both:'Keep both',ending:'Let it end',nobody:'Keep',duplicate:'Keep both'}[x.kind]||'Keep';
     return action?`${outcome} · acknowledge…`:outcome;
   }
-  function issueRow(x:Issue,pick:(label:string,ids:string[])=>HTMLInputElement){
+  function issueRow(x:Issue,pick:(label:string,ids:string[])=>HTMLElement){
     const e=byId.get(x.catalogue_id),live=e?linesOf(e):[],[best,...rest]=x.fixes;
     const lineCell=el('div',{class:'rt-ilines'},...x.lines.map(n=>live[n]?el('div',{class:'rt-iline'},el('span',{class:'rt-n'},String(n+1)),pills(ctx,live[n].who,names,'Everyone',openTag,'Who',1,marks),pills(ctx,live[n].where,names,'All clinics',openTag,'Where',1,marks),
       numbersNode(live[n],e?.inherited?.[live[n].id],sourceWords(()=>live,names),undefined,marks)):''));

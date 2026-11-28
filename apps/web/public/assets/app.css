@@ -1376,7 +1376,7 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
    "Anesthesiology" mid-word, D-156); what does not fit goes behind "+N" (dom.ts legend), which lists every entry in
    full. Only a first entry wider than the key on its own is cut, with room kept for "+N". Print shows every entry. */
 .view-legend li{flex:none}.view-legend li:first-child{max-width:calc(100% - 56px)}.view-legend li[hidden]{display:none}
-.view-legend .lg-more>.pill-more{display:grid;place-items:center;height:18px;padding:0;border:0;background:none;font-size:11px}
+.view-legend .lg-more>.pill-more{display:grid;place-items:center;height:var(--target-min);margin-block:-3px;padding:0;border:0;background:none;font-size:11px}  /* a 24 px target around the 18 px mark; the line keeps its height */
 .view-legend .lg-more-mark{display:grid;place-items:center;height:18px;font-size:11px}
 .view-legend .pill-more:is(:hover,.is-open)>.lg-more-mark{background:var(--hover)}
 .lg-pop{display:flex;align-items:center;gap:5px}
@@ -1413,7 +1413,7 @@ button.iss-go:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .view-legend .lg-tick{position:static;display:inline-block;width:2px;height:12px;margin:0 4px;flex:none}
 /* A timeline's key (People › Timeline and Where is everyone; Who's available): the shared legend below the timeline, one
    line with "+N" (DL-063). Its swatches are the marks as drawn. */
-.view-legend.ra-key{border-top:0;padding:2px 2px 6px}
+.view-legend.ra-key{border-top:0;padding:3px 2px 6px}
 /* An entry a reader can use (dom.ts LegendUse): hover or focus highlights its marks, a click acts. */
 .view-legend .lg-act{display:flex;align-items:center;gap:5px;min-width:0;max-width:100%;margin:-2px 0;padding:2px 4px;border:0;border-radius:var(--r-xs);background:none;color:inherit;font:inherit;cursor:pointer}
 .view-legend .lg-act:hover{background:var(--hover)}.view-legend .lg-act:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -2084,10 +2084,12 @@ td small.mono{font-size:12px}
 
 /* Bulk selection: row checkboxes and a floating action bar */
 .bulk-check{width:16px;height:16px;margin:0 10px 0 0;flex:none;accent-color:var(--accent);cursor:pointer}
-th .bulk-check,td>.bulk-check,td>.dt-check-hit>.bulk-check{margin:0}
-.dt-check-hit{display:contents}
+th .bulk-check,td>.bulk-check,.dt-check-hit>.bulk-check{margin:0}
+/* A selection box with no label of its own (dom.ts checkTarget): its native label is the 24 px target. */
+.dt-check-hit{display:inline-grid;place-items:center;min-width:var(--target-min);min-height:var(--target-min);flex:none;vertical-align:middle;cursor:pointer}
+.dt-check-hit:has(>:disabled){cursor:not-allowed}
 @media(max-width:720px){.bulk-check{width:24px;height:24px}}  /* WCAG 2.5.8 target size on phones */
-@media print{.selection-bar,.bulk-check{display:none}}
+@media print{.selection-bar,.bulk-check,.dt-check-hit{display:none}}
 
 /* Review route strip */
 .review-strip{padding:10px 16px}
@@ -4499,13 +4501,13 @@ tr.is-explained>td{background:var(--accent-soft)}
 .rt-lhead{display:flex;align-items:center;gap:10px;min-height:34px;padding:2px 12px 2px 8px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;color:var(--muted)}
 .rt-qhead{display:flex;align-items:center;gap:10px;min-height:30px;padding:2px 12px 2px 8px;background:var(--sub);border-bottom:1px solid var(--line)}
 .rt-qhead h3{margin:0;font-size:12.5px;font-weight:650;color:var(--ink)}
-.rt-lhead>:first-child,.rt-qhead>:first-child{width:24px;display:inline-flex;justify-content:center}
+.rt-lhead>:first-child,.rt-qhead>:first-child{width:24px;display:inline-flex;align-items:center;justify-content:center}
 .rt-list{list-style:none;margin:0;padding:0}
 .rt-item,.rt-conflict{border-bottom:1px solid var(--line)}
 .rt-conflict{padding:6px 12px 6px 50px}
 .rt-q:last-of-type .rt-list>:last-child{border-bottom:0}
 .rt-row{display:grid;grid-template-columns:24px 24px 34px minmax(0,1fr);align-items:center;column-gap:10px;padding:6px 12px 6px 8px}
-.rt-row>.bulk-check{justify-self:center;margin:0}
+.rt-row>.dt-check-hit{justify-self:center}
 .rt-main{min-width:0;display:grid;gap:1px}
 .rt-title{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0}
 .rt-title .rt-rule-link{font-size:13.5px}
@@ -4520,7 +4522,7 @@ tr.is-explained>td{background:var(--accent-soft)}
 .rt-help{width:24px;height:24px}.rt-help .icon{width:14px;height:14px}
 .rt-lns{grid-column:1/-1;display:grid;grid-template-columns:subgrid;list-style:none;margin:0;padding:0}
 .rt-ln{grid-column:1/-1;display:grid;grid-template-columns:subgrid;align-items:center;min-height:32px;border-top:1px solid var(--line-soft)}
-.rt-ln>.bulk-check{justify-self:center;margin:0}
+.rt-ln>.dt-check-hit{justify-self:center}
 .rt-ln-who{min-width:0;display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 6px}
 /* a long pill (a rank list) stays inside the Who cell: it ellipsizes, with its full text in its title. It shrinks with
    its pill item, so the shared list's 220px pill cap (.pill-list>.pill-item>.rp) never lets it spill over "+N". */
@@ -4562,7 +4564,7 @@ td .rt-always-word{padding:0;font-weight:500}
   .rt-lines{display:block;padding:2px 8px 8px}
   .rt-lns,.rt-sub,.rt-exc{display:block}
   /* Its box stays (a line is picked on a phone too, as on the rule's page), then No. › who over what › open. */
-  .rt-ln{display:grid;grid-template-columns:24px 3ch minmax(0,1fr) max-content;column-gap:8px;row-gap:2px;padding:4px 0}
+  .rt-ln{display:grid;grid-template-columns:var(--target,24px) 3ch minmax(0,1fr) max-content;column-gap:8px;row-gap:2px;padding:4px 0}
   .rt-ln-who{grid-column:3;flex-wrap:wrap}
   .rt-ln-open{grid-column:4;grid-row:1}
   .rt-ln-what{grid-column:3;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px}
@@ -5356,7 +5358,6 @@ button.tl-ag-item{cursor:pointer}
 /* ---- Bulk changes ---- */
 /* Select-all box with its ▾ selection menu; the column widens for the caret and the sticky name column follows it. */
 .dt-check-head{display:inline-flex;align-items:center;gap:0}
-.dt-check-head>.bulk-check{margin:4px}
 .dt-check-menu{display:inline-grid;place-items:center;width:24px;height:24px;padding:0;border:0;border-radius:var(--r-sm,6px);background:none;color:var(--muted)}
 .dt-check-menu:hover,.dt-check-menu[aria-expanded=true]{background:var(--hover);color:var(--ink)}
 .dt-check-menu .icon{width:12px;height:12px}
@@ -6237,7 +6238,10 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
    (::after, right:3px) stays at the column edge. Later than the 20 px coarse-pointer rule, so 24 px there too. */
 .dt-resize{width:var(--target-min)}
 .cond-choice .segmented button{position:relative}  /* .fb-area-remove and .fb-area-handle are absolute already */
-:is(.cond-choice .segmented button,.fb-area-remove,.fb-area-handle)::before{content:'';position:absolute;inset:min(0px,calc(50% - var(--target-min)/2))}
+.rc-reach-link{position:relative}  /* "line 3", "1 person": a link inside a sentence keeps its text size */
+:is(.cond-choice .segmented button,.fb-area-remove,.fb-area-handle,.rc-reach-link)::before{content:'';position:absolute;inset:min(0px,calc(50% - var(--target-min)/2))}
+/* A switch (34 × 20) reaches 24 px tall through ::before; ::after is its knob. */
+input.switch::before{content:'';position:absolute;inset:min(0px,calc(50% - var(--target-min)/2))}
 /* Touch targets on a phone (WCAG 2.2 SC 2.5.5): every shared control is at least
    44 × 44 CSS px. min-height/min-width win over any height/width a control sets, so this one block covers them all
    (:root lifts it over two-class rules such as.button.small); a glyph stays its size in the middle of the box.
@@ -6251,17 +6255,25 @@ button.pc-chip:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     min-width:var(--target);min-height:var(--target)}
   :root :is(.dt-tool,.pv-tab){justify-content:center}
   :root .mobile-account{align-items:center;justify-content:center}
-  :root .dt-search{align-self:stretch;height:auto}  /* the field's whole box takes the tap */
+  :root .dt-search{align-self:stretch;height:auto;margin-block:-1px}  /* the field's whole box, its 1 px borders too, takes the tap: 44 px */
   :root label:has(>input:is([type=checkbox],[type=radio])):not(.wk-check-hit){min-width:var(--target);min-height:var(--target)}
   :root .checkbox{align-items:center}
   /* The native label activates the small selection box across its whole slot. */
   :root .dt-check-hit{display:inline-grid;width:var(--target);height:var(--target);place-items:center;vertical-align:middle;cursor:pointer}
-  :root .dt-check-hit>.bulk-check,:root .dt-check-head>.bulk-check{margin:0}
+  :root .dt-table:has(.dt-check-head){--dt-check-w:calc(var(--target) + 24px)}  /* select-all's 44 px label beside its 24 px menu */
+  :root input.switch::before{inset:min(0px,calc(50% - var(--target)/2))}
+  /* The Rules list: selection, open and on/off each take a 44 px column, side by side. */
+  :root .rt-row{grid-template-columns:repeat(3,var(--target)) minmax(0,1fr);column-gap:0}
+  :root .rt-row>.switch{justify-self:center}
+  :root :is(.rt-lhead,.rt-qhead){gap:0}
+  :root :is(.rt-lhead,.rt-qhead)>:first-child{width:var(--target)}
+  /* A person's name in a list cell or card is a target of its own, not running text (SC 2.5.8 Inline is for prose). */
+  :root :is(.dt-card,.dt-table td) .link-button.person-link:not(.pchip){min-height:var(--target)}
   :root .dt-table:has(.dt-check-hit):not(:has(.dt-check-head)){--dt-check-w:var(--target)}
   :root .dt-table .dt-check:has(.dt-check-hit){padding:0!important;text-align:center}
   /* The one-line legend reserves the whole overflow target while retaining the painted pill. */
   :root .view-legend{min-height:calc(var(--target) + 1px);padding-block:0}
-  :root .view-legend .lg-more>.pill-more{min-width:var(--target);height:var(--target);border-radius:0}
+  :root .view-legend .lg-more>.pill-more{min-width:var(--target);height:var(--target);margin-block:0;border-radius:0}
   :root .view-legend li:first-child{max-width:calc(100% - var(--target) - 14px)}
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark:not(.cov-cell>*),.app-footer :is(button,a[href])){position:relative}  /* an absolute mark already holds its ::after */
   :root :is(button.health-pill,button.rp,.dt-chip,.iss-chip,button.iss-mark,.app-footer :is(button,a[href]))::after{content:'';position:absolute;inset:min(0px,calc(50% - var(--target)/2))}
