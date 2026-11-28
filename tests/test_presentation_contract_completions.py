@@ -29,12 +29,12 @@ def test_media_limits_have_one_owner_and_preserve_values():
 def test_optional_layers_omit_legacy_null_and_preserve_explicit_settings():
     assert 'layers' not in s.PlannerViewSettings().model_dump(mode='json')
     assert 'layers' not in s.PlannerViewSettings(layers=None).model_dump(mode='json')
-    layers = {'draft': False, 'leave': False, 'mine': True, 'mode': 'overlay'}
+    layers = {'draft': False, 'leave': False, 'mine': True, 'mode': 'overlay', 'rotations': False}
     view = s.TableViewDefinition(planner={'layers': layers})
     assert view.model_dump(mode='json')['planner']['layers'] == layers
     assert s.PLANNER_LAYER_DEFAULTS == s.PlannerLayers().model_dump()
-    assert s.PlannerViewSettings(layers={}).layers.model_dump() == {'draft': True, 'leave': True, 'mine': False, 'mode': 'edit'}
-    for invalid in ({'draft': 'false'}, {'leave': 1}, {'mine': None}, {'mode': 'other'}, {'workspace_id': 'any'}):
+    assert s.PlannerViewSettings(layers={}).layers.model_dump() == {'draft': True, 'leave': True, 'mine': False, 'mode': 'edit', 'rotations': True}
+    for invalid in ({'draft': 'false'}, {'leave': 1}, {'mine': None}, {'mode': 'other'}, {'rotations': 'no'}, {'workspace_id': 'any'}):
         with pytest.raises(ValidationError):
             s.PlannerViewSettings(layers=invalid)
 

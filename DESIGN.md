@@ -877,10 +877,11 @@ and a desktop window narrowed below it gets the same rule at once.
   Only one draft is editable at a time; nothing published is edited in place.
 - One View picker: views (Year Month Week Day People Coverage List, keys Y M W D P C L),
   Layers (Published always on; one draft or No draft; Show drafts: Edit one / Side by side /
-  Overlay; Leave and wishes; My duties), Colour by, Names, Density. One primary in the
+  Overlay; Leave and wishes; Rotations; My duties), Colour by, Names, Density. One primary in the
   toolbar: Add session with a draft, New rota without. Rota actions live in the top bar:
   Auto-schedule, Submit for review… (a draft) or Publish… (an approved rota), Rota tools ⋯. A button names the step that
   happens. The sidebar logo is the link Home.
+- **People × Days › Rotations** (Layers, on by default, saved with the view): a day with no duty and no leave names the person's rotation by its type's short name, muted and centred, with no chip or edge mark (a long name ends in …; tip and accessible name "Rotation · name"); protected time is an outlined, unfilled PT chip on any day, under that day's duties (tip and accessible name "Protected time · reason"). Both come from the person timeline as the server scopes it, are entries in the view's key and print as drawn.
 - Dots (Year, Month): one per day. Fill = state (solid published, hollow draft, half = two
   rotas on the day); colour = health (green no issues, amber open places, red rule broken,
   grey not checked); no dot = not planned. Colour by never recolours dots. Every dot has an

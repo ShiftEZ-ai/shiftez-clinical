@@ -13878,6 +13878,11 @@
             ],
             "title": "Mode",
             "type": "string"
+          },
+          "rotations": {
+            "default": true,
+            "title": "Rotations",
+            "type": "boolean"
           }
         },
         "title": "PlannerLayers",
@@ -14833,6 +14838,11 @@
             ],
             "title": "Mode",
             "type": "string"
+          },
+          "rotations": {
+            "default": true,
+            "title": "Rotations",
+            "type": "boolean"
           }
         },
         "title": "PlannerLayers",
@@ -59265,6 +59275,11 @@
             ],
             "title": "Mode",
             "type": "string"
+          },
+          "rotations": {
+            "default": true,
+            "title": "Rotations",
+            "type": "boolean"
           }
         },
         "title": "PlannerLayers",
@@ -61523,6 +61538,11 @@
             ],
             "title": "Mode",
             "type": "string"
+          },
+          "rotations": {
+            "default": true,
+            "title": "Rotations",
+            "type": "boolean"
           }
         },
         "title": "PlannerLayers",

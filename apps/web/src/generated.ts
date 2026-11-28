@@ -3668,6 +3668,7 @@ export type PlannerLayers = {
   "leave"?: boolean;
   "mine"?: boolean;
   "mode"?: "edit" | "side" | "overlay";
+  "rotations"?: boolean;
 };
 
 export type PlannerViewDefinition = {
@@ -6582,7 +6583,7 @@ export const GENERATION_TIME_FIELDS = {"search_minutes": {"title": "Search time"
 export const SEARCH_MODES = [{"value": "partial", "label": "Contains"}, {"value": "exact", "label": "Exact text"}] as const;
 export const SEARCH_SCOPES = [{"value": "all", "label": "Names and references"}, {"value": "self", "label": "Own text"}, {"value": "related", "label": "Related records"}] as const;
 export const SEARCH_ENTITY_KINDS = ["categories", "capabilities", "programmes", "rotation_types", "cohorts", "people", "services", "locations", "assignment_types", "date_sets", "tags"] as const;
-export const PLANNER_LAYER_DEFAULTS = {"draft": true, "leave": true, "mine": false, "mode": "edit"} as const;
+export const PLANNER_LAYER_DEFAULTS = {"draft": true, "leave": true, "mine": false, "mode": "edit", "rotations": true} as const;
 export const MEDIA_LIMITS = {"file_bytes": 10485760, "image_pixels": 16000000} as const;
 export const BRANDING_IMAGE_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/webp": "WEBP"} as const;
 export const BRANDING_IMAGE_LIMITS = {"file_bytes": 10485760, "image_pixels": 16000000} as const;
