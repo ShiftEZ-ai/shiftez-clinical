@@ -173,7 +173,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Deploys
 
-- `image.yml` publishes the same scanned main build to the primary and public packages. Each commit has its own
+- `image.yml` publishes each scanned `main` or `v*` tag build to the primary and public packages and attests the
+  public digest. A tag's public image carries the tag name. Each commit has its own
   image concurrency group. Use exact digests for deploys because out-of-order builds can move the floating `dev`
   tag backwards. Workflows have no deploy access. The operator promotes the image and the receiving system
   verifies its image ID and revision. Deployment commands live in the private runbook.
@@ -181,7 +182,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   `image.yml` provenance offline, pinning the signer workflow and `refs/heads/main` before startup. The operator record holds the
   commit, digest, time and health result. Unattended deployment and its GitHub deployment row are tracked in
   issue 1279.
-- **Staging deploy gate.** Admit tagged candidates after verifying the scanned tag image and its exact digest.
+- **Staging deploy gate.** Admit tagged candidates after verifying the scanned public tag image, its exact digest
+  and its `image.yml` provenance, pinning the signer workflow and the tag ref.
   Record the commit, digest, health result, candidate session and rollback rehearsal in the staging deploy record.
 - Establish each non-production gate once. A critical gate requires an independent review and the Master Lead's
   recorded decision. Thereafter, each passing deploy records an audit row.
@@ -217,7 +219,7 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 | Rule | Reason | Review date |
 | --- | --- | --- |
-| One attested artifact across environments | Version tags build a scanned image separately from main. Staging and production use the same candidate digest. Signed tag provenance is tracked in issue 1339. | 2026-12-23 |
+| One attested artifact across environments | Version tags build and attest a scanned image separately from main. Staging and production use the same candidate digest. Promoting the candidate digest at the final tag is tracked in issue 1917. | 2026-12-23 |
 | Automatic dev deployments and GitHub deployment audit | The operator records deploys in the deploy audit. Unattended delivery and the matching GitHub deployment record are open in issue 1279. | 2026-12-01 |
 | Staging rollback rehearsal and GitHub deployment audit | The deploy audit holds staging evidence. The staging gate still needs a recorded rehearsal and GitHub deployment evidence. | 2026-12-01 |
 | Scheduled production backups and quarterly restore evidence | Backup and drill tools exist. Production scheduling and a completed quarterly production drill await evidence. | 2026-12-01 |
