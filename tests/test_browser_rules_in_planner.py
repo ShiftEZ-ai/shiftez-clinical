@@ -461,13 +461,17 @@ def department_sized_rule_map(browser, live_server, h):
         page.reload()
         expect(page.get_by_role('button', name=re.compile(r'^Account menu, '))).to_be_visible()
         open_planner(page, w)
-        # Ready: the big map (not the rota's own three rules) is drawn onto the grid.
-        # The rule map loads on first use (hover, focus, pin or highlight): hover a day to ask for it.
+        # The large rule map is usable on the window before the first action that needs the whole draft.
         page.locator('.wk-day[data-rk]').first.hover()
-        page.wait_for_function("() => document.querySelector('.planner-main')?.dataset.rkRules === '974'", timeout=60000)
-        # A redraw keeps the old grid on screen until the new one is ready: wait until no redraw is in flight.
-        expect(page.locator('#main[data-loaded-view=schedule]')).to_have_count(1)
-        # Timed in the page (main-thread work only), so a busy CI machine does not turn test overhead into a failure.
+        expect(page.locator('.planner-main')).to_have_attribute('data-rk-rules', '974', timeout=60000)
+        page.locator('.pchip[data-assignment]').first.click()
+        session = page.locator('.wk-panel')
+        expect(session).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(session).to_have_count(0)
+        page.locator('.wk-day[data-rk]').first.hover()
+        expect(page.locator('.planner-main')).to_have_attribute('data-rk-rules', '974', timeout=60000)
+        # Measure in-page work after the whole draft is ready, keeping network time out of the pin budget.
         page.get_by_role('button', name='Rota tools', exact=True).click()  # the menu opens outside the timing
         timings = page.evaluate("""async () => {
             const frame = () => new Promise(r => requestAnimationFrame(() => r()));

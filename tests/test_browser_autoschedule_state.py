@@ -579,8 +579,7 @@ def test_closed_panel_holds_no_endless_skeleton_after_address_or_reload(browser,
         for arrival in ('address', 'reload'):
             if arrival == 'reload':
                 page.reload()
-            # The panel and its first read of the rota's runs land in one step (schedulingPanel): attached = read.
-            expect(panel.locator('.auto-body')).to_be_attached()
+            # A draft opens on its window: the closed panel is built with the whole rota, on its first use (below).
             expect(panel).to_be_hidden()
             expect(panel.locator('.loading')).to_have_count(0)
             # A failed read on opening says so in the panel, with Retry; Retry reads again and shows the result.
@@ -594,6 +593,8 @@ def test_closed_panel_holds_no_endless_skeleton_after_address_or_reload(browser,
             failed.click()
             expect(panel.get_by_role('region', name='Review')).to_be_visible()
             expect(panel.locator('.loading')).to_have_count(0)
+            # The panel and its first read of the rota's runs land in one step (schedulingPanel): attached = read.
+            expect(panel.locator('.auto-body')).to_be_attached()
     finally:
         context.close()
 

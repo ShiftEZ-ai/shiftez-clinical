@@ -1235,6 +1235,11 @@ export function dropHoverCard(){
 }
 /** Data the open card was waiting for has arrived (e.g. the planner's rule map): build its content again in place. */
 export function refreshHoverCard(){if(hoverNode?.isConnected)hoverRedraw?.();}
+/** The element whose card is open now (hover or focus); null when none is (a dismissed card is not open). */
+export function openCardTarget():HTMLElement|null{return hoverNode?.isConnected?hoverTarget:null;}
+/** The card of an element drawn anew while its old one was still open (the planner drawn whole): shown again on it, as a
+ *  focus card when it holds focus, else as a hover card. Focus is not moved. */
+export function showHoverOn(target:HTMLElement){const c=hoverContent(target);if(!c)return;dismissedHover=null;showHover(c,target===document.activeElement);}
 /** Where a mouse rests: a redraw under it (a live refresh, a save, a check landing) brings back the card it dropped (SI-49),
  *  only on the replacement for the same thing (its rule target or name); something else now under the pointer stays bare. */
 let pointer:{x:number;y:number}|null=null;
@@ -1242,7 +1247,8 @@ const hoverKey=(n:HTMLElement)=>n.dataset.rk||n.getAttribute('aria-label')||'';
 /** Called before a redraw replaces the hovered element; the function it returns runs once the new one is drawn. */
 export function keepHover(){
   const key=hoverTarget&&!helpFromFocus?hoverKey(hoverTarget):'';
-  return ()=>{if(!key||!pointer||hoverNode)return;
+  // A card already on an element of the page as drawn now (e.g. reopened on its chip drawn whole) is kept, never moved.
+  return ()=>{if(!key||!pointer||hoverNode||hoverTarget?.isConnected)return;
     const at=document.elementFromPoint(pointer.x,pointer.y),now=hoverContent(at);
     if(now&&now.target!==hoverTarget&&hoverKey(now.target)===key)at!.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:pointer.x,clientY:pointer.y}));};
 }
@@ -1613,7 +1619,7 @@ function wireFooterActs(){
   document.addEventListener('pointerdown',e=>{const b=at(e.target);down=b?{node:b,key:b.dataset.footerAct||''}:null;},true);
   document.addEventListener('pointerup',e=>{const d=down;down=null;if(!d||d.node.isConnected)return;
     const b=at(document.elementFromPoint(e.clientX,e.clientY));if(b?.dataset.footerAct===d.key&&run(b,e)){ran=true;setTimeout(()=>{ran=false;});}},true);
-  document.addEventListener('click',e=>{if(ran){ran=false;return;}run(at(e.target),e);});
+  document.addEventListener('click',e=>{if(ran&&e.isTrusted){ran=false;return;}run(at(e.target),e);});
 }
 /** A screen's key in the footer: one "? Key" button that opens the explanation above it (never a long legend in the row).
  *  Status items that do not fit the footer also go behind it ("? +N", see fitFooter); without a key it is that only. */

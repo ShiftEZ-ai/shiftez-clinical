@@ -102,6 +102,8 @@ export interface WeekHooks {
   nextDuty?:()=>Promise<{label:string;go:()=>void}|null>;
   /** Places filled / needed per day and group (planners). Staff's own duties are partial data: no tallies (S-19). */
   tallies?:boolean;
+  /** The draft drawn from its window (its whole rota read on demand): no rota-wide hours or rest on a name's card. */
+  windowOnly?:boolean;
   /** Schedule: a published session shown around (or under) the draft opens read-only with this. */
   view?:(shift:Row)=>void;
   /** Shortcuts for a row, day or person. Each opens the canonical form, so settings are never copied into the grid. */
@@ -1142,7 +1144,7 @@ export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Per
   function personFacts(s:Row,pid:string):HTMLElement[]{
     let mine=facts.get(pid);if(!mine){mine=attendance(rota,pid);facts.set(pid,mine);}
     const f=workFacts(mine,s,dayOf,weekFrom),today=mine.filter(x=>x.s.id!==s.id&&dayOf(x.s)===dayOf(s));
-    return [line('info',`${f.week} h this week · ${f.rota} h this rota`,f.rest===null?'No earlier duty':f.rest>=48?`Off ${Math.round(f.rest/24)} days before`:`Rested ${Math.round(f.rest)} h`),
+    return [...hooks.windowOnly?[]:[line('info',`${f.week} h this week · ${f.rota} h this rota`,f.rest===null?'No earlier duty':f.rest>=48?`Off ${Math.round(f.rest/24)} days before`:`Rested ${Math.round(f.rest)} h`)],
       ...(today.length?[line('info','Also today',today.map(x=>`${x.s.type_snapshot.name} ${time(x.s)}`).join(' · '))]:[])];
   }
   /** Lock / Unlock this session: one click, Undo in the message (a person's right-click menu). */
