@@ -17,6 +17,7 @@ from apps.api.errors import Problem
 from apps.api.settings import Settings
 from apps.api.services.scoring_defaults import SOURCE as SCORING_DEFAULT_SOURCE, line_id
 from packages.contracts.schemas import EVENT_TYPE_DEFAULTS
+from packages.domain.leave_types import DEFAULT_LEAVE_TYPES
 from scripts import initial_seed, manage, system_command
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +81,9 @@ def test_seed_creates_reviewable_configuration_and_linked_audit_only(installatio
         assert {row.name for row in event_types} == (
             {definition["name"] for definition in EVENT_TYPE_DEFAULTS} if event_defaults_available else set())
         assert all(row.department_id == department.id for row in event_types)
+        leave_types = list(db.scalars(select(m.LeaveType).order_by(m.LeaveType.sort_order)))
+        assert [(row.name, row.short_code, row.colour) for row in leave_types] == list(DEFAULT_LEAVE_TYPES)
+        assert all(row.department_id == department.id and row.active for row in leave_types)
         org = db.get(m.Organisation, department.organisation_id)
         assert "fictional initial template" in org.name and org.timezone == "Asia/Riyadh"
         assert count(db, m.Category) == 3 and count(db, m.Programme) == 2
