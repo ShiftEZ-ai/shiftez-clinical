@@ -5,7 +5,8 @@ import uuid
 
 import pytest
 
-from packages.domain import generation
+from packages.domain import cp_sat, generation
+from packages.domain.validation import evaluate
 from tests.scheduler_departments import apply
 from tests.test_source_parity_staffing import policy
 
@@ -178,6 +179,63 @@ def test_expired_greedy_budget_keeps_partial_and_lists_missing_required_places(h
     assert result['validation']['valid'] is False
     assert len(result['unmet_requirements']) == 3
     assert 'does not prove' in result['message']
+
+
+def minimum_repair_world(h):
+    short, incumbent = h.seed['people'][:2]
+    duty = h.configure('assignment_types', {'name': 'Synthetic quota repair duty', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [{'minimum': 6, 'maximum': 6}]}})['record']['id']
+    data = h.snapshot(h.shift(h.workspace(), typ=duty, people=[incumbent])['workspace'])
+    data['policies'] = [policy(data, {'kind': 'block_quota', 'comparison': 'minimum', 'amount': 1,
+        'metric': 'duties', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}, {'person_id': short})]
+    data['generation_options'] = {'diagnostic_seconds': 5}
+    checked = evaluate(data)
+    partial = {'status': 'candidate_with_gaps', 'input_fingerprint': data['fingerprint'], 'validation': checked,
+        'additions': [], 'removals': [], 'unmet_requirements': generation.unmet_requirements(checked)}
+    assert generation.deficit_score(checked) == (5, 1, 0)
+    return data, short, incumbent, partial
+
+
+@pytest.mark.parametrize('engine', ['greedy', 'cp_sat'])
+def test_minimum_repair_limits_the_search_to_short_people_after_a_partial_run(h, monkeypatch, engine):
+    data, short, incumbent, partial = minimum_repair_world(h)
+    original = copy.deepcopy(data)
+    generate = cp_sat._generate
+
+    def search(snapshot, budget, workers, control, *args, **kwargs):
+        if '_minimum_repair_people' not in snapshot:
+            control.mark_stop('time_limit')
+            return copy.deepcopy(partial)
+        assert snapshot['_minimum_repair_people'] == {short}
+        return generate(snapshot, budget, workers, control, *args, **kwargs)
+
+    monkeypatch.setattr(cp_sat, '_generate', search)
+    monkeypatch.setattr(generation, '_generate_with_redistribution', lambda *args, **kwargs: copy.deepcopy(partial))
+    scheduler = generation.generate if engine == 'greedy' else cp_sat.generate
+    repaired = scheduler(data, 5, deterministic=True)
+    assert repaired['minimum_repair']['added'] == 1
+    assert {a['participant']['person_id'] for a in repaired['additions']} == {short}
+    assert not repaired['removals']
+    assert generation.deficit_score(repaired['validation']) == (4, 0, 0)
+    assert repaired['status'] == 'candidate_with_gaps'
+    assert repaired['input_fingerprint'] == data['fingerprint']
+    assert {p['person_id'] for p in apply(data, repaired)['shifts'][0]['participants']} == {incumbent, short}
+    assert data == original
+
+
+@pytest.mark.parametrize('severity', ['error', 'warning'])
+def test_minimum_repair_refuses_a_new_finding(h, monkeypatch, severity):
+    data, short, _, partial = minimum_repair_world(h)
+    checked = {**partial['validation'], 'findings': [
+        f for f in partial['validation']['findings'] if f['code'] != 'QUOTA_BELOW_MINIMUM']}
+    checked['findings'].append({'code': 'MAX_DUTIES', 'severity': severity, 'person_id': short,
+                                'shift_id': data['focus_ids'][0]})
+    def unsafe_candidate(*args, **kwargs):
+        return {'status': 'candidate_with_gaps', 'validation': checked, 'summary': {'filled_places': 2},
+                'additions': [{'shift_id': data['focus_ids'][0], 'participant': {'person_id': short}}]}
+
+    monkeypatch.setattr(cp_sat, 'generate', unsafe_candidate)
+    assert generation.repair_minima(data, partial, 5) is partial
 
 
 def test_exhausted_placement_does_not_use_frozen_search_time_for_repair(h, monkeypatch):

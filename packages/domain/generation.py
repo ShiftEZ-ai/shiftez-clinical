@@ -38,7 +38,7 @@ MANIFEST = {
     "max_sessions": 1500, "max_people": 500, "max_period_days": 31,
     "preserves_locked_assignments": True,
     "automatic_unavailability_repair": True,
-    "redistribution": "One gap-first rebuild, then a bounded CP-SAT required-cover repair. Mandatory constraints remain blocking.",
+    "redistribution": "One gap-first rebuild, then bounded CP-SAT repairs for required cover and outstanding mandatory minima.",
     "quota_support": "Mandatory minima and advisory targets guide additions; mandatory maxima and safety constraints remain blocking. No optimality guarantee.",
     "capacity_overflow": "Normal capacity is attempted first; only explicitly permitted ranks can consume extra places, with visible warnings.",
     "auto_publish": False, "optimality_claim": "none",
@@ -483,6 +483,73 @@ def _proposal_placements(snapshot, proposal):
     return kept | {(a['shift_id'], a['participant']['person_id']) for a in proposal['additions']}
 
 
+def repair_minima(snapshot, result, time_budget, *, cancelled=None, deterministic=False):
+    """Try adding work only for people below a mandatory minimum, within the diagnostic allowance."""
+    validation = result.get('validation', {})
+    if time_budget <= 0 or cancelled and cancelled():
+        return result
+    short_people = {row['person_id'] for row in finding_observations(validation)
+                    if row['code'] == 'QUOTA_BELOW_MINIMUM' and row['severity'] == 'error' and row.get('person_id')}
+    if not short_people:
+        return result
+
+    from packages.contracts.schemas import GenerationOptions
+    from .proposal_reconciliation import comparison, overlay
+    options = GenerationOptions.model_validate(snapshot.get('generation_options', snapshot.get('generation_defaults')) or {})
+    seconds = min(time_budget, options.diagnostic_seconds)
+    deadline = time.monotonic() + seconds
+    candidate = overlay(snapshot, result, range(len(result['additions'])), range(len(result['removals'])))
+    # Retain the complete incumbent, including its leads, supervision and overtime.
+    for shift in candidate['shifts']:
+        for participant in shift['participants']:
+            participant['_witness_fixed'] = True
+    candidate['_minimum_repair_people'] = short_people
+    candidate['generation_options'] = {**options.model_dump(mode='json'), 'mode': 'fill_gaps', 'shortlist_width': 0}
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return result
+    try:
+        from .cp_sat import generate as solve
+    except ImportError:
+        return result
+    repaired = solve(candidate, remaining, workers=1, diagnostic_proposal=True, deterministic=deterministic,
+                     cancelled=lambda: time.monotonic() >= deadline or bool(cancelled and cancelled()))
+    if (not repaired.get('additions') or repaired.get('removals') or not repaired.get('summary')
+            or repaired['status'] != 'candidate_with_gaps'
+            or time.monotonic() >= deadline or cancelled and cancelled()):
+        return result
+    checked = repaired['validation']
+    if deficit_score(checked)[1] >= deficit_score(validation)[1]:
+        return result
+    changes = comparison(validation, checked, aggregate_coverage=False, severities=('error', 'warning'))
+    if not changes['no_new_problems']:
+        return result
+
+    summary = {**repaired['summary'], **replacement_summary(snapshot, result['removals'])}
+    if 'score_before' in result.get('summary', {}):
+        before = summary['score_before'] = result['summary']['score_before']
+        after = summary['score_saved']
+        summary['score_delta'] = (round(after['uncapped_score'] - before['uncapped_score'], 1)
+                                  if after['uncapped_score'] is not None and before['uncapped_score'] is not None else None)
+        summary['existing_assignments'] = result['summary']['existing_assignments']
+        summary['changes_kept'] = result['summary']['changes_kept']
+    outcome = {**result, 'validation': checked, 'additions': [*result['additions'], *repaired['additions']],
+               'unmet_requirements': unmet_requirements(checked), 'summary': summary,
+               'declined_wishes': repaired['declined_wishes'], 'optimality_proven': False,
+               'minimum_repair': {'added': len(repaired['additions']), 'search_seconds': repaired['search_elapsed_seconds']}}
+    if checked['valid'] and not result.get('diagnostic_proposal'):
+        outcome['status'] = 'candidate_feasible'
+    if 'objectives' in result:
+        # The original objective proof describes a different incumbent.
+        for key in ('objectives', 'compiled_component_values', 'allocation_diagnostics', 'fair_share_search'):
+            outcome.pop(key, None)
+        outcome.update(weighted_status='FEASIBLE', score_completed=repaired['score_completed'],
+                       objective_components=repaired['objective_components'], breaks=repaired['breaks'])
+    if time.monotonic() >= deadline or cancelled and cancelled():
+        return result
+    return outcome
+
+
 def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancelled=None, deterministic=False) -> dict:
     placement_budget = time_budget_seconds
     if placement_budget is None:
@@ -499,7 +566,7 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancel
     # shortcut: repair up to 4 open places (1 repaired in 0.01-3.6 s; 36-38 took 36-40 s); revisit with larger successful repairs.
     if open_required > 4:
         result.setdefault('warnings', []).append(
-            f'Required-cover repair skipped because {open_required:g} required places remain open.')
+            f'Required-cover repair skipped because {open_required:g} required places were open.')
     elif open_required and finished_placement < started + placement_budget and not (cancelled and cancelled()):
         try:
             from .cp_sat import generate as required_cover
@@ -540,6 +607,8 @@ def generate(snapshot: dict, time_budget_seconds: float | None = None, *, cancel
                       else 'found no valid complete rota')
             result.setdefault('warnings', []).append(
                 f'Required-cover repair {reason}; the best partial proposal is retained.')
+    if result['status'] in {'candidate_with_gaps', 'unknown_time_limit'}:
+        result = repair_minima(snapshot, result, time_budget_seconds, cancelled=cancelled, deterministic=deterministic)
     if cancelled and cancelled():
         result['status'] = 'cancelled'
     if result.get('status') in {'cancelled', 'unknown_time_limit'}:

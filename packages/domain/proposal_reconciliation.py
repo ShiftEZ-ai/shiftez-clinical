@@ -12,11 +12,12 @@ from .time import aware
 from .feasibility import compare_findings
 
 
-def comparison(before, after):
+def comparison(before, after, *, aggregate_coverage=True, severities=('error',)):
     def check(value):
         return {**value, 'status': 'candidate_feasible' if value['valid'] else 'requirements_conflict',
                 'diagnostics': [], 'candidate_evidence': []}
-    result = compare_findings(check(before), check(after), aggregate_coverage=True, protect_intervals=True)
+    result = compare_findings(check(before), check(after), aggregate_coverage=aggregate_coverage,
+                              severities=severities, protect_intervals=True)
     if not all((value.get('quota_report') or {}).get('complete', True) for value in (before, after)):
         result.update(comparison_complete=False, no_new_problems=False)
     return result
