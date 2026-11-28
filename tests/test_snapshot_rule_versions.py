@@ -13,6 +13,7 @@ from apps.api.db import transaction
 from apps.api.services import read_projections, rule_catalogue
 from packages.domain.score import schedule_score
 from packages.domain.validation import evaluate
+from tests.governance_support import identity, retire_rule
 from tests.test_backend_scale import scale_department
 
 
@@ -67,6 +68,8 @@ def test_snapshot_policy_row_count_at_department_scale(database, scale_harness, 
 @pytest.mark.parametrize("h", ["sqlite", pytest.param("postgresql", marks=pytest.mark.postgres)], indirect=True)
 def test_published_rule_pin_and_read_parity(h, monkeypatch):
     rule = h.policy({"kind": "min_rest", "hours": 11})
+    # Set up the second voter before recording the snapshot fingerprints.
+    identity(h, "retirement_approver", ["approver"])
     expired = h.policy({"kind": "max_hours", "hours": 40, "window": "week"}, severity="advisory")
     h.command("approver", "policy.retire", {"reason": "Retire before issue"}, expired["id"], expired["revision"])
     draft = h.shift(h.workspace("Issued rule fixture"))["workspace"]
@@ -104,7 +107,8 @@ def test_published_rule_pin_and_read_parity(h, monkeypatch):
     before = tokens()
     h.workspace("Unrelated draft", start="2026-12-06", end="2026-12-13")
     assert tokens() == before
-    h.command("approver", "policy.retire", {"reason": "Retire the issued rule"}, rule["id"], rule["revision"])
+    retired = retire_rule(h, rule, "Retire the issued rule")["record"]
+    assert retired["status"] == "retired"
     assert all(now != initial for now, initial in zip(tokens(), before, strict=True))
 
     bounded = h.snapshot(workspace)
