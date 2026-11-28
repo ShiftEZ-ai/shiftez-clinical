@@ -87,8 +87,8 @@ export function personProfilePanels(ctx:Context,p:Row,parts:ProfileParts):Person
     // Quotas, targets and overtime offers: reviewed records on the person (the department's readers, and their own).
     ...(permits(ctx,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR)||mine?[['facts','Quotas',()=>{const box=el('div',{});
       // A live update may have rebuilt the panel since this tab drew (one landing while Approve read the rotas): a change's
-      // follow-up then redraws the page, read afresh, never only this tab's replaced box.
-      const draw=(first=false)=>{if(!first&&!box.isConnected){void ctx.refresh();return;}
+      // follow-up then redraws the page, read afresh, never only this tab's replaced box (one still being built is alive).
+      const draw=(first=false)=>{if(!first&&!alive(box)){void ctx.refresh();return;}
         box.replaceChildren(loadingSection('Quotas & offers',t=>personFacts(ctx,p,t,()=>draw())));};draw(true);return box;}] as PersonPanel]:[]),
     ...(grants(ctx.me.roles,'audit.read')?[['history','History',()=>personHistory(ctx,p,parts.feed,permits(ctx,CAPABILITY.ADMIN)||linked)] as PersonPanel]:[]),
     ...(access?[['access','Access',()=>personAccess(ctx,p,linked)] as PersonPanel]:[]),
