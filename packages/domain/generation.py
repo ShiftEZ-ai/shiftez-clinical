@@ -22,7 +22,7 @@ from .conditions import active_rules, bucket_keys, counting_key, counting_views,
 from .supervision_levelling import levelled_order, session_spread_policies
 from .patterns import day_of, wish_outcomes, wish_shape
 from .recurrence import inactive, with_series_state, usual_assignee_fixed, series_candidate_allowed
-from .fill_priority import STAGE_ORDER
+from .fill_priority import STAGE_ORDER, allocation_order_rules, allocation_tier, mandatory_order_groups, stage_progress
 
 # 43: reject proposals that introduce or worsen missing supervision.
 ALGORITHM_VERSION = "bounded-greedy-44"
@@ -389,14 +389,17 @@ def allocation_settings(data, shift, pid, supervisor_id=None, priority_field='pr
             if (selected or rule.get('supervisor_relationship') == 'mentor') and not eligible:
                 continue
             weight = allocation_weight(policy, strengths)
-            priority += weight * rule.get(priority_field, 0)
+            if priority_field != 'session_priority':
+                priority += weight * rule.get(priority_field, 0)
             overtime_priority += weight * rule.get('overtime_priority', 0)
             if priority_field == 'priority' and rule.get('balance_by', 'none') != 'none':
                 priority -= float(weight) * rule.get('balance_weight', 1) * preference_load(data, policy, shift, pid, eligible, history)
         else:
             offers.append(policy)
     overtime = allocation_overtime_allowed(data, shift, pid, offers=offers)
-    if priority_field == 'priority':
+    if priority_field == 'session_priority':
+        priority = allocation_tier(data, shift, pid, supervisor_id, rules=allocation_order_rules(index['rules']))
+    elif priority_field == 'priority':
         from .fairness_distribution import marginal_priority
         priority += marginal_priority(data, shift, {
             'person_id': pid, 'start': shift['start'], 'end': shift['end'],
@@ -626,6 +629,14 @@ class Recheck:
         self.live_ids = focus & self.active.keys()
         self.spans = [(aware(s['start']), aware(s['end']), sid) for sid, s in self.active.items() if sid in focus]
         self.peers = {}
+        self.order_peers = defaultdict(list)
+        groups = mandatory_order_groups(self.prepared, self.active.values(), focus)
+        self.prepared['_mandatory_order_groups'] = groups
+        for tiers in groups:
+            sessions = {row.shift_id for rows in tiers for row in rows}
+            live = sessions & self.live_ids
+            for sid in sessions:
+                self.order_peers[sid].append(live)
         people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
         self.parts = self._check(self.live_ids, people)
 
@@ -658,6 +669,8 @@ class Recheck:
             if sid not in self.peers:
                 self.peers[sid] = affected_sessions((), [shift], spans=self.spans) | ({sid} & self.live_ids)
             affected.update(self.peers[sid])
+            for peers in self.order_peers.get(sid, ()):
+                affected.update(peers)
         return affected
 
     def result(self, parts=None):
@@ -900,15 +913,10 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
         changed = wish_outcomes(trial, {pid: after})
         return sum(w['weight'] * (changed[w['id']][0] - before[w['id']][0])
                    for w in wishes if w['id'] in before)
-    # Only configured session preferences add work; keep the same scope evaluator.
-    session_data = {**data, 'policies': [p for p in data['policies']
-        if p['definition']['rule']['kind'] == 'allocation_preference'
-        and p['definition']['rule'].get('session_priority', 0)]}
+    order_rules = allocation_order_rules(data['policies'])
     session_priorities = {}
-    from .fill_priority import allocation_tier, stage_progress
-    tiered = data.get('generation_options', {}).get('allocation_order', 'weighted') == 'tiered'
     stage_people = defaultdict(list)
-    if session_data['policies']:
+    if order_rules:
         for shift in shifts:
             scores = []
             a, b = aware(shift['start']), aware(shift['end'])
@@ -917,10 +925,9 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                     timed_out = True
                     break
                 if person_active_for_interval(data, pid, a, b) and population_allows(data, shift, pid):
-                    score = allocation_tier(session_data, shift, pid)
-                    scores.append(score)
-                    if tiered:
-                        stage_people[score, shift['id']].append(pid)
+                    rank = allocation_tier(data, shift, pid, rules=order_rules)
+                    scores.append(rank)
+                    stage_people[rank, shift['id']].append(pid)
             session_priorities[shift['id']] = max(scores, default=0)
             if timed_out:
                 break

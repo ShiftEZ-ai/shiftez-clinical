@@ -39,6 +39,7 @@ AUDIENCE_NOTICE_TITLE = "Nobody eligible can take this duty"
 _AUDIENCE_NOT_FREE = "Colleagues are not free at that time."
 AUDIENCE_WORDS = {
     **dict.fromkeys((*PRIVATE_TIME_WORDS, COLLEAGUE_NOT_FREE), _AUDIENCE_NOT_FREE),
+    "ALLOCATION_ORDER": "Taking this duty would fill a later place while an earlier place is open.",
     "ATTACHMENT_PAIRING": "Colleagues cannot take this duty while keeping trainee pairings.",
     "CALENDAR_CLOSED": "The clinic or location is closed for this duty.",
     "CALENDAR_DATE_SET_UNRESOLVED": "The opening dates for this duty need review.",

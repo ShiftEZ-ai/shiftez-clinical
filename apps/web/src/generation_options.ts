@@ -90,10 +90,10 @@ export function generationOptionsFields(initial:GenerationOptions,onChange:(valu
   const nums=(pairs:[string,string][],values:unknown,min:number,max:number,step:number,suffix:string)=>
     Object.fromEntries(pairs.map(([key,label])=>[key,field(label+suffix,'number',(values as Record<string,number>|undefined)?.[key]??0,{required:true,min,max,step})]));
   // How a run decides: fixed steps first, then everything else weighed together by the score weights (the weights' "?").
-  const decides='Must rules and safety are never broken, and required places are filled before anything else. Everything else is weighed together by these weights, the same weights that grade the schedule score (0–100); anything that must be fixed caps it. Run presets in the planner change them for one run.';
+  const decides='Must rules and safety are never broken, and required places are filled before anything else. Allocation order is applied before the remaining choices are weighed by the schedule score (0–100). Anything that must be fixed caps the score. Run presets in the planner change the weights for one run.';
   const balance=select('Balance workload by',[{value:'reserved_hours',label:'Reserved hours'},{value:'duties',label:'Number of duties'}],initial.balance_measure);
-  const fillOrder=hint(select('Fill priorities',[{value:'weighted',label:'Weighed with everything else'},{value:'tiered',label:'Higher priorities filled first'}],initial.allocation_order||'weighted'),
-    'How the priority numbers on Allocation order lines are used.');
+  const fillOrder=hint(select('Fill priorities',[{value:'weighted',label:'Ranked places only'},{value:'tiered',label:'Ranked and unranked places'}],initial.allocation_order||'weighted'),
+    'Both options follow Allocation order before scoring. The second option also prioritises fill for unranked places before scoring.');
   fillOrder.wrap.classList.add('auto-wide');  // its choices are long (C-09)
   const overtime=hint(field('Avoid overtime weight','number',initial.overtime_penalty,{required:true,min:1,max:MAX_SCORE_INPUT,step:1}),'Higher makes permitted overtime less attractive.');
   const weights=nums(WEIGHTS,s.weights,0,MAX_SCORE_INPUT,1,' weight');

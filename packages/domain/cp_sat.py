@@ -515,7 +515,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                  or keep_assignment(data, s, p)]} for s in data['shifts']]}
     keep_all = all(s['participants'] == kept['participants'] for s, kept in zip(data['shifts'], protected['shifts']))
     fillable = {'COVERAGE_GAP', 'CAPABILITY_GAP', 'DISTINCT_PERSON_GAP', 'SCOPED_COVERAGE_GAP', 'QUOTA_BELOW_MINIMUM',
-                'SUPERVISION_PAIRING', 'SUPERVISION_GAP', 'LEAD_GAP'}
+                'SUPERVISION_PAIRING', 'SUPERVISION_GAP', 'LEAD_GAP', 'ALLOCATION_ORDER'}
     tolerated, gap_before = set(), {}
     in_scope, issues_where, kept_finding = _proposal_checks(data, selected, tolerated, gap_before, editable=editable)
     validation_started = time.monotonic()
@@ -936,6 +936,31 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         return counts
 
     strict_constraints = set()
+    from .fill_priority import mandatory_order_groups
+    for tiers in mandatory_order_groups({**data, '_check_budget': control.check}, shifts, focus):
+        complete = None
+        for index, rows in enumerate(tiers):
+            tier_complete = [] if complete is None else [complete]
+            for row in rows:
+                occupants = [(row.shift_id, pid) for pid in present_at(
+                    shift_lookup[row.shift_id], row.start, row.end) if pid in row.people]
+                if complete is not None:
+                    movable = [choices[key] for key in occupants if key in decisions]
+                    if movable:
+                        fixed = len(occupants) - len(movable)
+                        name = policy_name(row.policy, data=data, session_ids=[row.shift_id], start=row.start, end=row.end)
+                        constraint = model.add(sum(movable) <= max(0, row.minimum - fixed))
+                        constraint.only_enforce_if(complete.Not()).with_name(name)
+                        strict_constraints.add(constraint.index)
+                if index + 1 < len(tiers):
+                    total = sum(choices[key] for key in occupants if key[1] in row.available)
+                    filled = model.new_bool_var('ordered_place_filled')
+                    model.add(total >= row.required).only_enforce_if(filled)
+                    model.add(total < row.required).only_enforce_if(filled.Not())
+                    tier_complete.append(filled)
+            if index + 1 < len(tiers):
+                complete = model.new_bool_var('earlier_places_filled')
+                model.add_min_equality(complete, tier_complete)
 
     def limit(expression, bound, policy, capacity, minutes, kept_gap=False, editable_cover=False, subject=None,
               people=(), sessions=(), start=None, end=None, record_objective=True):
@@ -1177,8 +1202,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             caps, named = interval_caps, named or interval_named
         return trainees, caps or {}, named
 
-    from .fill_priority import FillPriority
-    fill_priority = FillPriority(model, data, choices, {s['id']: s for s in shifts}, options.allocation_order == 'tiered')
+    from .fill_priority import FillPriority, allocation_order_rules, allocation_tier
+    order_rules = allocation_order_rules(data['policies']) if generating else []
+    ranks = {}
+    if order_rules:
+        shifts_by_id = {s['id']: s for s in shifts}
+        for sid, pid in sorted(choices):
+            control.check()
+            ranks[sid, pid] = allocation_tier(data, shifts_by_id[sid], pid, rules=order_rules)
+    fill_priority = FillPriority(model, ranks, include_unranked=options.allocation_order == 'tiered')
     cover_triggers = {}
     pooled_cover_cells = {}
 

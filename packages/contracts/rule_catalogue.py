@@ -303,6 +303,10 @@ _V2_SAME = ('team_leads', 'people_per_session', 'supervision', 'days_in_a_row', 
             'weekend_shape', 'shift_order', 'rest_after_series', 'travel_between_places', 'together_apart',
             'companion_cover', 'allocation_order', 'preferences', 'fair_share')
 _V2_ENTRIES = {id: deepcopy(CATALOGUE_BY_ID[id]) for id in _V2_SAME}
+_V2_ENTRIES['allocation_order'].update(
+    description='Which sessions are filled first. Mandatory places are filled in order within each week and place.',
+    levels=list(LEVELS))
+_V2_ENTRIES['allocation_order']['numbers']['session_priority'][0]['advisory'] = False
 _V2_ENTRIES['spread_evenly'] = _entry(
     'spread_evenly', 'staffing', 'Spread evenly',
     'Distribute selected members evenly across supported holders within a bounded period.', None,

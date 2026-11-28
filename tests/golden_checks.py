@@ -262,6 +262,102 @@ def check_allocation_cover(data, ids, spec):
             'bindings': {'balance': len(bound)}}
 
 
+def check_allocation_order(data, ids, spec):
+    from packages.domain.generation import generate as greedy
+    from packages.domain.score import schedule_score
+
+    expected = spec['expect']
+    invariance = expected['invariance']
+    sid = ids['duty']
+    gapped = disabled(data, ids['middle'])
+    dense = copy.deepcopy(gapped)
+    dense_places = {ids[key]: rank for key, rank in invariance['dense_places'].items()}
+    for policy in dense['policies']:
+        if policy['id'] in dense_places:
+            policy['definition']['rule']['session_priority'] = dense_places[policy['id']]
+    counterfactual = disabled(gapped, ids['first'])
+    with_order = ids[invariance['with_order']]
+    without_first = ids[expected['counterfactual']['without_first']]
+
+    def preference(rota, pid):
+        trial = copy.deepcopy(rota)
+        place(trial, sid, [pid])
+        return schedule_score(trial, evaluate(trial))['components']['preferences']['value']
+
+    for pid in (with_order, without_first):
+        assert preference(data, pid) == preference(gapped, pid) == preference(dense, pid)
+    assert preference(gapped, without_first) > preference(gapped, with_order)
+
+    bindings = 0
+    for mode in ('weighted', 'tiered'):
+        for rota, person in ((data, with_order), (gapped, with_order),
+                             (dense, with_order), (counterfactual, without_first)):
+            trial = {**rota, 'generation_options': {**rota['generation_options'], 'allocation_order': mode}}
+            results = [greedy(trial, 5, deterministic=True),
+                       *(solve(trial, seed) for seed in expected['seed_robustness']['seeds'])]
+            for result in results:
+                candidate = feasible(trial, result)
+                assert [p['person_id'] for p in shift(candidate, sid)['participants']] == [person], (mode, result)
+                if person == without_first:
+                    bindings += 1
+    return {'assertions': {'invariance', 'counterfactual', 'seed_robustness'}, 'bindings': {'first': bindings}}
+
+
+def check_mandatory_order(data, ids, spec):
+    from packages.domain.generation import generate as greedy
+
+    expected = spec['expect']
+    witness = expected['validator']
+    with_exception = copy.deepcopy(data)
+    with_exception['availability'] = [row for row in with_exception['availability'] if row['id'] != ids['leave']]
+    place(with_exception, ids['reserved'], [{'person_id': ids['person'], 'fixed': True}])
+    strict = copy.deepcopy(with_exception)
+    no_available_earlier = copy.deepcopy(data)
+    for rota in (strict, no_available_earlier):
+        order = next(p for p in rota['policies'] if p['id'] == ids['order'])
+        order['definition']['rule']['lines'] = order['definition']['rule']['lines'][:2]
+
+    def order_findings(rota):
+        return [f for f in finding_observations(evaluate(rota)) if f['code'] == witness['code']]
+
+    assigned_later = copy.deepcopy(strict)
+    early, late = ids[witness['earlier']], ids[witness['later']]
+    place(assigned_later, ids['required_later'], [ids['person']])
+    assert not order_findings(assigned_later)
+    place(assigned_later, late, [ids['person']])
+    [breach] = order_findings(assigned_later)
+    assert (breach['severity'], breach['rule_id'], breach['shift_id']) == ('error', ids['order'], late)
+    assert breach['detail']['earlier_shift_id'] == early
+    place(assigned_later, early, [ids['person']])
+    assert not order_findings(assigned_later)
+
+    observed = {}
+    seeds = expected['seed_robustness']['seeds']
+    for key, rota in (('strict', strict), ('with_exception', with_exception),
+                      ('no_available_earlier', no_available_earlier)):
+        results = [greedy(rota, 5, deterministic=True), *(solve(rota, seed) for seed in seeds)]
+        for result in results:
+            feasible(rota, result)
+            assigned = {row['shift_id'] for row in result['additions'] if row['participant']['person_id'] == ids['person']}
+            assert assigned == {ids[name] for name in expected['counterfactual'][key]}, (key, result)
+            assert ids['required_later'] in assigned and early not in assigned
+            observed[key] = assigned
+
+    # The earlier rota is outside the editable focus but keeps its existing late assignment.
+    boundary = copy.deepcopy(strict)
+    place(boundary, late, [ids['person']])
+    focus = ids['other_week']
+    saturday = datetime.fromisoformat(shift(boundary, early)['start']) + timedelta(days=5)
+    retime(boundary, focus, saturday.isoformat())
+    boundary['focus_ids'] = [focus]
+    assert not order_findings(boundary)
+    result = solve(boundary, seeds[0])
+    feasible(boundary, result)
+    assert result['additions'] == result['removals'] == []
+    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'},
+            'bindings': {'order': len(observed['with_exception'] - observed['strict'])}}
+
+
 def check_weekly_limit(data, ids, spec):
     expected = spec['expect']
     sid, first, second, rid = ids['s2'], ids['p0'], ids['p1'], ids['workload']
@@ -311,5 +407,7 @@ def check_scenario(data, ids, spec):
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
+            'A-ALLOCATION-ORDER-01': check_allocation_order,
+            'A-MANDATORY-ORDER-01': check_mandatory_order,
             'A-WEEKLY-LIMIT-01': check_weekly_limit,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

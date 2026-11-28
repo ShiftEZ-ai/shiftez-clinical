@@ -216,23 +216,28 @@ def test_people_without_positive_opportunities_have_one_active_loss_per_person(p
 @pytest.mark.parametrize('chosen,lower_priority,expected', [('high', 0, 0), ('low', 0, 1),
                                                            ('high', 20, 0), ('low', 20, 0.25)])
 def test_positive_session_priority_scores_the_cross_session_opportunity(chosen, lower_priority, expected):
-    rules = [_rule('high', {'kind': 'allocation_preference', 'session_priority': 40},
+    # Personal priority still scores the opportunity across sessions. Renumbering its order places has no effect.
+    rules = [_rule('high', {'kind': 'allocation_preference', 'priority': 40, 'session_priority': 40},
                    scope={'assignment_type_id': 'u'})]
     if lower_priority:
-        rules.append(_rule('low', {'kind': 'allocation_preference', 'session_priority': lower_priority},
+        rules.append(_rule('low', {'kind': 'allocation_preference', 'priority': lower_priority, 'session_priority': lower_priority},
                            scope={'assignment_type_id': 't'}))
     snapshot = _snapshot([shift('low', 4, ['a'] if chosen == 'low' else []),
                           shift('high', 4, ['a'] if chosen == 'high' else [], 'u')], rules)
     snapshot['people'] = {'a': snapshot['people']['a']}
     loss, _ = _components(snapshot)
     assert loss == expected
+    for policy, rank in zip(rules, (2, 1)):
+        policy['definition']['rule']['session_priority'] = rank
+    renumbered_loss, _ = _components(snapshot)
+    assert renumbered_loss == expected
 
 
 def test_positive_priority_baseline_ignores_history_outside_the_focus():
     snapshot = _snapshot([shift('focus', 4, ['a']), shift('history', 3, [], 'u')],
-                         [_rule('focus', {'kind': 'allocation_preference', 'session_priority': 40},
+                         [_rule('focus', {'kind': 'allocation_preference', 'priority': 40},
                                 scope={'assignment_type_id': 't'}),
-                          _rule('history', {'kind': 'allocation_preference', 'session_priority': 100},
+                          _rule('history', {'kind': 'allocation_preference', 'priority': 100},
                                 scope={'assignment_type_id': 'u'})])
     snapshot['focus_ids'] = ['focus']
     loss, _ = _components(snapshot, fixed={'history'})
@@ -255,7 +260,8 @@ def test_scarce_cover_chooses_the_higher_priority_overlapping_session(h):
     assert result['optimality_proven'] and result['weighted_status'] == 'OPTIMAL'
     preferred = next(session for session in snapshot['shifts'] if session['service_ids'] == [h.seed['services'][1]])
     assert [(addition['shift_id'], addition['participant']['person_id']) for addition in result['additions']] == [(preferred['id'], person)]
-    assert result['compiled_component_values']['preferences'] == result['objective_components']['preferences']['value'] == 1
+    assert result['compiled_component_values'].get('preferences') is result['objective_components']['preferences']['value'] is None
+    assert [row['value'] for row in result['objectives'] if row['name'] == 'fill:desired:40'] == [0]
 
 
 @pytest.mark.parametrize('people,expected', [(['a', 'a'], 0.5), (['a', 'b'], 0)])

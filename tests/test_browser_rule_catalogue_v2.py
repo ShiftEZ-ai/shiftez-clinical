@@ -84,6 +84,33 @@ def simple_legacy(h):
     h.policy({'kind': 'min_rest', 'hours': 11})
 
 
+def test_allocation_order_editor_offers_mandatory_and_keeps_it_in_the_proposal(browser, live_server, h):
+    flag(h, legacy=False)
+    rule = v2_rule(h, 'allocation_order', [line({'session_priority': {'value': 10, 'level': 'medium'}})])
+    first = rule['definition']['rule']['lines'][0]['id']
+    context, page = themed(browser, live_server, 'coordinator')
+    try:
+        navigate(page, f'rules/allocation_order/{first}')
+        panel = page.locator('.rc-line-panel')
+        panel.get_by_role('button', name='Session priority: advisory · medium', exact=True).click()
+        page.get_by_role('menu', name='Session priority strength').get_by_role(
+            'menuitemradio', name='Mandatory', exact=True).click()
+        expect(panel.get_by_role('button', name='Session priority: mandatory', exact=True)).to_be_visible()
+        panel.get_by_role('button', name='Keep change', exact=True).click()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
+        page.locator('.topbar').get_by_role('button', name='Propose 1 change', exact=True).click()
+        reason(page, 'Require the allocation order', 'Propose')
+        expect(page.locator('.rc-waiting')).to_contain_text('waiting for approval')
+        page.reload()
+        expect(page.locator('.rc-waiting')).to_contain_text('waiting for approval')
+        proposals = h.get('coordinator', '/api/policies?status=proposed')['policies']
+        [saved] = [row for proposal in proposals for row in proposal['definition']['rule'].get('lines', [])
+                   if row['id'] == first]
+        assert saved['numbers']['session_priority'] == {'value': 10, 'level': 'mandatory'}
+    finally:
+        context.close()
+
+
 def reason(page, text, label):
     dialog = page.get_by_role('dialog').filter(has=page.get_by_label('Reason', exact=True))
     dialog.get_by_label('Reason', exact=True).fill(text)

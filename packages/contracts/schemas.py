@@ -4133,8 +4133,13 @@ class PolicyDefinition(Schema):
             raise ValueError(SAFETY_MANDATORY_REASON)
         if isinstance(self.rule, SHAPE_RULES) and (self.severity != 'advisory' or self.exception_allowed):
             raise ValueError('Run, days-off, weekend, succession and together/apart rules are advisory preferences')
-        if isinstance(self.rule, (AllocationPreference, AllocationOvertime)) and (self.severity != "advisory" or self.exception_allowed):
-            raise ValueError("Allocation settings are advisory and never grant safety exceptions")
+        if isinstance(self.rule, (AllocationPreference, AllocationOvertime)):
+            ordered_line = (isinstance(self.rule, AllocationPreference)
+                            and context.get('resolved_catalogue_line') and self.rule.session_priority != 0)
+            if self.exception_allowed or self.severity == 'mandatory' and not ordered_line:
+                raise ValueError('Only a ranked Allocation order line may be mandatory')
+            if self.severity == 'mandatory' and (self.rule.supervisor_ids or self.rule.supervisor_relationship == 'mentor'):
+                raise ValueError('A mandatory Allocation order line ranks sessions independently of the supervisor')
         if isinstance(self.rule, BalanceGoal):
             if self.severity != 'advisory' or self.exception_allowed:
                 raise ValueError('A balance goal is advisory, with no exceptions')

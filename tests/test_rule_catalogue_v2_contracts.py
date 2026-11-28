@@ -278,6 +278,20 @@ def test_allocation_fallback_priority_uses_primitive_bounds_and_type(bad):
         s.CatalogueRule.model_validate(rule(raw, id='preferences'))
 
 
+def test_mandatory_level_is_available_only_for_the_allocation_place():
+    place = line(numbers={'session_priority': {'value': 10, 'level': 'mandatory'}})
+    model = s.CatalogueRule.model_validate(rule(place, id='allocation_order'))
+    assert model.lines[0].numbers['session_priority'].level == 'mandatory'
+    with pytest.raises(ValidationError, match='cannot be mandatory'):
+        s.CatalogueRule.model_validate(rule(place, id='preferences'))
+    with pytest.raises(ValidationError, match='cannot be mandatory'):
+        s.CatalogueRule.model_validate(rule(
+            line(numbers={'priority': {'value': 10, 'level': 'mandatory'}}), id='allocation_order'))
+    with pytest.raises(ValidationError, match='Only a ranked Allocation order line'):
+        s.PolicyDefinition.model_validate({'rule': {'kind': 'allocation_preference', 'priority': 0, 'session_priority': 10},
+                                           'severity': 'mandatory'})
+
+
 def test_every_folded_v1_id_redirects_to_an_existing_v2_rule():
     """Old #rules/<v1 id> links follow replacement_id (rule_catalogue.ts folded()); each must name a v2 rule or None."""
     folded = {old: new for old, new in CATALOGUE_MAPPING.items() if old not in V2_CATALOGUE_BY_ID}
