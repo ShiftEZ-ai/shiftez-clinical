@@ -126,7 +126,7 @@ contract in DESIGN.md.
 
 ## Releases
 - Versions are `vX.Y.Z`; release candidates are `vX.Y.Z-rc.N`, tested on staging.
-- Build once: a release tag promotes the exact tested image. The published build contains public code only.
+- Version tags build, scan and publish the image for their exact commit. The published build contains public code only.
 - A release carries exactly a tree already accepted on `main`, reruns the full checks with no allowance for failed or
   skipped tests, and is then tagged.
 - Before creating either tag, run `python scripts/check_release_version.py TAG COMMIT` from the repository root and require it to pass.
@@ -150,9 +150,9 @@ contract in DESIGN.md.
 - A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
   No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
   Nothing in the repository names or reveals where the product runs.
-- Main images published to the public package carry a provenance attestation signed by `image.yml` on
-  `refs/heads/main`. The dev slot verifies it offline and pins the signer workflow and ref. Staging and production
-  images do not carry this attestation yet.
+- Main publishes the same scanned build to the primary and public packages. The public package digest carries a
+  provenance attestation signed by `image.yml` on `refs/heads/main`. The dev slot verifies it offline and pins the
+  signer workflow and ref.
 - The operator machine pushes the image to each server over a private network by exact digest; the server verifies
   it by image ID and revision label and reports nothing back. Every deploy is recorded. Deploy definitions and host
   facts live outside this repository.
@@ -163,8 +163,8 @@ contract in DESIGN.md.
 - **Gated releases:** a release path that runs through a checking gate (such as the dev relay gate) is reviewed once
   and gets one Portfolio Lead GO; after that, every change that passes the gate releases automatically, with an audit
   row. A new kind of change needs a new GO. Production keeps the owner's yes for every deploy.
-- For a release candidate, staging runs the `main`-built image digest of the tagged commit; production takes exactly
-  the digest staging ran, never a tag rebuild. Both digests are recorded side by side.
+- Staging runs the scanned image digest built for the candidate tag. Production takes exactly the digest staging
+  qualified for the same commit. Record the staged and promoted digests.
 - **Production approval:** the owner approves production deployments only. Delivery puts a "Deploy vX.Y.Z to
   production" item in Waiting on owner on the board, with the test report; the owner's yes is the approval and
   nothing else is.
@@ -180,8 +180,8 @@ contract in DESIGN.md.
 
 ## Deviations
 
-- **One artifact per commit.** Main builds a second image for the public package with Buildx provenance disabled.
-  The private build's embedded provenance contains non-public build metadata. Review on 2026-12-23.
+- **Signed provenance for version tags.** Version-tag publication ends after digest verification. Follow the
+  tag-attestation work in issue 1339. Review on 2026-12-23.
 
 ## Hotfixes
 - A hotfix is its own board item. It is cut from the deployed tag, tested, deployed with the owner's yes like any
@@ -200,11 +200,12 @@ contract in DESIGN.md.
   yes.
 - Every free GitHub security feature is on and stays on; nothing paid is enabled without the owner's yes.
 - Secrets never enter the repository, its variables or its environments.
-- The public image build scans the config and the files in all added layers with the privacy check's deny inputs
-  before publishing. It verifies pinned base layer digests and hashes from installed wheel RECORDs. A finding in
-  package-manager metadata is allowed when its line is byte-identical to a line at the same path in the verified
-  base layers. The exception table binds historical wheel bytecode findings to a path, class and SHA-256.
-  New public builds disable wheel bytecode generation. Any other finding blocks the public push.
+- Every main and version-tag build scans one image archive before loading, tagging or pushing it. The scan uses
+  the Static checks public patterns on the config and all added layers and verifies the pinned base layer digests
+  and installed wheel RECORD hashes. Package metadata findings are allowed only on byte-identical lines at the
+  same path in verified base layers.
+  The exception table binds historical wheel bytecode findings to a path, class and SHA-256. Image builds disable
+  wheel bytecode generation. An unverified input or any other finding blocks publication.
 - Security reports go through GitHub's private vulnerability reporting.
 
 ## Speed and quality gates
