@@ -50,7 +50,8 @@ export type BulkRun={
   /** How the list names a record (its row's first column), for Preview and Results. */labelOf?:(id:string)=>string;
   /** The list's row of a record (as read from the server): the Change form's "now" values and Group by person /
    *  clinic / tag in Preview and Results. */rowOf?:(id:string)=>Record<string,unknown>|undefined;
-  /** What the toast says once applied ({n}: how many changed), instead of "N records changed". */message?:string};
+  /** What the toast says once applied ({n}: how many changed), instead of "N records changed". */message?:string;
+  /** Always opens Preview, however small and clean the change (rows added from a paste are checked before they are saved). */review?:boolean};
 
 // ---- Words and tones (one each) ----
 const PREVIEW:Record<Outcome,[string,Tone]>={ready:['Ready','draft'],fixed:['Fixed','ok'],problem:['Problem','err'],waiting:['Waiting for approval','warn'],skipped:['Skipped','neutral'],unchanged:['No change','neutral'],
@@ -220,7 +221,7 @@ const rowsOf=(p:Preview|null)=>(p?.items||[]).map(r=>r.result==='ready'&&r.issue
 const counted=(rows:Row[])=>{const c={ready:0,unchanged:0,problem:0,waiting:0,fixed:0,skipped:0,changed:0,refused:0,staged:0} as Record<Outcome,number>;for(const r of rows)c[r.result]++;return c;};
 async function light(run:BulkRun,p:Preview,destructive=!!run.destructive){
   const rows=rowsOf(p),c=counted(rows),{bulk_direct_max}=await settings();
-  return !c.problem&&!c.waiting&&!c.skipped&&c.ready>0&&rows.length<=bulk_direct_max&&!destructive&&!run.governed;
+  return !c.problem&&!c.waiting&&!c.skipped&&c.ready>0&&rows.length<=bulk_direct_max&&!destructive&&!run.governed&&!run.review;
 }
 /** Apply and tell: the toast says what happened, with the server's one Undo (claimed by notify). */
 /** While a rule proposal is being sent, the page's rule editors wait: an edit made then would be dropped when the new
