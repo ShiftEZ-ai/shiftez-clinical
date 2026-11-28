@@ -264,6 +264,8 @@ def _line_settings(entry):
     for kind in entry_kinds(entry):
         slots = [s for ss in entry['numbers'].values() for s in ss if s['kind'] == kind]
         taken = {s['field'] for s in slots} | {k for s in slots for k in s['fixed']}
+        if kind == 'allocation_preference' and (entry['id'], entry.get('catalogue_version')) != ('allocation_order', 2):
+            taken.add('first_trainee_places')
         out[kind] = [f for f in _MODELS[kind].model_fields if f != 'kind' and f not in taken]
     return out
 
@@ -303,6 +305,9 @@ _V2_SAME = ('team_leads', 'people_per_session', 'supervision', 'days_in_a_row', 
             'weekend_shape', 'shift_order', 'rest_after_series', 'travel_between_places', 'together_apart',
             'companion_cover', 'allocation_order', 'preferences', 'fair_share')
 _V2_ENTRIES = {id: deepcopy(CATALOGUE_BY_ID[id]) for id in _V2_SAME}
+_V2_ENTRIES['allocation_order']['setting_labels'] = {'first_trainee_places': 'Fill first trainee places'}
+_V2_ENTRIES['allocation_order']['setting_help'] = {
+    'first_trainee_places': 'At the same session rank, fill the first trainee place per supervisor before filling a second.'}
 _V2_ENTRIES['spread_evenly'] = _entry(
     'spread_evenly', 'staffing', 'Spread evenly',
     'Distribute selected members evenly across supported holders within a bounded period.', None,

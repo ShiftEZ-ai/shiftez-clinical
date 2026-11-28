@@ -188,7 +188,8 @@ def _pooled_objective_fixture(severity, *, ordered_fill=False, triggered=False):
     return data
 
 
-# Pre-dedup 57fddb5f0 receipts: one worker, deterministic seed 1, three pooled anchors competing with a target.
+# One worker, deterministic seed 1, three pooled anchors competing with a target.
+# The advisory receipt keeps the exact fill loss while the weighted score excludes the order ranks.
 @pytest.mark.parametrize('severity,diagnostic,expected', [
     ('mandatory', True, {
         'status': 'candidate_with_gaps', 'solver_status': 'OPTIMAL', 'weighted_status': 'OPTIMAL',
@@ -197,7 +198,7 @@ def _pooled_objective_fixture(severity, *, ordered_fill=False, triggered=False):
     }),
     ('advisory', False, {
         'status': 'candidate_feasible', 'solver_status': 'OPTIMAL', 'weighted_status': 'OPTIMAL',
-        'objectives': [('coverage', 0), ('desired_coverage', 0), ('fill:desired:5', 1500), ('weighted', 237036803)],
+        'objectives': [('coverage', 0), ('desired_coverage', 0), ('fill:desired:5', 1500), ('weighted', 234721988)],
         'additions': ['pooled-a', 'pooled-b', 'target'],
     }),
 ], ids=['mandatory-diagnostic', 'advisory'])

@@ -1103,6 +1103,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         p['definition']['rule']['kind'] == 'max_duties' and p['definition']['rule'].get('group_by') == 'supervisor'
         or p['definition']['rule']['kind'] == 'allocation_preference' and (
             p['definition']['rule'].get('supervisor_ids') or p['definition']['rule'].get('supervisor_relationship') == 'mentor'
+            or generating and p['definition']['rule'].get('first_trainee_places')
             or p['definition']['rule'].get('balance_by') in {'supervisor', 'supervisor_group'})
         or supervised_goal(p)
         for p in data['policies'])
@@ -1177,8 +1178,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             caps, named = interval_caps, named or interval_named
         return trainees, caps or {}, named
 
-    from .fill_priority import FillPriority
-    fill_priority = FillPriority(model, data, choices, {s['id']: s for s in shifts}, options.allocation_order == 'tiered')
+    from .fill_priority import FillPriority, allocation_order_rules, allocation_tier, first_trainee_place_objectives
+    order_rules = allocation_order_rules(data['policies']) if generating else []
+    ranks = {}
+    if order_rules:
+        shifts_by_id = {s['id']: s for s in shifts}
+        for sid, pid in sorted(choices):
+            control.check()
+            ranks[sid, pid] = allocation_tier(data, shifts_by_id[sid], pid, rules=order_rules)
+    fill_priority = FillPriority(model, ranks, include_unranked=options.allocation_order == 'tiered')
     cover_triggers = {}
     pooled_cover_cells = {}
 
@@ -1230,6 +1238,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             p['definition']['rule']['kind'] == 'max_duties' and p['definition']['rule'].get('group_by') == 'supervisor'
             or p['definition']['rule']['kind'] == 'allocation_preference' and (
                 p['definition']['rule'].get('supervisor_ids') or p['definition']['rule'].get('supervisor_relationship') == 'mentor'
+                or generating and p['definition']['rule'].get('first_trainee_places')
                 or p['definition']['rule'].get('balance_by') in {'supervisor', 'supervisor_group'}) or supervised_goal(p))
             and any(policy_applies(data, p, pid, shift, a, b)
                     for pid in by_shift[sid] for a, b in zip(sorted(bounds), sorted(bounds)[1:]))
@@ -1686,6 +1695,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         # Independent requests may require extra places. Find the smallest roster
         # that meets those requests before sharing the work by weighted score.
         tier_list.append(('staffing', staffing_choices, 0))
+    tier_list.extend(first_trainee_place_objectives(
+        model, data, shift_lookup, choices, pairings, editable, order_rules, control.check))
     tier_list.extend(weighted_prefix)
     tier_list.append(('weighted', weighted, 0))
     result['optimality_boundary'] = 'Coverage first, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'

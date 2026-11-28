@@ -278,6 +278,25 @@ def test_allocation_fallback_priority_uses_primitive_bounds_and_type(bad):
         s.CatalogueRule.model_validate(rule(raw, id='preferences'))
 
 
+def test_first_trainee_places_belong_to_allocation_order():
+    place = line(numbers={'session_priority': {'value': 10, 'level': 'medium'}},
+                 settings={'allocation_preference': {'first_trainee_places': True}})
+    saved = s.CatalogueRule.model_validate(rule(place, id='allocation_order')).lines[0]
+    assert saved.settings['allocation_preference']['first_trainee_places'] is True
+    from packages.domain.rule_lines import expand
+    both = s.CatalogueRule.model_validate(rule(
+        {**place, 'numbers': {**place['numbers'], 'priority': {'value': 5, 'level': 'high'}}},
+        id='allocation_order'))
+    copies = expand({'id': uid(), 'definition': {'rule': both.model_dump(mode='json')}})
+    assert {copy['template_line']['slot']: copy['definition']['rule']['first_trainee_places']
+            for copy in copies} == {'priority': False, 'session_priority': True}
+    with pytest.raises(ValidationError):
+        s.CatalogueRule.model_validate(rule(place, id='preferences'))
+    with pytest.raises(ValidationError, match='require a session rank'):
+        s.AllocationPreference.model_validate({'kind': 'allocation_preference', 'priority': 0,
+                                               'first_trainee_places': True})
+
+
 def test_every_folded_v1_id_redirects_to_an_existing_v2_rule():
     """Old #rules/<v1 id> links follow replacement_id (rule_catalogue.ts folded()); each must name a v2 rule or None."""
     folded = {old: new for old, new in CATALOGUE_MAPPING.items() if old not in V2_CATALOGUE_BY_ID}

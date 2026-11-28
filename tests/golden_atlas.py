@@ -64,6 +64,8 @@ def check_spread(data, ids, spec):
     trainees = [ids[name] for name in observed['trainees']]
     duties = [ids[name] for name in observed['duties']]
     rule_id = ids['spread']
+    first_places = disabled(data, rule_id)
+    data = disabled(data, ids['order'])
     rule = policy(data, rule_id)['definition']['rule']
     assert (rule['holder'], rule['within'], rule['mode'], rule['maximum_gap']) == (
         observed['holder'], observed['within'], observed['mode'], observed['maximum_gap'])
@@ -113,5 +115,23 @@ def check_spread(data, ids, spec):
             assert loads(off, duty_id) == observed['skewed']
             assert {p['supervisor_person_id'] for p in shift(off, duty_id)['participants']
                     if p['participation'] == 'trainee'} == {supervisor}
-    return {'assertions': {'session_loads', 'permitted_gap', 'seed_robustness'},
-            'bindings': {'spread': len({duty_id for duty_id, _, _ in findings})}}
+    from packages.domain.generation import generate as greedy
+    for duty_id in duties:
+        place(first_places, duty_id, [{'person_id': pid, 'participation': 'supervisor', 'fixed': True}
+                                      for pid in supervisors])
+    without_order = disabled(first_places, ids['order'])
+    order = expected['first_trainee_places']
+    bound = set()
+    for mode in ('weighted', 'tiered'):
+        for variant, original in (('with_order', first_places), ('without_order', without_order)):
+            trial = {**original, 'generation_options': {**original['generation_options'], 'allocation_order': mode}}
+            results = [greedy(trial, 5, deterministic=True),
+                       *(solve(trial, seed) for seed in expected['seed_robustness']['seeds'])]
+            for result in results:
+                candidate = feasible(trial, result)
+                for duty_id in duties:
+                    assert loads(candidate, duty_id) == order[variant], (mode, variant, result)
+                    if variant == 'with_order':
+                        bound.add(duty_id)
+    return {'assertions': {'session_loads', 'permitted_gap', 'seed_robustness', 'first_trainee_places'},
+            'bindings': {'spread': len({duty_id for duty_id, _, _ in findings}), 'order': len(bound)}}

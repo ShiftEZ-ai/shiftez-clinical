@@ -3181,6 +3181,7 @@ class AllocationPreference(Schema):
     kind: Literal["allocation_preference"]
     priority: int = Field(ge=-100, le=MAX_SCORE_INPUT, strict=True)
     session_priority: int = Field(default=0, ge=-100, le=MAX_SCORE_INPUT, strict=True)
+    first_trainee_places: bool = Field(default=False, strict=True)
     overtime_priority: int = Field(default=0, ge=-100, le=MAX_SCORE_INPUT, strict=True)
     supervisor_relationship: Literal['any', 'mentor'] = 'any'
     supervisor_ids: list[ID] = Field(default_factory=list, max_length=100)
@@ -3193,6 +3194,8 @@ class AllocationPreference(Schema):
 
     @model_validator(mode='after')
     def selected_supervisor_group(self):
+        if self.first_trainee_places and not self.session_priority:
+            raise ValueError('First trainee places require a session rank')
         if self.balance_by == 'supervisor_group' and not self.supervisor_ids:
             raise ValueError('Select supervisors for grouped exposure balancing')
         return self
@@ -4135,6 +4138,9 @@ class PolicyDefinition(Schema):
             raise ValueError('Run, days-off, weekend, succession and together/apart rules are advisory preferences')
         if isinstance(self.rule, (AllocationPreference, AllocationOvertime)) and (self.severity != "advisory" or self.exception_allowed):
             raise ValueError("Allocation settings are advisory and never grant safety exceptions")
+        if (isinstance(self.rule, AllocationPreference) and self.rule.first_trainee_places
+                and not context.get('resolved_catalogue_line')):
+            raise ValueError('Set first trainee places on an Allocation order line')
         if isinstance(self.rule, BalanceGoal):
             if self.severity != 'advisory' or self.exception_allowed:
                 raise ValueError('A balance goal is advisory, with no exceptions')

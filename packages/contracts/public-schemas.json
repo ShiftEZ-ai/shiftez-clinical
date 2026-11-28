@@ -4081,6 +4081,11 @@
             "title": "Session Priority",
             "type": "integer"
           },
+          "first_trainee_places": {
+            "default": false,
+            "title": "First Trainee Places",
+            "type": "boolean"
+          },
           "overtime_priority": {
             "default": 0,
             "maximum": 1000000,
@@ -17294,6 +17299,11 @@
             "minimum": -100,
             "title": "Session Priority",
             "type": "integer"
+          },
+          "first_trainee_places": {
+            "default": false,
+            "title": "First Trainee Places",
+            "type": "boolean"
           },
           "overtime_priority": {
             "default": 0,

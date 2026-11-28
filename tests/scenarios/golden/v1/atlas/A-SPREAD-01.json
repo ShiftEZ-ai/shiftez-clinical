@@ -1,9 +1,9 @@
 {
   "id": "A-SPREAD-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Spread trainee pairings across session supervisors",
   "intent": "Opposite imbalances in consecutive sessions do not cancel each other.",
-  "pressure": "Pairing preferences favor opposite supervisors and the mandatory rule must still level both sessions.",
+  "pressure": "Pairing preferences favor opposite supervisors. Both the mandatory spread rule and the first-place order are checked under that pressure.",
   "covers": {
     "kind.spread_evenly": [
       "session_loads",
@@ -29,7 +29,8 @@
       "session_loads",
       "permitted_gap",
       "seed_robustness"
-    ]
+    ],
+    "kind.allocation_preference.first_trainee_places": ["first_trainee_places"]
   },
   "commands": [
     {"key": "rank", "role": "admin", "kind": "catalogue.create",
@@ -103,7 +104,16 @@
     {"key": "one", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
     {"key": "two", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
-     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}}
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}},
+    {"key": "order", "role": "coordinator", "kind": "rule.propose",
+     "payload": {"catalogue_id": "allocation_order", "catalogue_version": 2, "reason": "Synthetic scenario",
+      "lines": [{"id": "00000000-0000-4000-8000-000000009292", "starts_on": "2027-01-01",
+        "who": {"conditions": [{"field": "category_ids", "values": ["$trainee_rank"]}]},
+        "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$duty_type"]}]},
+        "numbers": {"session_priority": {"value": 10, "level": "medium"}},
+        "settings": {"allocation_preference": {"first_trainee_places": true}}}]}},
+    {"key": "order_active", "role": "approver", "kind": "policy.activate", "target": "$order", "revision": "$order.revision",
+     "payload": {"reason": "Independent synthetic approval", "acknowledge_unresolved": true}}
   ],
   "expect": {
     "seed_robustness": {
@@ -115,8 +125,10 @@
       "workers": 1
     },
     "binding_rules": [
-      "spread"
+      "spread",
+      "order"
     ],
+    "first_trainee_places": {"with_order": [1, 2], "without_order": [0, 3]},
     "permitted_gap": 3,
     "session_loads": {
       "holder": "supervisors",

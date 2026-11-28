@@ -93,6 +93,36 @@ def reason(page, text, label):
         confirm.click()
 
 
+def test_allocation_order_line_saves_the_first_trainee_places_setting(browser, live_server, h):
+    flag(h, legacy=False)
+    rule = v2_rule(h, 'allocation_order', [line({'session_priority': {'value': 10, 'level': 'medium'}})])
+    first = rule['definition']['rule']['lines'][0]['id']
+    context, page = themed(browser, live_server, 'coordinator')
+    try:
+        navigate(page, f'rules/allocation_order/{first}')
+        panel = page.locator('.rc-line-panel')
+        panel.get_by_role('button', name='Edit…', exact=True).click()
+        settings = page.get_by_role('dialog', name='Allocation order settings', exact=True)
+        control = settings.locator('.rc-line-setting').filter(has_text='Fill first trainee places')
+        control.get_by_role('radio', name='Own value', exact=True).click()
+        control.get_by_role('checkbox', name='Fill first trainee places', exact=True).check()
+        settings.get_by_role('button', name='Keep', exact=True).click()
+        expect(panel.locator('.rc-lp-settings')).to_contain_text('Fill first trainee places')
+        panel.get_by_role('button', name='Keep change', exact=True).click()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
+        page.locator('.topbar').get_by_role('button', name='Propose 1 change', exact=True).click()
+        reason(page, 'Spread the supervised places', 'Propose')
+        expect(page.locator('.rc-waiting')).to_contain_text('waiting for approval')
+        page.reload()
+        expect(page.locator('.rc-waiting')).to_contain_text('waiting for approval')
+        proposals = h.get('coordinator', '/api/policies?status=proposed')['policies']
+        [saved] = [row for proposal in proposals for row in proposal['definition']['rule'].get('lines', [])
+                   if row['id'] == first]
+        assert saved['settings']['allocation_preference']['first_trainee_places'] is True
+    finally:
+        context.close()
+
+
 def choose(page, scope, label, option):
     """Use the app's shared picker's keyboard entry point rather than select_option."""
     control = scope.get_by_label(label, exact=True)
