@@ -42,6 +42,8 @@ from .recurrence import inactive, with_series_state, series_candidate_allowed, s
 from .fill_priority import STAGE_ORDER, stage_label
 
 CHECKPOINT_INTERVAL_SECONDS = 60
+OBJECTIVE_BOUNDARY = 'Coverage first, then the score-weighted'
+DIAGNOSTIC_BOUNDARY = 'Coverage first, then the number and total depth of mandatory minimum shortfalls, then the score-weighted'
 
 
 def _coverage_floor_key(row):
@@ -608,7 +610,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     decisions = set()  # (sid, pid) whose assignment the search decides
     by_person, by_shift = defaultdict(list), defaultdict(list)
     # Coverage stays first; advisory instances feed the same normalized components as the score.
-    coverage, desired_coverage, diagnostic_minima, coverage_score_rows = [], [], [], []
+    coverage, desired_coverage, coverage_score_rows = [], [], []
+    diagnostic_minima, diagnostic_minimum_depth = [], []
     staffing_targets = [] if relative_fair_share else None
     staffing_choices = []
     staffing_limits = {}
@@ -635,12 +638,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         terms.append(term)
         return terms, term
 
-    def penalise(expression, policy, worst=1, bound=1, subject=None):
+    def penalise(expression, policy, worst=1, bound=1, subject=None, *, unit=1):
         if feasibility_only:
             return
         if policy['definition']['severity'] == 'mandatory':
-            # Keep diagnostic quota pressure independent of advisory score normalization.
-            return append_objective(diagnostic_minima, score_math.positive(expression))
+            diagnostic_minima.append(score_math.positive(expression))
+            # Convert each quota's integer scale back to common units before summing depths.
+            depth_bound = -(-bound // unit) * SCORE_SCALE
+            diagnostic_minimum_depth.append(score_math.ratio(expression, unit, depth_bound))
+            return
         subject = subject or policy.get('_score_person')
         key = rule_copy_key(policy), subject
         return append_objective(score_breaches[key], score_math.positive(expression))
@@ -1670,11 +1676,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             from math import isqrt
             result['weighted_loss_radix'] = isqrt(loss_scale // SCORE_SCALE)
     score_constraint_end = len(model.proto.constraints)
+    diagnostic_objectives = {'diagnostic_minima': diagnostic_minima, 'diagnostic_minimum_depth': diagnostic_minimum_depth} if diagnostic_minima else {}
     # Coverage is immutable first priority. Neither legacy order nor tolerance can move or relax it.
     stage_tiers = {
         STAGE_ORDER[0]: [('coverage', coverage, 0)],
-        STAGE_ORDER[1]: ([('diagnostic_minima', diagnostic_minima, 0)]
-                         if diagnostic_minima and diagnostic_proposal else []),
+        STAGE_ORDER[1]: ([(name, terms, 0) for name, terms in diagnostic_objectives.items()]
+                         if diagnostic_proposal else []),
         STAGE_ORDER[2]: [('desired_coverage', desired_coverage, 0)] if desired_coverage else [],
     }
     tier_list = [tier for stage in STAGE_ORDER for tier in stage_tiers[stage]]
@@ -1688,9 +1695,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         tier_list.append(('staffing', staffing_choices, 0))
     tier_list.extend(weighted_prefix)
     tier_list.append(('weighted', weighted, 0))
-    result['optimality_boundary'] = 'Coverage first, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
-    if diagnostic_minima and diagnostic_proposal:
-        result['optimality_boundary'] = 'Coverage first, then diagnostic mandatory minimum breaches, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
+    boundary = DIAGNOSTIC_BOUNDARY if diagnostic_objectives and diagnostic_proposal else OBJECTIVE_BOUNDARY
+    result['optimality_boundary'] = boundary + ' objective at one-millionth component resolution; full-candidate proof only.'
     if fill_priority.enabled:
         result['optimality_boundary'] += ' Configured fill-priority stages precede weighted quality.'
     if staffing_choices or capped:
@@ -1809,7 +1815,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         'scoring': scoring,
         'model': model,
         'diagnostic_domains': diagnostic_domains,
-        'diagnostic_minima': diagnostic_minima,
+        'diagnostic_objectives': diagnostic_objectives,
         'coverage_floor_rows': coverage_floor_rows,
     }
 
@@ -1821,19 +1827,17 @@ def _diagnostic_mode(prepared, enabled):
         domain.clear()
         domain.extend([0, maximum if enabled else 0])
     order, objectives = prepared['objective_order'], prepared['objectives']
-    if enabled and prepared['diagnostic_minima'] and 'diagnostic_minima' not in order:
-        order.insert(1, 'diagnostic_minima')
-        objectives.insert(1, prepared['diagnostic_minima'])
-    elif not enabled and 'diagnostic_minima' in order:
-        index = order.index('diagnostic_minima')
-        order.pop(index)
-        objectives.pop(index)
+    diagnostic_objectives = prepared['diagnostic_objectives']
+    if diagnostic_objectives:
+        index = order.index('coverage') + 1
+        end = index + len(diagnostic_objectives) if order[index] in diagnostic_objectives else index
+        order[index:end] = list(diagnostic_objectives) if enabled else []
+        objectives[index:end] = list(diagnostic_objectives.values()) if enabled else []
+        previous, current = (OBJECTIVE_BOUNDARY, DIAGNOSTIC_BOUNDARY) if enabled else (DIAGNOSTIC_BOUNDARY, OBJECTIVE_BOUNDARY)
+        prepared['result']['optimality_boundary'] = prepared['result']['optimality_boundary'].replace(previous, current)
     prepared['result']['diagnostic_proposal'] = enabled
     if enabled:
         prepared['result']['diagnostic_objective_order'] = list(order)
-        if prepared['diagnostic_minima']:
-            prepared['result']['optimality_boundary'] = prepared['result']['optimality_boundary'].replace(
-                'Coverage first, then the score-weighted', 'Coverage first, then diagnostic mandatory minimum breaches, then the score-weighted')
     else:
         prepared['result'].pop('diagnostic_objective_order', None)
 
@@ -2005,7 +2009,7 @@ def _search(snapshot, time_budget_seconds, workers, control, options, feasibilit
             overtime_choices, lead_vars, participants, by_shift, decisions, counted_shifts, objectives, objective_order,
             components, score_variable_start, score_constraint_start, score_constraint_end, evidence, shortages,
             original_validation, protected_conflicts, locked_staffing, score_baseline, before_data, context_changed,
-            before_score, scoring, model, live_coverage, diagnostic_domains, diagnostic_minima,
+            before_score, scoring, model, live_coverage, diagnostic_domains, diagnostic_objectives,
             coverage_floor_rows, strict_probe_seconds=None, _diagnostic_continuation=False, score_program=None):
     from .cp_sat_score import SCORE_SCALE
     from .score import publication_baseline, schedule_score

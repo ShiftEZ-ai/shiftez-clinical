@@ -85,7 +85,7 @@ def test_resumed_precheck_issues_have_the_same_global_sort_and_cap_as_fresh_chec
     shortages = [{'code': f'U_{index:03}'} for index in reversed(range(10))]
     prepared = {'result': {'issues': protected, 'outside_scope_issues': outside},
         'data': {}, 'before_data': {}, 'shortages': shortages,
-        'diagnostic_domains': {}, 'diagnostic_minima': [], 'objective_order': [], 'objectives': []}
+        'diagnostic_domains': {}, 'diagnostic_objectives': {}, 'objective_order': [], 'objectives': []}
     expected = precheck_issues(protected, 'protected')
     expected = precheck_issues(outside, 'outside_scope', previous=expected)
     expected = precheck_issues(shortages, 'unresolved', previous=expected)

@@ -168,9 +168,10 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                     overlaps(a, b, lo, hi) for lo, hi in selected_intervals):
                 strict_minima.add(constraint.index)
         elif not scored:
-            deviation = model.new_int_var(0, max(maximum, int(target * scale)) + 1, 'quota_preference')
+            deviation_bound = max(0, lower) if diagnostic_minimum else max(maximum, int(target * scale)) + 1
+            deviation = model.new_int_var(0, deviation_bound, 'quota_preference')
             if diagnostic_minimum:
-                diagnostic_domains[deviation.index] = max(maximum, int(target * scale)) + 1
+                diagnostic_domains[deviation.index] = deviation_bound
             if row['comparison'] in {'minimum', 'target'}:
                 constraint = model.add(actual + deviation >= lower).with_name(
                     policy_name(policy, data=data, row=row, person_ids=[pid], session_ids=session_ids))
@@ -179,9 +180,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                     strict_minima.add(constraint.index)
             if row['comparison'] in {'maximum', 'target'}:
                 model.add(actual - deviation <= upper)
-            # Missing the amount by the amount itself (at least one unit: a duty, an hour) is fully broken,
-            # whatever the unit, so an hour off a quota no longer outweighs an unfilled seat.
-            penalise(deviation, policy, max(int(target * scale), scale), max(maximum, int(target * scale)) + 1)
+            units = {'unit': scale} if diagnostic_minimum else {}
+            penalise(deviation, policy, max(int(target * scale), scale), deviation_bound, **units)
         if scored:
             # Cancel exact units before fixed-point scoring, keeping the original hard quota bounds untouched.
             denominator = max(int(target * scale), scale)

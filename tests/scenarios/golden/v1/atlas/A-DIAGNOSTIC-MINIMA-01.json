@@ -1,0 +1,117 @@
+{
+  "id": "A-DIAGNOSTIC-MINIMA-01",
+  "revision": 2,
+  "title": "Best effort meets more minimums before reducing their depth",
+  "intent": "Meet as many mandatory duty minimums as possible, then reduce the remaining shortfall.",
+  "pressure": "After three duties are cancelled, two people need six duties between them. Splitting the three remaining places can leave both people short. Leaving the third place empty after meeting one minimum increases the remaining shortfall.",
+  "covers": {"kind.block_quota": ["shortfall"]},
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "categories", "value": {"name": "Diagnostic quota rank", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario"
+    }},
+    {"key": "service", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "services", "value": {"name": "Diagnostic quota service", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario"
+    }},
+    {"key": "location_kind", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "location_types", "value": {"name": "Diagnostic quota room type", "starts_on": "2020-01-01"},
+      "reason": "Synthetic scenario"
+    }},
+    {"key": "location", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "locations", "value": {"name": "Diagnostic quota room", "starts_on": "2020-01-01",
+        "location_type_id": "$location_kind", "capacity": 2}, "reason": "Synthetic scenario"
+    }},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "people", "value": {"display_name": "Diagnostic quota participant 01", "tags": ["golden"]},
+      "reason": "Synthetic scenario"
+    }},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "people", "value": {"display_name": "Diagnostic quota participant 02", "tags": ["golden"]},
+      "reason": "Synthetic scenario"
+    }},
+    {"key": "member0", "role": "admin", "kind": "membership.create", "payload": {
+      "person_id": "$p0", "category_id": "$rank", "starts_on": "2020-01-01"
+    }},
+    {"key": "member1", "role": "admin", "kind": "membership.create", "payload": {
+      "person_id": "$p1", "category_id": "$rank", "starts_on": "2020-01-01"
+    }},
+    {"key": "eligible0", "role": "credentialer", "kind": "eligibility.create", "payload": {
+      "person_id": "$p0", "service_id": "$service", "starts_on": "2020-01-01"
+    }},
+    {"key": "eligible1", "role": "credentialer", "kind": "eligibility.create", "payload": {
+      "person_id": "$p1", "service_id": "$service", "starts_on": "2020-01-01"
+    }},
+    {"key": "required", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "assignment_types", "value": {"name": "Required quota duty", "starts_on": "2020-01-01",
+        "definition": {"requirements": [{"minimum": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"
+    }},
+    {"key": "optional", "role": "admin", "kind": "catalogue.create", "payload": {
+      "catalogue": "assignment_types", "value": {"name": "Optional quota duty", "starts_on": "2020-01-01",
+        "definition": {"requirements": [{"minimum": 0, "maximum": 1}]}}, "reason": "Synthetic scenario"
+    }},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create", "payload": {
+      "name": "Diagnostic quota rota", "starts_on": "2027-03-01", "ends_on": "2027-03-09"
+    }},
+    {"key": "s0", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$required", "location_id": "$location",
+      "service_ids": ["$service"], "start": "2027-03-01T08:00:00+03:00", "end": "2027-03-01T12:00:00+03:00",
+      "participants": []
+    }},
+    {"key": "s1", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$required", "location_id": "$location",
+      "service_ids": ["$service"], "start": "2027-03-02T08:00:00+03:00", "end": "2027-03-02T12:00:00+03:00",
+      "participants": []
+    }},
+    {"key": "s2", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$optional", "location_id": "$location",
+      "service_ids": ["$service"], "start": "2027-03-03T08:00:00+03:00", "end": "2027-03-03T12:00:00+03:00",
+      "participants": []
+    }},
+    {"key": "s3", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$optional", "location_id": "$location",
+      "service_ids": ["$service"], "start": "2027-03-04T08:00:00+03:00", "end": "2027-03-04T12:00:00+03:00",
+      "participants": []
+    }},
+    {"key": "s4", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$optional", "location_id": "$location",
+      "service_ids": ["$service"], "start": "2027-03-07T08:00:00+03:00", "end": "2027-03-07T12:00:00+03:00",
+      "participants": []
+    }},
+    {"key": "s5", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision", "payload": {
+      "workspace_id": "$workspace", "assignment_type_id": "$optional", "location_id": "$location",
+      "service_ids": ["$service"], "start": "2027-03-08T08:00:00+03:00", "end": "2027-03-08T12:00:00+03:00",
+      "participants": []
+    }},
+    {"key": "minimum0", "role": "coordinator", "kind": "policy.create", "payload": {
+      "name": "Two duty minimum", "owner": "Scenario coordinator", "source": "Synthetic scenario",
+      "starts_on": "2020-01-01", "definition": {
+        "rule": {"kind": "block_quota", "metric": "duties", "comparison": "minimum", "amount": 2,
+          "starts_on": "2027-03-01", "ends_on": "2027-03-09"},
+        "scope": {"person_id": "$p0"}, "severity": "mandatory", "workspace_id": "$workspace"
+      }
+    }},
+    {"key": "minimum1", "role": "coordinator", "kind": "policy.create", "payload": {
+      "name": "Four duty minimum", "owner": "Scenario coordinator", "source": "Synthetic scenario",
+      "starts_on": "2020-01-01", "definition": {
+        "rule": {"kind": "block_quota", "metric": "duties", "comparison": "minimum", "amount": 4,
+          "starts_on": "2027-03-01", "ends_on": "2027-03-09"},
+        "scope": {"person_id": "$p1"}, "severity": "mandatory", "workspace_id": "$workspace"
+      }
+    }},
+    {"key": "activate0", "role": "approver", "kind": "policy.activate", "target": "$minimum0",
+      "revision": "$minimum0.revision", "payload": {"acknowledge_unresolved": true, "reason": "Synthetic scenario"}},
+    {"key": "activate1", "role": "approver", "kind": "policy.activate", "target": "$minimum1",
+      "revision": "$minimum1.revision", "payload": {"acknowledge_unresolved": true, "reason": "Synthetic scenario"}},
+    {"key": "cancel_duties", "role": "coordinator", "kind": "shift.action", "payload": {
+      "workspace_id": "$workspace", "shift_ids": ["$s3", "$s4", "$s5"], "action": "cancel",
+      "reason": "Close three eligible duties after approving both minimums"
+    }}
+  ],
+  "inputs": {"generation_options": {"mode": "fill_gaps", "shortlist_width": 0}},
+  "expect": {
+    "binding_rules": ["minimum0", "minimum1"],
+    "shortfall": {"count": 1, "person": "p1", "depth": 3},
+    "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
+  }
+}

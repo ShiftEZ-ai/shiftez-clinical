@@ -7,6 +7,7 @@ import pytest
 
 from packages.contracts.schemas import GenerationOptions
 from packages.domain import cp_sat, solver_resume
+from packages.domain.cp_sat_score import SCORE_SCALE
 from packages.domain.solver_control import SolverControl
 from packages.domain.validation import finding_observations
 from tests.test_scheduler_performance import _budget
@@ -55,7 +56,9 @@ def test_diagnostic_continues_once_and_keeps_maximum_and_blocking_findings(h, mo
     assert 'SCOPED_COVERAGE_GAP' in codes
     assert ('QUOTA_BELOW_MINIMUM' in codes) is quota
     if quota:
-        assert next(row for row in result['objectives'] if row['name'] == 'diagnostic_minima')['value'] > 0
+        objectives = {row['name']: row['value'] for row in result['objectives']}
+        assert objectives['diagnostic_minima'] == 1
+        assert objectives['diagnostic_minimum_depth'] == SCORE_SCALE
     assert 'MAXIMUM_PARTICIPANTS' not in codes
     print('single diagnostic preparation CPU seconds', preparations[0])
 

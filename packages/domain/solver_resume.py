@@ -11,7 +11,7 @@ from ortools.sat.python import cp_model
 from .solver_rules import COMPILER_VERSION
 
 
-PREPARATION_FORMAT = 13
+PREPARATION_FORMAT = 14
 # Private keys are transient unless they carry rule semantics or approved source provenance.
 SEMANTIC_PREPARATION_KEYS = frozenset({
     '_allocation_strengths', '_catalogue_v2_materialized', '_catalogue_sources',
