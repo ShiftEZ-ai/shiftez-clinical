@@ -1,6 +1,6 @@
 """Exact-impact oracles and deterministic work guards for catalogue previews."""
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 
@@ -14,11 +14,12 @@ from apps.api.services import catalogue_preview as preview_service
 from apps.api.serialization import json_value
 from packages.contracts.schemas import Command
 from packages.domain.finding_identity import finding_index
-from packages.domain import finding_causes
+from packages.domain import finding_causes, validation
 from packages.domain.validation import check_contracts, evaluate
 from .clock_support import freeze_clock
 from .test_backend_reads_scale import read_department
-from .test_catalogue_preview import preview, state
+from .test_backend_scale import measure
+from .test_catalogue_preview import apply, preview, state
 from .test_contact_preview_perf import change, person
 from .test_finding_causes import cause_data, cause_snapshot, quota, type_definition, uid
 
@@ -242,6 +243,66 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
 @pytest.mark.parametrize('operation', ['create', 'archive'])
 def test_phase_batched_inputs_match_fresh_snapshots_on_postgresql(h, monkeypatch, published, operation):
     test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation)
+
+
+def test_hours_reuse_keeps_counted_and_focal_intervals_distinct():
+    start = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    early = ({}, {}, start, start + timedelta(hours=4))
+    late = ({}, {}, start + timedelta(days=1), start + timedelta(days=1, hours=6))
+    data = {'organisation': {'week_start': 0}}
+    rule = {'kind': 'max_hours', 'window': 'day'}
+    cache = {}
+    observations = validation._max_hours_observations
+    assert [hours for _, _, hours in observations(data, rule, [early], [early], 'UTC', cache)] == [4]
+    assert [hours for _, _, hours in observations(data, rule, [early, late], [late], 'UTC', cache)] == [6]
+    assert [hours for _, _, hours in observations(data, rule, [early, late], [early], 'UTC', cache)] == [4]
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_create_impact_reuses_workload_calculations_at_department_scale(scale_harness, monkeypatch, backend):
+    freeze_clock(monkeypatch, datetime(2026, 10, 15, 12, tzinfo=timezone.utc))
+    h = scale_harness(backend)
+    read_department(h)
+    h.client('admin')
+    evaluate_preview = preview_service.evaluate_preview
+    workload_actual = validation.workload_actual
+    prepared_checks = []
+    hours = 0
+
+    def count(rule, *args):
+        nonlocal hours
+        hours += rule['kind'] == 'max_hours'
+        return workload_actual(rule, *args)
+
+    def capture(prepared):
+        prepared_checks.append(prepared)
+        return evaluate_preview(prepared)
+
+    monkeypatch.setattr(validation, 'workload_actual', count)
+    monkeypatch.setattr(preview_service, 'evaluate_preview', capture)
+    for catalogue, value in (
+            ('people', {'display_name': 'Fictional new person'}),
+            ('categories', {'name': 'Fictional new rank', 'starts_on': '2020-01-01'})):
+        command = {'kind': 'catalogue.create', 'payload': {'catalogue': catalogue,
+                   'value': value, 'reason': 'Preview a synthetic catalogue addition'}}
+        unchanged = state(h)
+        hours = 0
+        result, _ = measure(h, f'{catalogue} impact preview', lambda: preview(h, command))
+        reused_hours = hours
+        assert state(h) == unchanged
+        prepared = prepared_checks.pop()
+        [workspace] = prepared['workspaces']
+        assert len(workspace['before']['focus_ids']) == 768
+        assert 'input_manifest' not in workspace['before'] and 'input_manifest' not in workspace['after']
+        assert workspace['saved']['fingerprint'] == result['impacts'][0]['saved_draft_validation']['fingerprint']
+
+        hours = 0
+        assert result == explained_oracle(prepared)
+        assert 0 < reused_hours < hours, (catalogue, reused_hours, hours)
+        print(catalogue, {'reused_hours_calculations': reused_hours, 'original_hours_calculations': hours})
+
+        committed, _ = measure(h, f'{catalogue} save', lambda: apply(h, command, result['source_fingerprint']))
+        assert committed['record']['id']
 
 
 def spread_department(h):

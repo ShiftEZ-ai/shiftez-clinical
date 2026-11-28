@@ -4,6 +4,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from .governance_support import retirement_vote
 from .test_browser import auto_result, browser, live_server, sign_in, navigate, open_rota, save_dialog, fix_list_reply  # noqa: F401
 from .test_browser_fix_list import serve
 from .test_browser import fix_pill
@@ -69,6 +70,7 @@ def test_turning_a_rule_on_counts_as_a_change_and_activation_and_retirement_can_
         panel.get_by_role('button', name='Approve and activate', exact=True).click()
         expect(page.locator('#toast-tray .toast', has_text='the change is active.').get_by_role('button', name='Undo')).to_be_visible()
         expect(page.locator('.rc-waiting')).to_have_count(0)
+        retirement_vote(h, rule()['rule'], 'Trial over')
         rule_action(page, 'Retire rule')
         retire = page.get_by_role('dialog', name='Retire Rest between duties')
         retire.get_by_label('Reason', exact=True).fill('Trial over')
