@@ -9,6 +9,7 @@ import {leaveLayer} from './planner_people.js';
 import {addDays,isClosed,isWeekend} from './planner_logic.js';
 import {dimOf,personDim,isTime,dimensionReader,byValue,type Dim,type Column,type TimeAxis} from './schedule_dimensions.js';
 import {scheduleEmpty} from './schedule.js';
+import {distinctNames,fullNameOf} from './person_label.js';
 import type {Context} from './forms.js';
 import type {Row,WorkspaceData} from './types.js';
 import {clashTag,clashText,clashesOf} from './double_booking.js';
@@ -54,10 +55,11 @@ export function scheduleGrid(ctx:Context,data:WorkspaceData,visible:Row[],days:s
   const group=axes.group!=='none'&&axes.group!==axes.rows&&axes.group!==axes.columns?axes.group:null;
   const sub=group&&axes.subgroup!=='none'&&![axes.rows,axes.columns,group].includes(axes.subgroup)?axes.subgroup:null;
   const byPerson=[axes.rows,axes.columns,group,sub].some(k=>!!k&&personDim(k));
-  const read=dimensionReader(ctx.catalogues,hooks.name);
   // Published sessions around or under a draft show as grey context chips; they are never counted (the draft's are).
   const shown=visible.filter(s=>inRange.has(dayOf(s))&&!isClosed(s)&&!(counts&&data.context&&s.context)&&(!weekView.onlyOpen||short(s))&&(!weekView.onlyIssues||broken.has(s.id))
     &&(!window||clock(s.end)>window.start&&clock(s.start)<window.end));
+  // The view's names: only people whose labels clash among those shown expand (person_label.ts distinctNames).
+  const named=distinctNames(shown.flatMap(s=>(s.participants as Row[]).map(p=>people.get(String(p.person_id))))),read=dimensionReader(ctx.catalogues,named);
   const units:Unit[]=shown.flatMap(s=>{const day=dayOf(s);return byPerson?(s.participants as Row[]).map(p=>({s,pid:String(p.person_id),day})):[{s,pid:'',day}];});
   const values=(k:Dim,u:Unit)=>read(k,u.s,u.pid,u.day);
   const time=isTime(axes.columns)?bucketsOf(days,axes.columns,weekStart,zone,today):null;
@@ -72,7 +74,7 @@ export function scheduleGrid(ctx:Context,data:WorkspaceData,visible:Row[],days:s
   const put=(u:Unit,held:boolean)=>{for(const g of group?values(group,u):[''])for(const sg of sub?values(sub,u):[''])
     for(const r of axes.rows==='person'?[u.pid]:values(axes.rows,u)){
       let a=tree.get(g);if(!a)tree.set(g,a=new Map());let b=a.get(sg);if(!b)a.set(sg,b=new Map());
-      let l=b.get(r);if(!l)b.set(r,l={key:r,name:axes.rows==='person'?hooks.name(people.get(r)):r,...(axes.rows==='type'?{colour:dutyColour(u.s)}:{}),...(axes.rows==='person'?{pid:r}:{}),units:[]});
+      let l=b.get(r);if(!l)b.set(r,l={key:r,name:axes.rows==='person'?named(people.get(r)):r,...(axes.rows==='type'?{colour:dutyColour(u.s)}:{}),...(axes.rows==='person'?{pid:r}:{}),units:[]});
       if(held)l.units.push(u);
     }};
   for(const u of units)put(u,true);
@@ -113,7 +115,7 @@ export function scheduleGrid(ctx:Context,data:WorkspaceData,visible:Row[],days:s
   // Every chip and "+N" opens through one listener on the grid (no listener per cell at department scale).
   const sessions=new Map(shown.map(s=>[String(s.id),s])),more=new WeakMap<HTMLElement,{units:Unit[];title:string}>();
   // The view's properties for a grid cell (the one item renderer): what each chip says, in the view's order and form.
-  const props=propertiesOf(weekView.props,'chip'),name=(id:string)=>hooks.name(people.get(id));
+  const props=propertiesOf(weekView.props,'chip'),name=(id:string)=>named(people.get(id));
   const partsOf=(u:Unit)=>itemParts(ctx,u.s,u.pid,zone,props,{only:ITEM_DRAWS.chip,name});
   /** A chip's accessible name (the live auto-schedule view names its chips the same way); its duty type goes in the key,
    *  stamped on `node`, the chip drawn. */
@@ -210,7 +212,7 @@ export function scheduleGrid(ctx:Context,data:WorkspaceData,visible:Row[],days:s
     if(lastHead==='Hours')last.dataset.hours=String(line.units.reduce((a,u)=>a+hoursOf(u),0));
     else if(byPerson)last.dataset.duties=String(line.units.length);
     else if(checked)tally(last,sessionsOf(line.units));
-    const row=el('div',{class:'pg-row',role:'row','data-group':id,...(line.pid?{'data-row-person':line.pid}:{})},el('div',{class:'pg-name'+(line.colour?' duty-'+line.colour:''),role:'rowheader',...(line.colour?{'data-lg-self':true}:{})},el('strong',{class:'truncate',title:line.name},line.name)),
+    const row=el('div',{class:'pg-row',role:'row','data-group':id,...(line.pid?{'data-row-person':line.pid}:{})},el('div',{class:'pg-name'+(line.colour?' duty-'+line.colour:''),role:'rowheader',...(line.colour?{'data-lg-self':true}:{})},el('strong',{class:'truncate',title:line.pid?fullNameOf(people.get(line.pid)):line.name},line.name)),
       ...columns.map(b=>cell(by.get(b.key)||[],`${line.name}, ${b.label}`,b,line.pid)),last);
     rowAt.set(id+'\n'+line.key,row);return row;};
   const lines=(map:Map<string,Line>,id:string)=>{for(const line of order([...map.values()]))grid.append(lineRow(line,id));};
@@ -243,7 +245,8 @@ export function scheduleGrid(ctx:Context,data:WorkspaceData,visible:Row[],days:s
       if(group&&!heads.has(gid)||collapsed.has(g)||sub&&collapsed.has(gid))return [];
       return (axes.rows==='person'?[pid]:values(axes.rows,u)).flatMap(r=>{
         let row=rowAt.get(gid+'\n'+r);
-        if(!row&&make&&axes.rows==='person'){const name=hooks.name(people.get(pid));row=lineRow({key:pid,name,pid,units:[]},gid);row.dataset.livePreview='';placeRow(grid,gid,row,name);
+        // shortcut: a person a run adds keeps their plain label until Apply redraws the grid and its clash check.
+        if(!row&&make&&axes.rows==='person'){const name=named(people.get(pid));row=lineRow({key:pid,name,pid,units:[]},gid);row.dataset.livePreview='';placeRow(grid,gid,row,name);
           for(const h of [heads.get(g),sub?heads.get(gid):undefined])if(h&&!h.keys.has(pid)){h.keys.add(pid);h.count.textContent=plural(h.keys.size,rowsWord.one,rowsWord.many);}}
         return row?cols.flatMap(k=>{const x=row!.querySelector<HTMLElement>(`:scope>.pg-cell[data-col="${CSS.escape(k)}"]`);return x?[x]:[];}):[];});}));}};
   const body=tree.size

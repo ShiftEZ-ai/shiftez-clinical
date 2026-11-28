@@ -50,11 +50,12 @@ export function personLink(personId:string,label:string,navigate:(path:string)=>
 /** Each part's name and each separator's text, from the contract (LABEL_PART_DEFINITIONS, LABEL_SEPARATORS; D75). */
 export const LABEL_NAMES=Object.fromEntries(Object.entries(LABEL_PART_DEFINITIONS).map(([k,d])=>[k,d.label])) as Record<LabelPart,string>;
 export const SEPARATORS=Object.fromEntries(Object.entries(LABEL_SEPARATORS).map(([k,d])=>[k,[d.text,d.label]])) as Record<PersonLabel['separator']&string,[string,string]>;
-/** What a part shows for this person: facts the caller knows (their current rank, their unique code) fill the rest. */
-export function labelPart(person:Row|undefined,part:LabelPart,honorific:PersonLabel['honorific'],facts:Facts=source.facts(person)):string{
+/** What a part shows for this person: facts the caller knows (their current rank, their unique code) fill the rest.
+ *  `expand` widens the short part where it clashes in a view (`distinctNames`): 1 says the given and family name, 2 the full name. */
+export function labelPart(person:Row|undefined,part:LabelPart,honorific:PersonLabel['honorific'],facts:Facts=source.facts(person),expand=0):string{
   const n=nameWords(fullNameOf(person)),title=honorific==='none'||!n.title?'':n.title+' ';
   switch(part){
-    case 'short':return title+(n.given.length?`${n.given[0][0]}. ${n.family}`:n.family);
+    case 'short':return title+(expand>1?n.bare:n.given.length?`${expand?n.given[0]:n.given[0][0]+'.'} ${n.family}`:n.family);
     case 'full':return title+n.bare;
     case 'level':return facts.level||'';
     case 'pager':return String(person?.pager||'');
@@ -70,13 +71,28 @@ export const useLabel=(next:()=>PersonLabel)=>{current=next;};
 /** No name part is shown (only codes, numbers, ranks or pagers): keys list who each code is. */
 export const namesHidden=()=>!current().parts.some(p=>p==='short'||p==='full');
 /** "Dr L. Haddad · R4": the parts that have a value, in order. Nothing to show falls back to the code, then the name. */
-export function personLabel(person:Row|undefined,label:PersonLabel,facts:Facts=source.facts(person)):string{
+export function personLabel(person:Row|undefined,label:PersonLabel,facts:Facts=source.facts(person),expand=0):string{
   if(!person)return '—';
-  const text=label.parts.map(p=>labelPart(person,p,label.honorific,facts)).filter(Boolean).join(SEPARATORS[label.separator||'dot'][0]);
+  const text=label.parts.map(p=>labelPart(person,p,label.honorific,facts,expand)).filter(Boolean).join(SEPARATORS[label.separator||'dot'][0]);
   return text||facts.code||fullNameOf(person);
 }
 /** Every schedule renderer names people through this (hooks.name): the page's label now (a view's Person label). */
 export const displayName=(person:Row|undefined,label=current())=>person?personLabel(person,label):fullNameOf(person);
+/** The names of one view (a grid, a printed page): each person's label, except that people whose labels say the same
+ *  words in this view expand their short part, first to given and family name, then to the full name where that still
+ *  clashes. Everyone else keeps the label; the tip and accessible name keep the full name as before. */
+export function distinctNames(people:Iterable<Row|undefined>,label:PersonLabel=current()):(person:Row|undefined)=>string{
+  const expand=new Map<string,number>(),unique=new Map<string,Row>();
+  for(const p of people)if(p)unique.set(p.id,p);
+  let left=[...unique.values()];
+  for(let level=0;level<2&&left.length>1&&label.parts.includes('short');level++){
+    const said=new Map<string,Row[]>();
+    for(const p of left){const t=personLabel(p,label,undefined,level);said.set(t,[...(said.get(t)||[]),p]);}
+    left=[...said.values()].filter(g=>g.length>1).flat();
+    for(const p of left)expand.set(p.id,level+1);
+  }
+  return person=>person?personLabel(person,label,undefined,expand.get(person.id)||0):fullNameOf(person);
+}
 /** A name pill's narrower forms (LEAD-UIUX live audit L7): the short form (initial and family name, no title) and the
  *  person's code. The pill shows them only when its cell is too narrow for `shown` (person_pill.ts, app.css @container
  *  pill); the full name stays its tip and accessible name. Empty where a form says nothing new. */

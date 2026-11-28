@@ -6,7 +6,7 @@
  *  not fit starts the next page (title, header row, legend and footer repeat), a row taller than a page continues there.
  *  The legend lists, by kind, only what its page draws. Planner editing state (locks, selection, add, drag) is never drawn. */
 import {el,colourOf,typeColour,formatTime,toLocal,labelOf,nameMarks,markOf,pillOf,registryKey,MARK_DEFAULTS,type LegendItem,type MarkMode} from './dom.js';
-import {displayName,labelPart} from './person_label.js';
+import {distinctNames} from './person_label.js';
 import {teamOrder,supervises} from './planner_teams.js';
 import {dutyColour,weekRowLabel} from './planner_week.js';
 import {isWeekend,addDays,isClosed} from './planner_logic.js';
@@ -70,9 +70,12 @@ export function printPages(d:PrintData,frame:()=>HTMLElement,host:HTMLElement,le
   const byDay=new Map<string,Row[]>();for(const s of sessions){const k=dayOf(s);byDay.set(k,[...(byDay.get(k)||[]),s]);}
   const chip=(s:Row)=>{const e=duty(s);return el('span',{class:'d duty-'+e.colour,'data-k':'duty:'+e.key},e.short);};
   // One person per line: the view's label (week) or initial and surname (month); the short form kept for a name that needs 3 lines.
+  // Both expand only where they clash among the people printed, as on screen (person_label.ts distinctNames).
+  const printed=sessions.flatMap(s=>(s.participants as Row[]).map(p=>d.people.get(p.person_id)));
+  const shortOf=distinctNames(printed,{parts:['short'],honorific:d.mode==='month'?'none':d.label.honorific}),fullOf=d.mode==='month'?shortOf:distinctNames(printed,d.label);
   const person=(p:Row,all:readonly Row[])=>{
     const r=d.people.get(p.person_id),on=marks.filter(m=>HAS[m.key](p,d,all));
-    const short=r?labelPart(r,'short',d.mode==='month'?'none':d.label.honorific):'—',full=d.mode==='month'?short:r?displayName(r,d.label):'—';
+    const short=r?shortOf(r):'—',full=r?fullOf(r):'—';
     const n=el('span',{class:'nm'},...nameMarks(full,on.map(m=>markOf(m,d.marks.display as Exclude<MarkMode,'off'>))));
     if(on.length)n.dataset.k=on.map(m=>'mark:'+m.key).join(' ');
     if(full!==short)n.dataset.short=short;
