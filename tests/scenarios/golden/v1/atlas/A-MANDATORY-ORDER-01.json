@@ -1,9 +1,9 @@
 {
   "id": "A-MANDATORY-ORDER-01",
-  "revision": 1,
+  "revision": 2,
   "title": "Mandatory order resets by week and place",
-  "intent": "A later ranked duty cannot take its requested place while an earlier one is empty in the same week and room.",
-  "pressure": "The only eligible person is away for the earlier duty and can otherwise fill each later duty.",
+  "intent": "Within a week and room, fill available earlier places before later places above their minimum.",
+  "pressure": "The only eligible person is already reserved on a duty overlapping the earlier place, and can fill both the required and optional later duties.",
   "covers": {
     "kind.allocation_preference.session_priority": ["validator", "counterfactual", "seed_robustness"]
   },
@@ -30,10 +30,16 @@
      "payload": {"catalogue": "assignment_types", "value": {"name": "Weekly order early duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 0, "target": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
     {"key": "late_type", "role": "admin", "kind": "catalogue.create",
      "payload": {"catalogue": "assignment_types", "value": {"name": "Weekly order late duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 0, "target": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
+    {"key": "minimum_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "Weekly order required duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "target": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
     {"key": "early", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$early_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
     {"key": "late", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$late_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}},
+    {"key": "required_later", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$minimum_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-07T08:00:00+03:00", "end": "2027-01-07T12:00:00+03:00", "participants": []}},
+    {"key": "reserved", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$late_type", "location_id": "$peer_room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
     {"key": "other_room", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
      "payload": {"workspace_id": "$workspace", "assignment_type_id": "$late_type", "location_id": "$peer_room", "service_ids": ["$service"], "start": "2027-01-06T08:00:00+03:00", "end": "2027-01-06T12:00:00+03:00", "participants": []}},
     {"key": "other_week", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
@@ -47,11 +53,11 @@
          "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$early_type"]}]},
          "numbers": {"session_priority": {"value": 20, "level": "mandatory"}}},
         {"id": "00000000-0000-4000-8000-000000009282", "starts_on": "2027-01-01",
-         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$late_type"]}]},
+         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$late_type", "$minimum_type"]}]},
          "numbers": {"session_priority": {"value": 10, "level": "mandatory"}}},
         {"id": "00000000-0000-4000-8000-000000009283", "starts_on": "2027-01-01",
          "who": {"conditions": [{"field": "person_ids", "values": ["$person"]}]},
-         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$late_type"]}]},
+         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$late_type", "$minimum_type"]}]},
          "numbers": {"session_priority": {"value": 10, "level": "medium"}}}
       ]}},
     {"key": "order_active", "role": "approver", "kind": "policy.activate", "target": "$order", "revision": "$order.revision",
@@ -63,7 +69,11 @@
   "expect": {
     "binding_rules": ["order"],
     "validator": {"earlier": "early", "later": "late", "code": "ALLOCATION_ORDER"},
-    "counterfactual": {"strict": ["other_room", "other_week"], "with_exception": ["late", "other_room", "other_week"]},
+    "counterfactual": {
+      "strict": ["required_later", "other_room", "other_week"],
+      "with_exception": ["late", "required_later", "other_room", "other_week"],
+      "no_available_earlier": ["late", "required_later", "other_room", "other_week"]
+    },
     "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
   }
 }

@@ -22,7 +22,7 @@ from .conditions import active_rules, bucket_keys, counting_key, counting_views,
 from .supervision_levelling import levelled_order, session_spread_policies
 from .patterns import day_of, wish_outcomes, wish_shape
 from .recurrence import inactive, with_series_state, usual_assignee_fixed, series_candidate_allowed
-from .fill_priority import STAGE_ORDER, allocation_order_rules, allocation_tier, stage_progress
+from .fill_priority import STAGE_ORDER, allocation_order_rules, allocation_tier, mandatory_order_groups, stage_progress
 
 # 43: reject proposals that introduce or worsen missing supervision.
 ALGORITHM_VERSION = "bounded-greedy-44"
@@ -629,6 +629,14 @@ class Recheck:
         self.live_ids = focus & self.active.keys()
         self.spans = [(aware(s['start']), aware(s['end']), sid) for sid, s in self.active.items() if sid in focus]
         self.peers = {}
+        self.order_peers = defaultdict(list)
+        groups = mandatory_order_groups(self.prepared, self.active.values(), focus)
+        self.prepared['_mandatory_order_groups'] = groups
+        for tiers in groups:
+            sessions = {row.shift_id for rows in tiers for row in rows}
+            live = sessions & self.live_ids
+            for sid in sessions:
+                self.order_peers[sid].append(live)
         people = set(data['people']) | {p['person_id'] for s in data['shifts'] for p in s['participants']}
         self.parts = self._check(self.live_ids, people)
 
@@ -661,6 +669,8 @@ class Recheck:
             if sid not in self.peers:
                 self.peers[sid] = affected_sessions((), [shift], spans=self.spans) | ({sid} & self.live_ids)
             affected.update(self.peers[sid])
+            for peers in self.order_peers.get(sid, ()):
+                affected.update(peers)
         return affected
 
     def result(self, parts=None):

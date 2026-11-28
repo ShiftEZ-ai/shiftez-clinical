@@ -942,14 +942,18 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         for index, rows in enumerate(tiers):
             tier_complete = [] if complete is None else [complete]
             for row in rows:
-                choices_at_place = [choices[row.shift_id, pid] for pid in present_at(
+                occupants = [(row.shift_id, pid) for pid in present_at(
                     shift_lookup[row.shift_id], row.start, row.end) if pid in row.people]
-                total = sum(choices_at_place)
-                if complete is not None and choices_at_place:
-                    name = policy_name(row.policy, data=data, session_ids=[row.shift_id], start=row.start, end=row.end)
-                    constraint = model.add(total == 0).only_enforce_if(complete.Not()).with_name(name)
-                    strict_constraints.add(constraint.index)
+                if complete is not None:
+                    movable = [choices[key] for key in occupants if key in decisions]
+                    if movable:
+                        fixed = len(occupants) - len(movable)
+                        name = policy_name(row.policy, data=data, session_ids=[row.shift_id], start=row.start, end=row.end)
+                        constraint = model.add(sum(movable) <= max(0, row.minimum - fixed))
+                        constraint.only_enforce_if(complete.Not()).with_name(name)
+                        strict_constraints.add(constraint.index)
                 if index + 1 < len(tiers):
+                    total = sum(choices[key] for key in occupants if key[1] in row.available)
                     filled = model.new_bool_var('ordered_place_filled')
                     model.add(total >= row.required).only_enforce_if(filled)
                     model.add(total < row.required).only_enforce_if(filled.Not())

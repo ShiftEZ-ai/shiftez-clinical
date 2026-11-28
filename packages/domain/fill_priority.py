@@ -72,13 +72,15 @@ class OrderedPlaces(NamedTuple):
     end: datetime
     policy: dict
     people: frozenset[str]
+    available: frozenset[str]
+    minimum: int
     required: int
 
 
 def mandatory_order_groups(data, shifts, focus):
     """Requested places by rule, local week, location and descending rank."""
     from .generation import allocation_policy_matches
-    from .validation import effective_type_definition, person_active_for_interval, session_matches
+    from .validation import available_for_coverage, effective_type_definition, person_active_for_interval, session_matches
 
     policies = [p for p in allocation_order_rules(data['policies']) if p['definition']['severity'] == 'mandatory']
     if not policies:
@@ -123,9 +125,12 @@ def mandatory_order_groups(data, shifts, focus):
             for requirement in places:
                 a = start + timedelta(minutes=requirement.get('from_minute', 0))
                 b = end if requirement.get('to_minute') is None else start + timedelta(minutes=requirement['to_minute'])
-                requested = max(requirement['minimum'], requirement.get('target') or 0)
-                groups[rule_id, where][rank].append(
-                    OrderedPlaces(shift['id'], a, b, sources[rule_id, rank], frozenset(members), min(requested, len(members))))
+                minimum = requirement['minimum']
+                requested = max(minimum, requirement.get('target') or 0)
+                available = frozenset(pid for pid in members if available_for_coverage(data, pid, a, b))
+                groups[rule_id, where][rank].append(OrderedPlaces(
+                    shift['id'], a, b, sources[rule_id, rank], frozenset(members), available, minimum,
+                    min(requested, len(available))))
     return [tuple(group[rank] for rank in sorted(group, reverse=True)) for group in groups.values()
             if len(group) > 1 and any(row.shift_id in focus for rows in group.values() for row in rows)]
 
