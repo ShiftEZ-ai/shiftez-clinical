@@ -53,3 +53,31 @@ def test_edits_return_previous_values_that_undo_them(h):
     assert undone['previous_value']['description'] == 'Changed by mistake'
     # An undo based on an old revision is refused, never overwriting a later edit.
     h.command('admin', 'catalogue.update', {'catalogue': 'services', 'value': previous, 'reason': 'Undo'}, saved['id'], saved['revision'], status=409)
+
+
+def test_services_and_locations_take_an_optional_short_code_by_the_duty_type_rule(h):
+    """A service or location may carry a short code for dense grids and print (A-Z and 0-9, up to 6), set one at a time
+    or in bulk; a save that leaves it out keeps it, and Undo restores the blank."""
+    service = rows(h, 'services', h.seed['services'][:1])[0]
+    value = {key: service[key] for key in ('name', 'starts_on')}
+    saved = h.configure('services', {**value, 'short_code': 'CL1'}, service['id'], service['revision'])['record']
+    assert saved['short_code'] == 'CL1'
+    kept = h.configure('services', {**value, 'description': 'Code kept'}, saved['id'], saved['revision'])['record']
+    assert kept['short_code'] == 'CL1'
+    for bad in ('cl1', 'C L', 'ABCDEFG'):
+        h.configure('services', {**value, 'short_code': bad}, kept['id'], kept['revision'], status=422)
+    location_type = h.get('admin', '/api/catalogues')['location_types'][0]['id']
+    places = [h.configure('locations', {'name': f'Synthetic coded place {i}', 'starts_on': '2020-01-01',
+                                        'location_type_id': location_type})['record'] for i in (1, 2)]
+    assert [p['short_code'] for p in places] == ['', '']
+    items = [{'id': p['id'], 'revision': p['revision']} for p in places]
+    h.command('admin', 'catalogue.bulk_update', {'catalogue': 'locations', 'items': items, 'set': {'short_code': 'w2'},
+                                                  'reason': 'Codes for print'}, status=422)
+    result = h.command('admin', 'catalogue.bulk_update', {'catalogue': 'locations', 'items': items, 'set': {'short_code': 'W2'},
+                                                           'reason': 'Codes for print'})
+    assert sorted(r['short_code'] for r in result['records']) == ['W2', 'W2']
+    assert [p['short_code'] for p in result['previous_values']] == ['', '']
+    first = result['records'][0]
+    undone = h.command('admin', 'catalogue.update', {'catalogue': 'locations', 'value': result['previous_values'][0],
+                                                     'reason': 'Undo'}, first['id'], first['revision'])['record']
+    assert undone['short_code'] == ''

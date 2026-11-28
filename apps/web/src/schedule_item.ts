@@ -61,21 +61,25 @@ const byId=(list:Row[]|undefined,id:string)=>{if(!list)return undefined;let m=in
 const tagIndex=new WeakMap<object,Map<string,Row[]>>();
 const tagsOf=(ctx:Context)=>{const k=(ctx.catalogues.tag_members||ctx.catalogues) as object;let m=tagIndex.get(k);if(!m){m=personTags(ctx.catalogues);tagIndex.set(k,m);}return m;};
 
-/** One thing an item says: its property, words and form (a tag also carries its record, for its colour). */
-export type ItemPart={key:PropKey;text:string;form:PropForm;record?:Row};
+/** One thing an item says: its property, words and form (a tag also carries its record, for its colour; a grid chip's
+ *  short code carries the name it stands for, its tip and accessible name). */
+export type ItemPart={key:PropKey;text:string;form:PropForm;record?:Row;name?:string};
 /** What an item says, in the view's order: each shown property that has words for it. `pid`: one person's duty (their
  *  times, TL, OT and tags); empty: the session (its people). `only`: the properties this item draws here (the rest are
  *  its row's, or another layout's). An item with nothing shown is its colour alone (the key names it). */
 export function itemParts(ctx:Context,s:Row,pid:string,zone:string,props:ViewProperty[],o:{only?:ReadonlySet<PropKey>;name?:(id:string)=>string}={}):ItemPart[]{
   const p=pid?((s.participants||[]) as Row[]).find(x=>x.person_id===pid):undefined,parts:ItemPart[]=[];
+  // A grid chip says a place's or service's short code where it has one (Configuration); a blank code says the name.
+  const dense=o.only===ITEM_DRAWS.chip,said=(r:Row|undefined)=>dense&&r?.short_code?String(r.short_code):labelOf(r);
   for(const x of props){
     if(!x.on||o.only&&!o.only.has(x.key))continue;
-    const add=(text:string,record?:Row)=>{if(text)parts.push({key:x.key,text,form:x.form as PropForm,...(record?{record}:{})});};
+    const add=(text:string,record?:Row,name?:string)=>{if(text)parts.push({key:x.key,text,form:x.form as PropForm,...(record?{record}:{}),...(name&&name!==text?{name}:{})});};
+    const named=(rs:(Row|undefined)[])=>add(rs.map(said).join(' + '),undefined,rs.map(r=>labelOf(r)).join(' + '));
     switch(x.key){
       case 'code':add(sessionCode(ctx,s));break;
       case 'time':add(p?`${formatTime(p.start,zone)}–${formatTime(p.end,zone)}`:dutyTime(s,zone));break;
-      case 'location':add(labelOf(byId(ctx.catalogues.locations,String(s.location_id))));break;
-      case 'service':add(((s.service_ids||[]) as string[]).map(id=>labelOf(byId(ctx.catalogues.services,id))).join(' + '));break;
+      case 'location':named([byId(ctx.catalogues.locations,String(s.location_id))]);break;
+      case 'service':named(((s.service_ids||[]) as string[]).map(id=>byId(ctx.catalogues.services,id)));break;
       case 'duty':add(String(s.type_snapshot?.name||''));break;
       case 'hours':{const h=(Date.parse(p?.end||s.end)-Date.parse(p?.start||s.start))/36e5;add(`${Number.isInteger(h)?h:h.toFixed(1)} h`);break;}
       case 'lead':if(p?.team_lead)add(MARKS.lead[0]);break;
@@ -89,8 +93,8 @@ export function itemParts(ctx:Context,s:Row,pid:string,zone:string,props:ViewPro
 }
 /** Whether a grid's chips say more than a code and marks (their day columns then widen to fit; app.css .it-words). */
 export const itemSaysWords=(props:ViewProperty[])=>props.some(p=>p.on&&ITEM_DRAWS.chip.has(p.key)&&!['label','code','lead','overtime','leave'].includes(p.key));
-/** The words an item's accessible name adds (TL and OT by their full names). */
-export const itemWords=(parts:ItemPart[])=>parts.map(x=>x.key==='lead'?MARKS.lead[1]:x.key==='overtime'?MARKS.ot[1]:x.text);
+/** The words an item's accessible name adds (TL and OT by their full names; a short code by the name it stands for). */
+export const itemWords=(parts:ItemPart[])=>parts.map(x=>x.key==='lead'?MARKS.lead[1]:x.key==='overtime'?MARKS.ot[1]:x.name??x.text);
 
 /** Marks (TL, OT, tags) sit beside an item's words; the first of its words is its head. */
 const MARK_PARTS=new Set<PropKey>(['lead','overtime','tags']);
@@ -116,7 +120,7 @@ export function itemNodes(parts:ItemPart[],key:Legend,cls:(x:ItemPart)=>string,o
       n=x.form==='text'?el('span',{class:cls(x)+' pchip-tags'},tags.map(t=>t.text).join(' '))
         :el('span',{class:'pchip-tags'},...tags.map(t=>el('span',{class:`tag-chip duty-${colourOf(t.record)}`,'data-lg-self':''},t.text)));  // a tag names itself
     }else{
-      n=el(x===head?'b':'span',{class:cls(x)+(x.form==='chip'&&x!==head?' it-chip':'')},x.text);  // a grid chip's head is the chip
+      n=el(x===head?'b':'span',{class:cls(x)+(x.form==='chip'&&x!==head?' it-chip':''),...(x.name?{'data-tip':x.name}:{})},x.text);  // a grid chip's head is the chip
       if(x.key==='code'&&o.codeKey)key.mark(n,'code',el('span',{class:cls(x)+' lg-mark','aria-hidden':'true'},'M'),PROPERTY_NAMES.code);
     }
     n.dataset.part=x.key;out.push(n);

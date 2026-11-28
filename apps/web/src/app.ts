@@ -104,7 +104,7 @@ import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED,GENERATION_STOP_FIELDS} from './generated.js';
+import {BULK_COLLECTIONS,RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED,GENERATION_STOP_FIELDS} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
@@ -5288,6 +5288,9 @@ async function renderCatalogue(target:HTMLElement,kinds:string[]){
     columns:[
       {key:'name',label:singularOf(kind).replace(/^./,c=>c.toUpperCase()),text:r=>`${titleFor(r)} ${r.description||''}`,sort:r=>titleFor(r),cell:nameCell,
         edit:items.every(r=>typeof r.name==='string')?inlineField(kind,'name',{kind:'text',required:true,maxLength:160}):undefined},
+      // A service's or place's code for dense grids and print, edited in place on one row or many (blank: the name shows).
+      ...(kind==='services'||kind==='locations'?[{key:'code',label:BULK_COLLECTIONS[kind].fields.short_code.label,field:'short_code',text:(r:Row)=>String(r.short_code||''),
+        cell:(r:Row)=>el('span',{class:'mono'},String(r.short_code||'')),edit:inlineField(kind,'short_code',{kind:'text',maxLength:6})}]:[]),
       ...catalogueColumns(kind).map(([label,render],n)=>({key:'c'+n,label,cell:(r:Row)=>render(r),text:(r:Row)=>textOf(render(r)),facet:(r:Row)=>textOf(render(r))})),
       // Leave types: reordered and switched in place (the order is the Type picker's order).
       ...(kind==='leave_types'?[

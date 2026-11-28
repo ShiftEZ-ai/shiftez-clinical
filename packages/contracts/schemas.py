@@ -16,6 +16,8 @@ from packages.domain.worker_contract import OUTBOX_STATES
 
 ID = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
 Name = Annotated[str, StringConstraints(min_length=1, max_length=160)]
+# A short code for dense grids and print (people, ranks, duty types, services, locations): A-Z and 0-9, up to 6; '' = none.
+ShortCode = Annotated[str, StringConstraints(max_length=6, pattern=r'^[A-Z0-9]{0,6}$')]
 Email = Annotated[str, StringConstraints(pattern=r"^[^@\s\"]+@[^@\s\"]+\.[^@\s\"]+$", max_length=254)]
 Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=500)]
 # A tag's length, and how many one person carries: the person form checks them under its field (generated.ts).
@@ -1160,12 +1162,13 @@ class ServiceInput(NamedInput):
     mode: Literal['unspecified', 'physical', 'virtual'] = Field(default='unspecified', json_schema_extra={"bulk": True})
     calendar_id: ID | None = Field(default=None, json_schema_extra={"bulk": True})
     colour: Colour = Field(default='', json_schema_extra={"bulk": True})
+    short_code: ShortCode = Field(default='', json_schema_extra={"bulk": True})
 
 
 class CategoryInput(NamedInput):
     sort_order: int = Field(default=1000, ge=0, le=100000, strict=True, json_schema_extra={"bulk": True})
     colour: Colour = Field(default='', json_schema_extra={"bulk": True})
-    short_code: str = Field(default='', max_length=6, pattern=r'^[A-Z0-9]{0,6}$', json_schema_extra={"bulk": True})
+    short_code: ShortCode = Field(default='', json_schema_extra={"bulk": True})
 
 
 # What a tag can label (a catalogue name each).
@@ -1972,7 +1975,7 @@ class PersonInput(Schema):
     pager: str = Field(default="", max_length=40, json_schema_extra={"bulk": True})
     directory_section: str = Field(default="", max_length=160, json_schema_extra={"bulk": True, "property": True})
     directory_order: int = Field(default=1000, ge=0, le=100000, json_schema_extra={"bulk": True})
-    short_code: str = Field(default="", max_length=6, pattern=r"^[A-Z0-9]{0,6}$", json_schema_extra={"bulk": True, "property": True})
+    short_code: ShortCode = Field(default="", json_schema_extra={"bulk": True, "property": True})
     rota_name: str = Field(default='', max_length=160)
     rota_aliases: list[Name] = Field(default_factory=list, max_length=30)
     tags: list[Tag] = Field(default_factory=list, max_length=TAG_LIMITS["per_person"], json_schema_extra={"bulk": True})
@@ -2551,6 +2554,7 @@ class LocationInput(EffectiveInput):
     parent_id: ID | None = Field(default=None, json_schema_extra={"bulk": True})
     calendar_id: ID | None = Field(default=None, json_schema_extra={"bulk": True})
     capacity: int = Field(default=1, ge=1, le=1000, json_schema_extra={"bulk": True})
+    short_code: ShortCode = Field(default='', json_schema_extra={"bulk": True})
 
 
 class MembershipBulkInput(Schema):
@@ -2836,7 +2840,7 @@ class TypeDefinition(Schema):
 
 
 class AssignmentTypeInput(NamedInput):
-    short_code: str = Field(default='', max_length=6, pattern=r'^[A-Z0-9]{0,6}$', json_schema_extra={"bulk": True})
+    short_code: ShortCode = Field(default='', json_schema_extra={"bulk": True})
     definition: TypeDefinition = Field(json_schema_extra={"bulk": True})
 
 

@@ -346,9 +346,8 @@ def write_catalogue(db, actor, command, update=False, *, preview_only=False, res
             programme_write_access(db, actor, kind, row)
         if kind != "programmes" or row:
             programme_write_access(db, actor, kind, row if kind == "programmes" else value)
-    if kind == 'categories' and row and 'short_code' not in payload.value:
-        value = value.model_copy(update={'short_code': row.short_code})
-    if kind == 'assignment_types' and row and 'short_code' not in payload.value:
+    # A save that leaves the short code out keeps the stored one (forms and imports that predate the field).
+    if kind in {'categories', 'assignment_types', 'services', 'locations'} and row and 'short_code' not in payload.value:
         value = value.model_copy(update={'short_code': row.short_code or ''})
     if row and kind in {'tags', 'rotation_types', 'leave_types', 'categories'}:
         fields = ('sort_order',) if kind == 'categories' else ('short_name',)
