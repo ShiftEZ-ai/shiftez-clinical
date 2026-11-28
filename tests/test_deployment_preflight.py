@@ -358,6 +358,22 @@ def test_first_admin_recovery_refuses_non_posix_before_opening_database(tmp_path
     assert not output.exists()
 
 
+def test_institution_bootstrap_refuses_non_posix_before_migrating(tmp_path, monkeypatch):
+    from scripts import manage
+
+    def refuse_database(*_args, **_kwargs):
+        pytest.fail("An unsupported platform must not touch the database")
+
+    output = tmp_path / "unused"
+    monkeypatch.setattr(manage, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(manage, "check_migrations", refuse_database)
+    monkeypatch.setattr(manage, "migrate", refuse_database)
+    monkeypatch.setattr(manage, "make_engine", refuse_database)
+    with pytest.raises(RuntimeError, match="needs a POSIX host"):
+        manage.init_institution(Settings(environment="test"), SimpleNamespace(output=output), None, set())
+    assert not output.exists()
+
+
 @pytest.mark.postgres
 def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgres_worker_url, tmp_path, monkeypatch, capsys):
     from apps.api.main import create_app
@@ -376,12 +392,58 @@ def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgr
                "FORWARDED_ALLOW_IPS": "192.0.2.18"}
         for name, val in env.items():
             monkeypatch.setenv(name, val)
-        monkeypatch.setattr(sys, "argv", ["manage.py", "init-institution",
-                        "--organisation", "Organisation (test)", "--department", "Department (test)",
-                        "--username", "first-admin", "--email", "first-admin@example.test",
-                        "--display-name", "Administrator (test)", "--reason", "Initialize test installation"])
-        manage.main()
-        original = capsys.readouterr().out.splitlines()[-1]
+
+        def bootstrap(output=None):
+            argv = ["manage.py", "init-institution",
+                    "--organisation", "Organisation (test)", "--department", "Department (test)",
+                    "--username", "first-admin", "--email", "first-admin@example.test",
+                    "--display-name", "Administrator (test)", "--reason", "Initialize test installation"]
+            if output is not None:
+                argv.extend(["--output", str(output)])
+            monkeypatch.setattr(sys, "argv", argv)
+            manage.main()
+
+        with pytest.raises(SystemExit):
+            bootstrap()
+        assert "Institution bootstrap requires --output" in capsys.readouterr().err
+
+        shared_dir = tmp_path / "shared"
+        shared_dir.mkdir()
+        for mode in (0o740, 0o704):
+            shared_dir.chmod(mode)
+            with pytest.raises(RuntimeError, match="accessible only to its owner"):
+                bootstrap(shared_dir / "bootstrap")
+            assert not list(shared_dir.iterdir())
+
+        bootstrap_dir = tmp_path / "bootstrap-output"
+        bootstrap_dir.mkdir(mode=0o700)
+        existing = bootstrap_dir / "existing"
+        existing.write_text("Retained file", encoding="utf-8")
+        with pytest.raises(FileExistsError):
+            bootstrap(existing)
+        assert existing.read_text(encoding="utf-8") == "Retained file"
+
+        sync = os.fsync
+
+        def fail_directory(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError("Synthetic directory sync failure")
+            sync(fd)
+
+        output = bootstrap_dir / "bootstrap"
+        with monkeypatch.context() as patch:
+            patch.setattr(manage.os, "fsync", fail_directory)
+            with pytest.raises(OSError, match="Synthetic directory sync failure"):
+                bootstrap(output)
+        assert sorted(bootstrap_dir.iterdir()) == [existing]
+        if capsys.readouterr().out:
+            pytest.fail("Failed bootstrap wrote to standard output")
+
+        bootstrap(output)
+        if capsys.readouterr().out != f"{output}\n":
+            pytest.fail("Bootstrap did not write only the output path to standard output")
+        assert not output.stat().st_mode & 0o077
+        original = output.read_text(encoding="utf-8").strip()
         if not original.startswith(origin + "/invite/"):
             pytest.fail("Bootstrap did not return an invitation")
         output_dir = tmp_path / "private"
@@ -432,13 +494,6 @@ def test_first_admin_can_set_a_password_and_sign_in_on_a_new_installation(postgr
                 if any(os.path.samestat(identity, file.stat()) for file in files):
                     raise KeyboardInterrupt
                 return identity
-
-            sync = os.fsync
-
-            def fail_directory(fd):
-                if stat.S_ISDIR(os.fstat(fd).st_mode):
-                    raise OSError("Synthetic directory sync failure")
-                sync(fd)
 
             def interrupt_directory(fd):
                 if stat.S_ISDIR(os.fstat(fd).st_mode):
