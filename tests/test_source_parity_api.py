@@ -11,6 +11,7 @@ from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts import schemas as s
 from packages.domain.conditions import active_rules, with_tags
+from .governance_support import retire_rule
 
 
 def selector(field, value):
@@ -83,8 +84,7 @@ def test_options_are_reviewed_persisted_audited_and_undoable(h, concept):
         'expected_revision': active['revision']})['record']
     newer = h.command('approver', 'policy.activate', {'reason': 'Review changed configuration'},
                       replacement['id'], replacement['revision'])['record']
-    assert h.command('approver', 'policy.retire', {'reason': 'Undo configuration change'},
-                     newer['id'], newer['revision'])['restored_ids'] == [active['id']]
+    assert retire_rule(h, newer, 'Undo configuration change')['restored_ids'] == [active['id']]
     stored = next(p for p in h.get('auditor', '/api/policies?status=active')['policies'] if p['id'] == active['id'])
     assert stored['definition']['rule']['lines'][0]['settings'][kind] == settings
     with transaction(h.app.state.engine) as db:

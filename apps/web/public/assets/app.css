@@ -499,6 +499,8 @@ button[aria-busy=true]:disabled{cursor:progress}
 .fade-out{position:fixed;inset:0;z-index:3000;animation:fade-out .15s var(--ease) forwards;pointer-events:none}
 @media (prefers-reduced-motion:reduce){.top-progress::after{left:0;width:100%;opacity:.7}.fade-out{display:none}}
 #toast-tray{position:fixed;right:20px;bottom:20px;width:min(420px,calc(100% - 40px));z-index:2600;display:flex;flex-direction:column;gap:8px}
+/* An open action menu sits above messages (the person just opened it): its items stay clickable where a message overlaps. */
+.popover.menu-list{z-index:2700}
 .toast{background:var(--ink);color:var(--bg);border-radius:var(--r-lg);padding:12px 16px;font-size:13.5px;line-height:1.5;box-shadow:var(--sh-lg);animation:pop .16s var(--ease)}
 .toast.error{background:var(--err-solid);color:var(--on-err)}
 /* A warning (changes not yet saved, a step to take first) reads gold, with its icon. */
@@ -1737,7 +1739,9 @@ tr.dt-linked>td{background:var(--accent-soft)}
    Keep the page selector weak enough for shared selection-bar spacing to override its bottom padding. */
 @media screen{
   .page.page-contained:where(:not(:has(>div>div>.rc-waiting)):has(.rt,>div>div>[data-table=rule-line-db]>.dt-body>.table-scroll)){display:flex;flex-direction:column;overflow:hidden;scrollbar-gutter:auto;max-width:none;padding-bottom:16px}
-  .page-contained :is(div:has(>.rt),div:has(>div>.rt),.rt,.rt-body),
+  /* A background redraw keeps the list on screen one wrapper deeper (app.ts renderPage): it keeps the same height, so
+     its restored native position is not clamped to the top. */
+  .page-contained :is(div:has(>.rt),div:has(>div>.rt),.rt,.rt-body),.page-contained>div:has(>div>div>.rt),
   .page-contained:not(:has(>div>div>.rc-waiting))>div:has(>div>[data-table=rule-line-db]>.dt-body>.table-scroll),
   .page-contained:not(:has(>div>div>.rc-waiting))>div>div:has(>[data-table=rule-line-db]>.dt-body>.table-scroll){display:flex;flex-direction:column;flex:1;min-height:0}
   .page-contained .rt>.dt-toolbar{flex:none}
@@ -1903,7 +1907,9 @@ html:has(#main.page-planner){overflow-anchor:none}
 .page-planner .wk-content:has(.table-scroll){align-self:stretch;min-height:0;display:flex;flex-direction:column}
 .page-planner .wk-content :is(.panel:has(.table-scroll),.cov,.sd-day,.dt,.dt-body){display:flex;flex-direction:column;min-height:0}
 .page-planner .wk-layout{flex:1;min-height:0;align-items:flex-start}
-.page-planner .wk-scroller{overflow:auto;max-height:100%}
+/* The grid's scroll across a redraw is put back by app.ts plannerScroll, which stops once anything else moves it. Scroll
+   anchoring (per scroller: the html rule above does not reach it) moved it as the fitting grew rows above: no anchoring. */
+.page-planner .wk-scroller{overflow:auto;max-height:100%;overflow-anchor:none}
 /* The Schedule grid (Timeline, Counts, any axes) and People fill the view under the toolbar like the Week grid; few rows keep their height. */
 .page-planner :is(.wk,.wk-content):has(>:is(.tl,.ppl)){display:flex;flex-direction:column}
 .page-planner :is(.wk,.wk-content)>:is(.tl,.ppl){flex:0 1 auto;min-height:0;max-height:none}

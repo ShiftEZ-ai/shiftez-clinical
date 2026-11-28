@@ -1,0 +1,128 @@
+{
+  "measured_at": "2026-11-27",
+  "workflow": ".github/workflows/ci.yml",
+  "runs": 224,
+  "first_run": 44042061847,
+  "last_run": 45955814949,
+  "jobs": {
+    "browser": {
+      "p95_minutes": 27.866667,
+      "producer": ".github/workflows/ci-tests.yml#tests",
+      "events": {
+        "pull_request": {"runs": 142, "first_run": 45584092024, "last_run": 45954233391, "p95_seconds": 1180, "max_seconds": 3023, "max_run": 45599243127, "max_job": 139154850936},
+        "merge_group": {"runs": 30, "first_run": 45919547259, "last_run": 45954850180, "p95_seconds": 763, "max_seconds": 788, "max_run": 45947033864, "max_job": 140334691935},
+        "push:main": {"runs": 13, "first_run": 45909058212, "last_run": 45944603602, "p95_seconds": 1143, "max_seconds": 1143, "max_run": 45920971524, "max_job": 140252038297},
+        "schedule": {"runs": 7, "first_run": 44497982877, "last_run": 45798519858, "p95_seconds": 1672, "max_seconds": 1672, "max_run": 44497982877, "max_job": 135470990331},
+        "workflow_dispatch": {"runs": 5, "first_run": 44145579808, "last_run": 44410556106, "p95_seconds": 1506, "max_seconds": 1506, "max_run": 44381430181, "max_job": 135075293709}
+      }
+    },
+    "checks": {
+      "p95_minutes": 4.833333,
+      "events": {
+        "pull_request": {"runs": 147, "first_run": 45584092024, "last_run": 45954233391, "p95_seconds": 242, "max_seconds": 399, "max_run": 45881229151, "max_job": 140120773947},
+        "merge_group": {"runs": 30, "first_run": 45919547259, "last_run": 45954850180, "p95_seconds": 290, "max_seconds": 391, "max_run": 45939273958, "max_job": 140309587881},
+        "push:main": {"runs": 30, "first_run": 45909058212, "last_run": 45955814949, "p95_seconds": 260, "max_seconds": 264, "max_run": 45939825770, "max_job": 140311325795},
+        "schedule": {"runs": 8, "first_run": 44497982877, "last_run": 45798519858, "p95_seconds": 150, "max_seconds": 150, "max_run": 45798519858, "max_job": 139835463464},
+        "workflow_dispatch": {"runs": 5, "first_run": 44145579808, "last_run": 44410556106, "p95_seconds": 91, "max_seconds": 91, "max_run": 44381430181, "max_job": 135074406988}
+      }
+    },
+    "ci-gate": {
+      "p95_minutes": 0.45,
+      "events": {
+        "pull_request": {"runs": 108, "first_run": 45584092024, "last_run": 45954233391, "p95_seconds": 27, "max_seconds": 30, "max_run": 45718137426, "max_job": 139580221666},
+        "merge_group": {"runs": 30, "first_run": 45919547259, "last_run": 45954850180, "p95_seconds": 18, "max_seconds": 18, "max_run": 45954850180, "max_job": 140363458954},
+        "push:main": {"runs": 30, "first_run": 45909058212, "last_run": 45955814949, "p95_seconds": 18, "max_seconds": 19, "max_run": 45955814949, "max_job": 140362747759},
+        "schedule": {"runs": 3, "first_run": 45386831423, "last_run": 45798519858, "p95_seconds": 18, "max_seconds": 18, "max_run": 45798519858, "max_job": 139879362748}
+      }
+    },
+    "nightly-budget": {
+      "p95_minutes": 0.266667,
+      "events": {
+        "schedule": {"runs": 8, "first_run": 44497982877, "last_run": 45798519858, "p95_seconds": 16, "max_seconds": 16, "max_run": 44497982877, "max_job": 135469966391}
+      }
+    },
+    "static": {
+      "p95_minutes": 1.766667,
+      "events": {
+        "pull_request": {"runs": 143, "first_run": 45584092024, "last_run": 45954233391, "p95_seconds": 106, "max_seconds": 137, "max_run": 45863115962, "max_job": 140061204512},
+        "merge_group": {"runs": 30, "first_run": 45919547259, "last_run": 45954850180, "p95_seconds": 69, "max_seconds": 77, "max_run": 45921278831, "max_job": 140253036376},
+        "push:main": {"runs": 30, "first_run": 45909058212, "last_run": 45955814949, "p95_seconds": 68, "max_seconds": 70, "max_run": 45932625592, "max_job": 140289049316},
+        "schedule": {"runs": 8, "first_run": 44497982877, "last_run": 45798519858, "p95_seconds": 65, "max_seconds": 65, "max_run": 45596947151, "max_job": 139146591811},
+        "workflow_dispatch": {"runs": 5, "first_run": 44145579808, "last_run": 44410556106, "p95_seconds": 81, "max_seconds": 81, "max_run": 44398268751, "max_job": 135134917039}
+      }
+    },
+    "unit": {
+      "p95_minutes": 15.916667,
+      "producer": ".github/workflows/ci-tests.yml#tests",
+      "events": {
+        "pull_request": {"runs": 143, "first_run": 45584092024, "last_run": 45954233391, "p95_seconds": 763, "max_seconds": 871, "max_run": 45808479867, "max_job": 139871140631},
+        "merge_group": {"runs": 30, "first_run": 45919547259, "last_run": 45954850180, "p95_seconds": 796, "max_seconds": 878, "max_run": 45938015330, "max_job": 140306305145},
+        "push:main": {"runs": 13, "first_run": 45909058212, "last_run": 45944603602, "p95_seconds": 769, "max_seconds": 769, "max_run": 45923326722, "max_job": 140261951010},
+        "schedule": {"runs": 8, "first_run": 44497982877, "last_run": 45798519858, "p95_seconds": 933, "max_seconds": 933, "max_run": 44497982877, "max_job": 135498726119},
+        "workflow_dispatch": {"runs": 5, "first_run": 44145579808, "last_run": 44410556106, "p95_seconds": 955, "max_seconds": 955, "max_run": 44145579808, "max_job": 134260417163}
+      }
+    }
+  },
+  "additional_workflows": [
+    {
+      "workflow": ".github/workflows/dependency-graph.yml",
+      "runs": 24,
+      "first_run": 45927732635,
+      "last_run": 45956371127,
+      "jobs": {
+        "submit": {
+          "p95_minutes": 0.116667,
+          "events": {
+            "push:main": {"runs": 24, "first_run": 45927732635, "last_run": 45956371127, "p95_seconds": 7, "max_seconds": 7, "max_run": 45950827496, "max_job": 140346015051}
+          }
+        }
+      }
+    },
+    {
+      "workflow": ".github/workflows/image.yml",
+      "runs": 3,
+      "first_run": 45957540552,
+      "last_run": 45959336727,
+      "jobs": {
+        "publish": {
+          "p95_minutes": 1.9,
+          "events": {
+            "push:main": {"runs": 3, "first_run": 45957540552, "last_run": 45959336727, "p95_seconds": 114, "max_seconds": 114, "max_run": 45959336727, "max_job": 140373164280}
+          }
+        }
+      }
+    },
+    {
+      "workflow": ".github/workflows/working-policy.yml",
+      "runs": 48,
+      "first_run": 45930820259,
+      "last_run": 45957582547,
+      "jobs": {
+        "policy": {
+          "p95_minutes": 0.6,
+          "events": {
+            "pull_request": {"runs": 24, "first_run": 45937641269, "last_run": 45957582547, "p95_seconds": 34, "max_seconds": 42, "max_run": 45941864823, "max_job": 140317754215},
+            "merge_group": {"runs": 24, "first_run": 45930820259, "last_run": 45957543868, "p95_seconds": 36, "max_seconds": 41, "max_run": 45947033810, "max_job": 140333980006}
+          }
+        }
+      }
+    }
+  ],
+  "ci_gate_wall_seconds": {
+    "pull_request": {
+      "n": 150,
+      "p50_seconds": 937,
+      "p95_seconds": 1988
+    },
+    "merge_group": {
+      "n": 30,
+      "p50_seconds": 953,
+      "p95_seconds": 1440
+    },
+    "push:main": {
+      "n": 30,
+      "p50_seconds": 238,
+      "p95_seconds": 2868
+    }
+  }
+}

@@ -418,3 +418,45 @@ def test_convert_preference_to_goal_moves_its_clinic_onto_the_goal(browser, live
                                                                            {'field': 'eligible_service_ids', 'op': 'any', 'values': [clinic]}]
     finally:
         context.close()
+
+
+def test_retry_of_safety_protection_question_renews_a_stale_token_once(browser, live_server, h):
+    old = h.policy({'kind': 'min_rest', 'hours': 11})
+    new = h.command('coordinator', 'policy.create', {
+        'name': 'Rest standard', 'owner': 'Rule coordinator', 'source': 'Review rest requirements',
+        'starts_on': '2020-01-01',
+        'definition': {'replaces_id': old['id'], 'rule': {'kind': 'min_rest', 'hours': 9}}})['record']
+    context, page = sign_in(browser, live_server, 'approver')
+    questions, renewals = [], []
+
+    def review(route):
+        if route.request.method != 'POST':
+            route.continue_()
+            return
+        questions.append(route.request.post_data_json)
+        if len(questions) == 1:
+            route.fulfill(status=503, json={'error': {'code': 'UNAVAILABLE', 'message': 'Protection question unavailable'}})
+        elif len(questions) == 2:
+            route.fulfill(status=403, json={'error': {'code': 'CSRF_FAILED', 'message': 'Refresh your session'}})
+        else:
+            route.continue_()
+
+    try:
+        page.route(f"**/api/policies/{new['id']}/review", review)
+        page.on('response', lambda r: renewals.append(r.status) if r.url.endswith('/auth/refresh') else None)
+        navigate(page, 'rules')
+        row = page.locator(f'.rule-item[data-rule-ids~="{new["id"]}"]')
+        row.get_by_role('button', name=re.compile(r'^Review(?: 1)?$')).click()
+        dialog = page.get_by_role('dialog', name=re.compile(r'^Review '))
+        retry = dialog.get_by_role('button', name='Retry', exact=True)
+        expect(retry).to_be_visible()
+        retry.click()
+        expect(dialog.get_by_text('This proposal reduces mandatory safety protection and needs independent approval.',
+                                  exact=True)).to_be_visible()
+        expect(retry).to_have_count(0)
+        expect(dialog.get_by_role('button', name='Activate', exact=True)).to_be_enabled()
+        expect(page.get_by_role('dialog', name='Sign in')).to_have_count(0)
+        assert renewals == [200] and len(questions) == 3
+        assert questions[1] == questions[2]
+    finally:
+        context.close()
