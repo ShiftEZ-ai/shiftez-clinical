@@ -10,7 +10,7 @@ from apps.api.snapshots import snapshot_hash
 from packages.domain.input_manifest import manifest
 
 # These handlers have no external side effects; their database preparation always rolls back.
-KINDS = {'workspace.create', 'workspace.rule_adjust', 'workspace.target_override', 'workspace.undo', 'workspace.redo',
+KINDS = {'workspace.create', 'workspace.context', 'workspace.rule_adjust', 'workspace.target_override', 'workspace.undo', 'workspace.redo',
          'workspace.publish', 'shift.create', 'shift.update', 'shift.action', 'shift.copy',
          'draft.move', 'draft.swap', 'series.expand', 'series.reconcile',
          'workspace.merge.preview', 'workspace.merge.apply',

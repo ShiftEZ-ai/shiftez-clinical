@@ -6427,6 +6427,7 @@ export type WorkspaceInput = {
   "replaces_publication_id"?: string | null;
   "urgency"?: "routine" | "urgent";
   "urgency_reason"?: string;
+  "context_draft_id"?: string | null;
   "source_workspace_id"?: string | null;
   "source_revision"?: number | null;
   "baseline"?: WorkspaceBaselineScope | null;

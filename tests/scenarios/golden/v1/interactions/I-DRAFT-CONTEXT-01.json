@@ -1,0 +1,82 @@
+{
+  "id": "I-DRAFT-CONTEXT-01",
+  "revision": 1,
+  "title": "Adjacent draft context",
+  "intent": "Rest and minimum duty quotas use the earlier planning draft.",
+  "pressure": "The preferred clinician worked late in the earlier draft and needs rest. That earlier duty meets the minimum for the shared week.",
+  "covers": {
+    "kind.min_rest": [
+      "rest"
+    ],
+    "kind.block_quota": [
+      "quota"
+    ]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "categories", "value": {"name": "I-DRAFT-CONTEXT-01 Clinician (eligible rank)", "starts_on": "2020-01-01"}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "services", "value": {"name": "I-DRAFT-CONTEXT-01 Clinic (cover pressure)", "starts_on": "2020-01-01"}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "location_kind", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "location_types", "value": {"name": "I-DRAFT-CONTEXT-01 Room (clinical space)", "starts_on": "2020-01-01"}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "location", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "locations", "value": {"name": "I-DRAFT-CONTEXT-01 Clinic (several eligible people)", "starts_on": "2020-01-01", "location_type_id": "$location_kind", "capacity": 4}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "people", "value": {"display_name": "I-DRAFT-CONTEXT-01 Clinician 1 (eligible alternative)", "tags": ["golden"]}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "m0", "role": "admin", "kind": "membership.create", "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2020-01-01"}},
+    {"key": "e0", "role": "admin", "kind": "eligibility.create", "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2020-01-01"}},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "people", "value": {"display_name": "I-DRAFT-CONTEXT-01 Clinician 2 (eligible alternative)", "tags": ["golden"]}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "m1", "role": "admin", "kind": "membership.create", "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2020-01-01"}},
+    {"key": "e1", "role": "admin", "kind": "eligibility.create", "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2020-01-01"}},
+    {"key": "night_type", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "assignment_types", "value": {"name": "Earlier duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 1}]}}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "early_type", "role": "admin", "kind": "catalogue.create", "payload": {"catalogue": "assignment_types", "value": {"name": "Boundary clinic", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 1}]}}, "reason": "Reviewed synthetic golden scenario"}},
+    {"key": "earlier", "role": "coordinator", "kind": "workspace.create", "payload": {"name": "Earlier planning draft", "starts_on": "2027-01-03", "ends_on": "2027-01-04"}},
+    {"key": "night", "role": "coordinator", "kind": "shift.create", "payload": {"workspace_id": "$earlier", "assignment_type_id": "$night_type", "location_id": "$location", "service_ids": ["$service"], "start": "2027-01-03T20:00:00+03:00", "end": "2027-01-03T23:00:00+03:00", "participants": [{"person_id": "$p0", "start": "2027-01-03T20:00:00+03:00", "end": "2027-01-03T23:00:00+03:00", "fixed": true}]}, "revision": "$earlier.revision"},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create", "payload": {"name": "Later planning draft", "starts_on": "2027-01-04", "ends_on": "2027-01-10", "context_draft_id": "$earlier"}},
+    {"key": "rest", "role": "coordinator", "kind": "policy.create", "payload": {"name": "Rest (golden binding pressure)", "owner": "Golden scenario fixture", "source": "Synthetic reviewed expectation", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "min_rest", "hours": 11}, "scope": {"person_id": "$p0"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "rest_active", "role": "approver", "kind": "policy.activate", "payload": {"reason": "Independent synthetic scenario approval"}, "target": "$rest", "revision": "$rest.revision"},
+    {"key": "bait", "role": "coordinator", "kind": "policy.create", "payload": {"name": "Bait (golden binding pressure)", "owner": "Golden scenario fixture", "source": "Synthetic reviewed expectation", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "allocation_preference", "priority": 9}, "scope": {"person_id": "$p0"}, "severity": "advisory", "workspace_id": "$workspace"}}},
+    {"key": "bait_active", "role": "approver", "kind": "policy.activate", "payload": {"reason": "Independent synthetic scenario approval"}, "target": "$bait", "revision": "$bait.revision"},
+    {"key": "early", "role": "coordinator", "kind": "shift.create", "payload": {"workspace_id": "$workspace", "assignment_type_id": "$early_type", "location_id": "$location", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}, "revision": "$workspace.revision"},
+    {"key": "quota", "role": "coordinator", "kind": "policy.create", "payload": {"name": "Boundary duty quota", "owner": "Golden scenario fixture", "source": "Synthetic reviewed expectation", "starts_on": "2027-01-03", "definition": {"rule": {"kind": "block_quota", "starts_on": "2027-01-03", "ends_on": "2027-01-10", "window_alignment": "calendar_week", "metric": "duties", "comparison": "minimum", "amount": 1}, "scope": {"person_id": "$p0"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "quota_active", "role": "approver", "kind": "policy.activate", "payload": {"reason": "Independent synthetic scenario approval"}, "target": "$quota", "revision": "$quota.revision"}
+  ],
+  "expect": {
+    "binding_rules": [
+      "rest",
+      "quota"
+    ],
+    "rest": {
+      "code": "MIN_REST",
+      "session": "early",
+      "person": "p0"
+    },
+    "quota": {
+      "actual": 1,
+      "without_context": 0
+    },
+    "staleness": {
+      "edit": "cancel",
+      "session": "night",
+      "earlier": "earlier"
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {
+          "coverage": 0,
+          "rules": 0,
+          "fairness": 0,
+          "preferences": 100,
+          "stability": 1
+        }
+      }
+    }
+  }
+}

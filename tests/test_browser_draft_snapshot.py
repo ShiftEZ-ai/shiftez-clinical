@@ -86,3 +86,32 @@ def test_submit_refusal_offers_refresh_for_a_revised_department_limit(browser, l
         expect(page.get_by_role('dialog', name='Refresh draft baseline', exact=True)).to_be_visible()
     finally:
         context.close()
+
+
+def test_earlier_draft_for_checks_can_be_saved_and_cleared(browser, live_server, h):
+    earlier = h.workspace('Earlier planning rota', '2026-10-04', '2026-10-11')
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        page.clock.set_fixed_time('2026-10-03T09:00:00+03:00')
+        navigate(page, f"planner/{earlier['id']}")
+        new_draft(page)
+        dialog = page.get_by_role('dialog', name='New rota', exact=True)
+        fields = dialog.get_by_label('Earlier draft for checks', exact=True)
+        expect(fields.locator(f"option[value='{earlier['id']}']")).to_have_count(1)
+        fields.select_option(earlier['id'])
+        save_dialog(dialog, 'Create draft')
+        later = next(row for row in h.get('coordinator', '/api/workspaces')['workspaces']
+                     if row['context_draft_id'] == earlier['id'])
+
+        page.reload()
+        navigate(page, f"planner/{later['id']}")
+        page.get_by_role('button', name='Rota tools', exact=True).click()
+        page.get_by_role('menuitem', name='Earlier draft for checks…', exact=True).click()
+        edit = page.get_by_role('dialog', name='Earlier draft for checks', exact=True)
+        field = edit.get_by_label('Earlier draft for checks', exact=True)
+        expect(field).to_have_value(earlier['id'])
+        field.select_option('')
+        save_dialog(edit, 'Save')
+        assert h.detail(later)['workspace']['context_draft_id'] is None
+    finally:
+        context.close()

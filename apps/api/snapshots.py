@@ -8,7 +8,7 @@ from packages.contracts.schemas import GENERATION_RUNTIME_OPTIONS
 from datetime import date, timedelta
 from operator import itemgetter
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from sqlalchemy import false, func, or_, select, tuple_
+from sqlalchemy import and_, false, func, or_, select, tuple_
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.orm import defer, object_session
 from . import models as m
@@ -76,7 +76,7 @@ SNAPSHOT_INPUT_SOURCE_SPECS = (
     # changes (db._wish_reservation_changes); other check saves do not.
     ('workspaces', m.Workspace, 'general', 'department', None, frozenset({
         'access_version_id', 'name', 'origin', 'content_revision', 'created_by', 'last_edited_by',
-        'base_publication_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
+        'base_publication_id', 'context_draft_id', 'submitted_fingerprint', 'submitted_at', 'review_snapshot', 'urgency',
         'urgency_reason', 'target_overrides', 'rule_adjustments', 'accepted_issues', 'archived_by',
         'archive_reason', 'archive_state', 'return_note', 'replaces_publication_id',
         'id', 'revision', 'created_at', 'department_id', 'validation'})),
@@ -399,7 +399,9 @@ def workspace_content(db, workspace) -> dict:
 def precondition_snapshot(db, workspace):
     """Acquire current preview inputs once per unchanged rota in this transaction."""
     held = db.info.get('_precondition_snapshot') or {}
-    if (held.get('workspace_id'), held.get('content_revision')) == (workspace.id, workspace.content_revision):
+    context = context_draft_hint(db, workspace)
+    if (held.get('workspace_id'), held.get('content_revision'), held.get('context_draft')) == (
+            workspace.id, workspace.content_revision, context):
         return held['data']
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
@@ -407,14 +409,15 @@ def precondition_snapshot(db, workspace):
     content = workspace_content(db, workspace)
     data = domain_snapshot(db, workspace, shared_inputs=inputs, own_shifts=content['shifts'])
     db.info['_precondition_snapshot'] = {'workspace_id': workspace.id, 'content_revision': workspace.content_revision,
-                                         'inputs': inputs, 'data': data, 'content': content,
+                                         'inputs': inputs, 'data': data, 'content': content, 'context_draft': context,
                                          'context': (department, organisation)}
     return data
 
 
 def take_precondition(db, workspace):
     held = db.info.pop('_precondition_snapshot', None) or {}
-    return held if (held.get('workspace_id'), held.get('content_revision')) == (workspace.id, workspace.content_revision) else {}
+    return held if (held.get('workspace_id'), held.get('content_revision'), held.get('context_draft')) == (
+        workspace.id, workspace.content_revision, context_draft_hint(db, workspace)) else {}
 
 
 def fingerprint(db, workspace, *, content_revision=None) -> str:
@@ -488,6 +491,35 @@ def draft_policy_hint(workspace, *, current_mandatory=False):
     return {'draft_policy_basis': DRAFT_POLICY_BASIS} if status == 'draft' else {}
 
 
+UNPUBLISHED_ROTA_STATES = ('draft', 'submitted', 'approved')
+
+
+def context_draft_clauses():
+    from .services.workspace_access import shared_clause
+
+    W = m.Workspace
+    return (W.status.in_(UNPUBLISHED_ROTA_STATES), W.archived_at.is_(None), shared_clause(),
+            ~W.id.in_(select(m.PublicationChangeList.workspace_id).where(m.PublicationChangeList.workspace_id.is_not(None))))
+
+
+def context_draft_hints(db, workspaces):
+    """Read shared planning context and its currency in one query for any batch."""
+    W = m.Workspace
+    linked = [w for w in workspaces if getattr(w, 'context_draft_id', None) and w.status in UNPUBLISHED_ROTA_STATES]
+    if not linked:
+        return {}
+    sources = {row.id: row for row in db.execute(select(W.id, W.department_id, W.starts_on, W.ends_on, W.content_revision)
+        .where(W.id.in_({w.context_draft_id for w in linked}), *context_draft_clauses()))}
+    return {w.id: {'context_draft': {'id': source.id, 'content_revision': source.content_revision,
+                                   'starts_on': source.starts_on.isoformat(), 'ends_on': source.ends_on.isoformat()}}
+            for w in linked if (source := sources.get(w.context_draft_id)) is not None
+            and source.department_id == w.department_id and source.ends_on <= w.starts_on}
+
+
+def context_draft_hint(db, workspace):
+    return context_draft_hints(db, [workspace]).get(workspace.id, {})
+
+
 def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
     """One shared acquisition per organisation for a visible batch; never authority across transactions.
 
@@ -507,6 +539,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         checks = stored_checks(db, workspaces)
     from .services.read_projections import cached as cached_reads, input_stamp, CANONICAL_AUDIENCE
     shared, result, pending, department_revisions = {}, {}, {}, {}
+    context_hints = context_draft_hints(db, workspaces)
     current_toolchain = digest(toolchain(quota_policy_limit()))
     for workspace in workspaces:
         department = db.get(m.Department, workspace.department_id)
@@ -519,7 +552,8 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         cached = checks[workspace.id].get('input_manifest') or {}
         if (currency_match(cached.get('dirty_hint'), {'input_revision': org.input_revision,
                 'availability_revision': org.availability_revision, 'content_revision': workspace.content_revision,
-                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)}
+                'department_revisions': revisions, 'baseline': _baseline_hint(db, workspace),
+                **draft_policy_hint(workspace), **context_hints.get(workspace.id, {})}
                 ) and cached.get('components', {}).get('toolchain') == current_toolchain):
             result[workspace.id] = cached['token']
             continue
@@ -530,7 +564,7 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
         C = m.WorkspaceReadProjection
         stored = db.execute(select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(skipped),
             C.audience == CANONICAL_AUDIENCE, C.kind == 'fingerprint')).all()
-        result.update({wid: value for wid, stamp, value in stored if stamp == input_stamp(db, pending[wid])})
+        result.update({wid: value for wid, stamp, value in stored if stamp == input_stamp(db, pending[wid], context_hint=context_hints.get(wid, {}))})
         for wid in skipped:
             del pending[wid]
     def build(wid):
@@ -545,7 +579,8 @@ def fingerprints(db, workspaces, *, checks=None, rebuild=None, reload=True):
             db.info.setdefault('read_snapshots', {})[wid] = data
         return data['fingerprint']
     result.update(cached_reads(db, pending, 'fingerprint',
-        {wid: input_stamp(db, workspace) for wid, workspace in pending.items()}, build))
+        {wid: input_stamp(db, workspace, context_hint=context_hints.get(wid, {}))
+         for wid, workspace in pending.items()}, build))
     return result
 
 
@@ -569,6 +604,7 @@ def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
     departments = {}
     revision_stamps = {}
     result = {}
+    context_hints = context_draft_hints(db, workspaces)
     if feasibility and workspaces:
         _seed_baseline_hints(db, workspaces)
         if checks:
@@ -578,7 +614,7 @@ def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
             result.update({wid: value for wid, stamp, value in db.execute(
                 select(C.workspace_id, C.stamp, C.value).where(C.workspace_id.in_(by_id),
                     C.audience == CANONICAL_AUDIENCE, C.kind == 'feasibility_fingerprint'))
-                if value is not None and stamp == input_stamp(db, by_id[wid], for_feasibility=True)})
+                if value is not None and stamp == input_stamp(db, by_id[wid], for_feasibility=True, context_hint=context_hints.get(wid, {}))})
     for workspace in workspaces:
         if workspace.id in result:
             continue
@@ -602,7 +638,7 @@ def cheap_fingerprints(db, workspaces, *, checks, feasibility=False):
                 'input_revision': rows[0].input_revision, 'availability_revision': rows[0].availability_revision,
                 'department_revisions': [list(row[:3]) for row in rows]}
         if (currency_match(hint, {**revision_stamps[organisation_id], 'content_revision': workspace.content_revision,
-                      'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace)})
+                      'baseline': _baseline_hint(db, workspace), **draft_policy_hint(workspace), **context_hints.get(workspace.id, {})})
                 and manifest.get('components', {}).get('toolchain') == current_toolchain
                 and manifest.get('token')):
             result[workspace.id] = (feasibility_token({'input_manifest': manifest})
@@ -622,7 +658,9 @@ def feasibility_fingerprints(db, workspaces, *, shared_inputs=None):
     from packages.domain.input_manifest import feasibility_token
     from .services.read_projections import cached, input_stamp
     rows = {workspace.id: workspace for workspace in workspaces}
-    stamps = {wid: input_stamp(db, workspace, for_feasibility=True) for wid, workspace in rows.items()}
+    context_hints = context_draft_hints(db, workspaces)
+    stamps = {wid: input_stamp(db, workspace, for_feasibility=True, context_hint=context_hints.get(wid, {}))
+              for wid, workspace in rows.items()}
     def build_many(ids):
         nonlocal shared_inputs
         if shared_inputs is None:
@@ -828,7 +866,7 @@ def _offer_history(db, facts, when=None):
 
 
 def _unchanged_external_shifts(db, workspace, previous, current, lo, hi, limit):
-    """Reuse unchanged published context within a write; own rows and every derived check stay fresh."""
+    """Reuse unchanged neighbouring duties within a write; own rows and derived checks stay fresh."""
     if previous is None or current['workspace']['status'] != 'draft':
         return None
     keys = ('id', 'department_id', 'status', 'starts_on', 'ends_on', 'base_publication_id', 'replaces_publication_id')
@@ -841,6 +879,7 @@ def _unchanged_external_shifts(db, workspace, previous, current, lo, hi, limit):
     if (previous.get('fingerprint') != expected
             or any(previous['organisation'].get(k) != current['organisation'].get(k) for k in dirty)
             or any(before.get(key) != after.get(key) for key in keys)
+            or previous.get('context_draft') != current.get('context_draft')
             or previous['organisation']['timezone'] != zone
             or previous.get('quota_policy_limit') != current['quota_policy_limit']):
         return None
@@ -988,6 +1027,7 @@ def currency_hint(db, workspace, *, mandatory_rules=True):
         'content_revision': workspace.content_revision,
         'baseline': _baseline_hint(db, workspace),
         **(draft_policy_hint(workspace) if mandatory_rules else {}),
+        **context_draft_hint(db, workspace),
     }, organisation)
     return current
 
@@ -1078,13 +1118,23 @@ def _snapshot_inputs(db, org):
     return result
 
 
-def external_schedule(db, workspace, department_ids, lo, hi, zone):
-    """In-force context for a draft, excluding its own publication and the version it amends."""
+def external_schedule(db, workspace, department_ids, lo, hi, zone, *, context_draft=None):
+    """Neighbouring duties, with the selected draft replacing its days for planning."""
     from .services.schedule import current_publications, in_force_clause
     publications = [p for p in current_publications(db, department_ids, *overlap_dates(lo, hi, zone), light=True)
                     if p.workspace_id != workspace.id and p.id != workspace.base_publication_id]
-    clauses = [in_force_clause(p, zone, workspace.starts_on if p.id == workspace.replaces_publication_id else None)
-               for p in publications]
+    clauses = []
+    if context_draft:
+        start = local_midnight(date.fromisoformat(context_draft['starts_on']), zone)
+        end = local_midnight(date.fromisoformat(context_draft['ends_on']), zone)
+        draft_days = and_(m.Shift.start >= start, m.Shift.start < end)
+        clauses.append(and_(m.Shift.workspace_id == context_draft['id'], draft_days))
+    for publication in publications:
+        before = workspace.starts_on if publication.id == workspace.replaces_publication_id else None
+        clause = in_force_clause(publication, zone, before)
+        if context_draft and publication.department_id == workspace.department_id:
+            clause = and_(clause, ~draft_days)
+        clauses.append(clause)
     query = select(m.Shift).where(or_(*clauses) if clauses else false(),
                                  m.Shift.start < hi, m.Shift.end > lo).order_by(m.Shift.start, m.Shift.id)
     return publications, query
@@ -1096,14 +1146,15 @@ def _snapshot_external_schedule(db, workspace, department_ids, lo, hi, zone, lim
     import pickle
     preparation = db.info.get('_planning_preparation') or {}
     shared = (preparation.get('kind') == 'shift.update' and not preparation['replay'] and previous is None)
+    context = current.get('context_draft')
     if shared:
         memo = db.info.setdefault('_prepared_external_schedule', {})
         key = (workspace.id, workspace.base_publication_id, workspace.replaces_publication_id, workspace.starts_on,
-               tuple(department_ids), lo, hi, zone, limit)
+               tuple(department_ids), lo, hi, zone, limit, tuple(context.values()) if context else None)
         if key in memo:
             publications, rows = memo[key]
             return publications, pickle.loads(rows)
-    publications, query = external_schedule(db, workspace, department_ids, lo, hi, zone)
+    publications, query = external_schedule(db, workspace, department_ids, lo, hi, zone, context_draft=context)
     external = _unchanged_external_shifts(db, workspace, previous, current, lo, hi, limit)
     if external is None:
         external = shift_records(db, db.scalars(query if limit is None else query.limit(limit)))
@@ -1692,6 +1743,7 @@ def _domain_snapshot(db, workspace, operational: bool = False, policy_overrides:
         if wishes != result["wishes"]:
             score_context["wishes"] = wishes
     result["focus_ids"] = [s["id"] for s in own]
+    result.update(context_draft_hint(db, workspace))
     publications, external = _snapshot_external_schedule(
         db, workspace, department_ids, lo, hi, org.timezone, MAX_SHIFTS + 1 if quota_policies else None,
         external_snapshot, result)
@@ -1847,7 +1899,8 @@ def domain_snapshot(db, workspace, *args, edit_sources=None, **kwargs):
     if not supported or not (writer or state and not state['replay']):
         return _domain_snapshot(db, workspace, *args, **kwargs)
     db.flush()
-    key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs})
+    key = snapshot_hash({'workspace': record(workspace, exclude=('validation',)), 'options': kwargs,
+                         **context_draft_hint(db, workspace)})
     if state and not state['replay']:
         # Reuse across rollback rounds at the same check position. Later checks may
         # follow assignment writes that leave the workspace row unchanged.

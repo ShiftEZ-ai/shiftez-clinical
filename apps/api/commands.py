@@ -52,7 +52,7 @@ COMMAND_PERMISSIONS = {
         "workspace.share", "workspace.designate", "workspace.archive_due", "workspace.merge.preview",
         "workspace.merge.apply", "swap.prepare", "workspace.create", "workspace.rule_adjust",
         "workspace.target_override", "draft.swap", "draft.move", "workspace.undo", "workspace.redo",
-        "workspace.resolve_overlap", "series.reconcile", "series.expand", "workspace.validate",
+        "workspace.resolve_overlap", "workspace.context", "series.reconcile", "series.expand", "workspace.validate",
         "workspace.submit", "request.link_rota", "import.preview", "import.reference_preview",
         "import.refresh", "import.apply", "job.create", "job.attach", "job.release", "job.dismiss",
         "job.add_time", "job.stop_keep_best", "job.continue", "generation.apply"), "planning.draft"),
@@ -428,6 +428,8 @@ def dispatch(db, actor, command, settings, *, github_check=None, github_export=N
         return catalogue.closure(db, actor, command)
     if kind == "workspace.create":
         return planning.create_workspace(db, actor, command, settings)
+    if kind == "workspace.context":
+        return planning.set_context_draft(db, actor, command)
     if kind in {"workspace.baseline.refresh.preview", "workspace.baseline.refresh.apply"}:
         from . import workspace_baselines
         return workspace_baselines.refresh(db, actor, command)
@@ -865,6 +867,8 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 if command.kind != 'workspace.validate':
                     state = {'workspace.submit': 'draft', 'workspace.approve': 'submitted', 'workspace.publish': 'approved'}[command.kind]
                     require(workspace.status == state, 'WORKFLOW_STATE', 'The rota is not ready for this action', 409)
+                    if command.kind in {'workspace.submit', 'workspace.publish'}:
+                        planning.require_official_context(db, workspace)
                 # Publish keeps the cheap preconditions; only its final writer acquires inputs.
                 if command.kind != 'workspace.publish':
                     since = m.now()

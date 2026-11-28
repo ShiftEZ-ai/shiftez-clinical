@@ -2041,6 +2041,7 @@ def create_app(settings: Settings | None = None, engine=None):
                    start: s.date | None = None, end: s.date | None = None, current_only: bool = False,
                    archived: bool = False, include_archived: bool = False, archived_only: bool = False,
                    q: str = Query("", max_length=160), copy_starts_on: s.date | None = None,
+                   context_before: s.date | None = None,
                    search_options: s.SearchOptions | None = Depends(parse_search_options)):
 
         with transaction(engine) as db:
@@ -2050,13 +2051,24 @@ def create_app(settings: Settings | None = None, engine=None):
             from .services.workspace_reads import workspace_list_etag
             archived_only = archived_only or archived
             representation = [limit, offset, start, end, current_only, archived, include_archived, archived_only, q,
-                              copy_starts_on, search_options.model_dump(mode="json") if search_options else None]
+                              copy_starts_on, context_before, search_options.model_dump(mode="json") if search_options else None]
             db.info['_request_parents'] = {}
             tag = workspace_list_etag(db, actor, representation)
             cached = conditional_response(request, tag)
             if isinstance(cached, Response):
                 return cached
             response.headers.update(cached)
+            if context_before is not None:
+                from .snapshots import context_draft_clauses
+                W = m.Workspace
+                choices = list(db.execute(select(W.id, W.name, W.starts_on, W.ends_on, W.status).where(
+                    W.department_id == actor.department_id, W.ends_on <= context_before,
+                    *context_draft_clauses()).order_by(W.ends_on.desc(), W.created_at.desc(), W.id).offset(offset)
+                    .limit(limit + 1)).mappings())
+                from .services.common import rota_names
+                names = rota_names(db, actor.roles, actor.person_id, {row['id']: row['name'] for row in choices[:limit]})
+                return {"workspaces": [{**row, "name": names[row['id']]} for row in choices[:limit]],
+                        "has_more": len(choices) > limit}
             # Keep the first page useful when a department retains years of rotas: current and
             # upcoming periods sort ahead of historical/far-future rows, while explicit filters
             # still expose the complete bounded history through offset/limit.

@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.errors import require
-from apps.api.snapshots import domain_snapshot
+from apps.api.snapshots import context_draft_hint, domain_snapshot
 from packages.domain.input_manifest import digest, toolchain
 from apps.api.settings import quota_policy_limit
 from packages.domain.conditions import counting_key
@@ -114,6 +114,7 @@ def _record(db, actor, person, workspace, publication, limit, offset):
     org = db.get(m.Organisation, actor.organisation_id)
     fresh = bool(check) and (bool(publication) or (
         dirty.get('content_revision') == workspace.content_revision
+        and dirty.get('context_draft') == context_draft_hint(db, workspace).get('context_draft')
         and manifest.get('components', {}).get('toolchain') == digest(toolchain(quota_policy_limit()))))
     current_data = None
     person_facts = ((manifest.get('sources') or {}).get(f'people:{person_id}') or {}).get('facts') or {}

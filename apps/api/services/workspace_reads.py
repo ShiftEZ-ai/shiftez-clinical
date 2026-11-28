@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, inspect, literal, select, union_all
 from sqlalchemy.orm import object_session
 from apps.api import models as m
-from apps.api.snapshots import DRAFT_POLICY_BASIS, draft_policy_hint
+from apps.api.snapshots import DRAFT_POLICY_BASIS, context_draft_hint, draft_policy_hint
 from packages.domain.input_manifest import digest
 from .planning import health
 from .conditional_reads import revision_etag
@@ -34,7 +34,8 @@ def fast_etag(db, actor, workspace, *, include_check_state=False, include_job_st
         # Legacy rows may lack the projection; use the writer's full validation stamp.
         validation_stamp = check_stamp(db, workspace)
     stamp = [workspace.revision, workspace.content_revision, workspace.status,
-             validation_stamp, *parent_revisions, *draft_policy_hint(workspace).values()]
+             validation_stamp, *parent_revisions, *draft_policy_hint(workspace).values(),
+             *context_draft_hint(db, workspace).values()]
     if include_check_state:
         from .rota_summary import validation_job_stamp
         stamp.append(validation_job_stamp(db, workspace_id=workspace.id))
@@ -131,7 +132,8 @@ def summary_etag(db, actor, workspace, view, group_version_id):
                          validation_job_stamp(db, workspace_id=workspace.id),
                          worker_state(db, now)['worker_liveness'],
                          workspace.rule_adjustments or [], workspace.target_overrides or [],
-                         workspace.accepted_issues or [], *draft_policy_hint(workspace).values())
+                         workspace.accepted_issues or [], *draft_policy_hint(workspace).values(),
+                         *context_draft_hint(db, workspace).values())
 
 
 def rule_map_etag(db, actor, workspace):
@@ -153,7 +155,7 @@ def rule_map_etag(db, actor, workspace):
     ).where(m.Policy.department_id == workspace.department_id, m.Policy.status == 'proposed')).one()
     return revision_etag("workspace-rule-map-v2", workspace.id, actor.identity_id, actor.person_id,
                          sorted(actor.roles), tuple(row), workspace.rule_adjustments or [],
-                         workspace.target_overrides or [], tuple(proposals))
+                         workspace.target_overrides or [], tuple(proposals), *context_draft_hint(db, workspace).values())
 
 
 def publication_coverage_etag(db, actor, publication, workspace, organisation, department):

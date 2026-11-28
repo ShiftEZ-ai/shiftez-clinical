@@ -344,8 +344,9 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
         zone = data['organisation']['timezone']
         first, last = data['workspace']['starts_on'], data['workspace']['ends_on']
         if rule['comparison'] == 'minimum' and shift.get('workspace_id', data['workspace']['id']) != data['workspace']['id']:
-            if not any(source['workspace_id'] == shift['workspace_id']
-                       for source in data.get('quota_context', {}).get('publications', [])):
+            if (shift['workspace_id'] != (data.get('context_draft') or {}).get('id')
+                    and not any(source['workspace_id'] == shift['workspace_id']
+                                for source in data.get('quota_context', {}).get('publications', []))):
                 return None
             first, last = rule['starts_on'], rule['ends_on']
         a = max(a, local_midnight(date.fromisoformat(max(first, policy.get('starts_on') or first)), zone))
@@ -408,6 +409,8 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
               "source_publications": copy.deepcopy(data.get("quota_context", {}).get("publications", [])),
               "candidate_workspace_id": data["workspace"]["id"],
               "empty_policy_ids": []}
+    if context := data.get('context_draft'):
+        report['source_draft'] = {'workspace_id': context['id'], 'content_revision': context['content_revision']}
     from .generation_scope import planning_population_people
     planning_people = planning_population_people(data)
     overrides = {(row['policy_id'], row['person_id']): row
@@ -667,6 +670,7 @@ def project_report(report, person_id=None):
         for row in result['rows']:
             row.get('target_calculation', {}).pop('override_reason', None)
         result.pop("source_publications", None)
+        result.pop("source_draft", None)
         result.pop("empty_policy_ids", None)
     return result
 

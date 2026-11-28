@@ -2,7 +2,7 @@ import copy
 from uuid import NAMESPACE_URL, uuid5
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-from sqlalchemy import and_, case, delete, exists, func, insert, select, tuple_, update
+from sqlalchemy import and_, case, delete, exists, func, insert, or_, select, tuple_, update
 from sqlalchemy.orm import defer
 from packages.contracts import schemas as s
 from packages.domain.recurrence import expand, inactive, series_state, stored_series_definition, with_series_state
@@ -64,10 +64,17 @@ def _running_workspace_job(db, workspace_id):
         m.Job.status.in_({'queued', 'running'})).limit(1))
 
 
+def _context_dependents(workspace_id):
+    # Dependents can include private targets. Return only whether deletion is possible.
+    dependent = m.Workspace.__table__.alias()
+    return exists(select(1).where(dependent.c.context_draft_id == workspace_id))
+
+
 def delete_draft_refused_clause(workspace_id):
     return and_(
         ~exists(select(1).where(m.WorkspaceBaseline.workspace_id == workspace_id)),
-        exists(select(1).where(m.PublicationChangeList.workspace_id == workspace_id)))
+        or_(exists(select(1).where(m.PublicationChangeList.workspace_id == workspace_id)),
+            _context_dependents(workspace_id)))
 
 
 def _delete_draft_refused(db, workspace):
@@ -182,6 +189,8 @@ def archive(db, actor, command):
                     'This draft is already archived; restore it before editing', 409)
             command = command.model_copy(update={'kind': 'workspace.archive'})
         else:
+            require(not db.scalar(select(_context_dependents(workspace.id))), 'WORKSPACE_REFERENCED',
+                    'Another draft uses this rota for checks; archive it instead', 409)
             require(not _delete_draft_refused(db, workspace), 'DRAFT_DELETE_FORBIDDEN',
                     'This draft holds published changes; archive it instead.', 409)
             referenced = db.scalar(select(m.WorkspaceForkBase.id).where(
@@ -694,7 +703,8 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
                             _overlap_output=overlap_result,
                             creation_before=before if staffed_creation else None,
                             final_compute=(db.info.get('_planning_preparation') or {}).get('kind')
-                                in {'shift.action', 'shift.copy', 'series.expand', 'shift.update', 'workspace.undo', 'workspace.redo'})
+                                in {'shift.action', 'shift.copy', 'series.expand', 'shift.update',
+                                    'workspace.context', 'workspace.undo', 'workspace.redo'})
         if overlap_result:
             db.info['_command_overlap_flags'] = overlap_result['flags']
     else:
@@ -1318,6 +1328,8 @@ def create_workspace(db, actor, command, settings):
     from .workspace_access import append_access
     if value.visibility == 'private':
         admit_private(db, actor)
+    if value.context_draft_id:
+        require_context_draft(db, actor, value.context_draft_id, value.starts_on)
     organisation = db.get(m.Organisation, actor.organisation_id)
     fork_source, fork_base_content = None, None
     if value.source_workspace_id:
@@ -1451,6 +1463,24 @@ def create_workspace(db, actor, command, settings):
     return {"workspace": workspace_value, "baseline": baseline_projection(baseline),
             "snapshot_hash": baseline.payload_hash, "validation": result, 'setup': setup, 'template_skipped': skipped_people,
             'overlaps': schedule.overlaps(db, workspace.department_id, workspace)}
+
+
+def require_context_draft(db, actor, context_id, starts_on):
+    source = db.scalar(select(m.Workspace.id).where(
+        m.Workspace.id == context_id, m.Workspace.department_id == actor.department_id,
+        m.Workspace.ends_on <= starts_on, *snapshots.context_draft_clauses()))
+    require(source is not None, 'INVALID_CONTEXT_DRAFT',
+            'Choose a shared draft in this department that ends before this rota starts')
+
+
+def set_context_draft(db, actor, command):
+    value = s.WorkspaceContextInput.model_validate(command.payload)
+    workspace = draft(db, actor, command.target_id, command.expected_revision)
+    if value.context_draft_id:
+        require_context_draft(db, actor, value.context_draft_id, workspace.starts_on)
+    before = workspace_content(db, workspace)
+    workspace.context_draft_id = value.context_draft_id
+    return changed(db, actor, workspace, before, value.reason)
 
 
 def resolve_overlap(db, actor, command):
@@ -2235,11 +2265,15 @@ def put_back(db, actor, workspace, snapshot, current):
     workspace.accepted_issues = prior.get('accepted_issues', [])
     workspace.starts_on = date.fromisoformat(str(prior['starts_on']))  # a placement beside a published rota is undone too
     workspace.replaces_publication_id = prior.get('replaces_publication_id')
+    if (context_id := prior.get('context_draft_id')) != workspace.context_draft_id:
+        if context_id is not None:
+            scoped(db, m.Workspace, context_id, actor)
+        workspace.context_draft_id = context_id
     restored = record(workspace)
     copy_snapshot_into(db, actor, workspace, {'shifts': [r for i, r in before_shifts.items() if i not in same]}, preserve_ids=True)
     return (len(same) != len(before_shifts) or len(same) != len(current['shifts']) or any(
         current['workspace'][key] != restored[key]
-        for key in ('target_overrides', 'rule_adjustments', 'starts_on', 'replaces_publication_id')))
+        for key in ('target_overrides', 'rule_adjustments', 'starts_on', 'replaces_publication_id', 'context_draft_id')))
 
 
 def undo(db, actor, command):
@@ -2665,7 +2699,8 @@ def validation_stamp(db, workspace):
     department = db.get(m.Department, workspace.department_id)
     organisation = db.get(m.Organisation, department.organisation_id)
     # Callers drop the last four (workspace) fields to share sources across a draft's own edits.
-    return (snapshots._baseline_hint(db, workspace), organisation.revision, organisation.input_revision,
+    return (snapshots._baseline_hint(db, workspace), snapshots.context_draft_hint(db, workspace),
+            organisation.revision, organisation.input_revision,
             organisation.availability_revision, department.revision, department.catalogue_revision,
             workspace.revision, workspace.content_revision, workspace.status, workspace.archived_at)
 
@@ -2719,6 +2754,11 @@ def _lock_review_check_inputs(db, actor, data):
     return organisation
 
 
+def require_official_context(db, workspace):
+    require(not snapshots.context_draft_hint(db, workspace), 'CONTEXT_DRAFT_UNPUBLISHED',
+            'Publish the earlier draft or remove it as context before this rota goes to review', 409)
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2764,6 +2804,8 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                                  "at": m.now().isoformat(), "reason": value.reason}
     else:
         require_role(actor, "coordinator")
+    if action in {'submit', 'publish'}:
+        require_official_context(db, workspace)
     if action == "reopen":
         require(workspace.status in {"submitted", "approved"}, "WORKFLOW_STATE", "Only a reviewed candidate can be reopened", 409)
         return_note = workspace.return_note
@@ -2887,6 +2929,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         superseded, trimmed, effective_until = schedule.make_room(db, workspace)
         sequence = (db.scalar(select(func.max(m.Publication.sequence)).where(m.Publication.department_id == actor.department_id)) or 0) + 1
         workspace.status = "published"
+        workspace.context_draft_id = None
         workspace.revision += 1
         snapshot = publication_snapshot(db, workspace, result, own_shifts=own, data=acquired)
         from apps.api.db import bump_snapshot_input_revisions

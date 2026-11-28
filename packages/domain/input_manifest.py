@@ -193,6 +193,8 @@ def manifest(data, *, content_revision=None, include_sources=True):
         add('mandatory_inputs' if row['definition']['severity'] == 'mandatory' else 'objective_inputs', 'policies', key, value, row)
     if data.get('applied_planning_population') is not None:
         add('mandatory_inputs', 'applied_planning_population', period['id'], data['applied_planning_population'])
+    if context := data.get('context_draft'):
+        add('mandatory_inputs', 'context_draft', context['id'], context)
     for key in ('quota_context', 'score_baseline'):
         add('mandatory_inputs', key, key, data.get(key))
     # Draft safety evaluation keeps non-safety inputs frozen, but any approved
@@ -214,6 +216,8 @@ def manifest(data, *, content_revision=None, include_sources=True):
                   'baseline': [(data.get('baseline') or {}).get('id'),
                                (data.get('baseline') or {}).get('snapshot_hash')
                                or (data.get('baseline') or {}).get('hash')]}
+    if context:
+        dirty_hint['context_draft'] = context
     if basis := data.get('_draft_policy_basis'):
         dirty_hint['draft_policy_basis'] = basis
     if data.get('_live_safety_departments') is not None:

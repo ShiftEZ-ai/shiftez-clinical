@@ -627,6 +627,52 @@ export function attributesForm(definitions:CustomField[],values:Record<string,un
   return {wrap,read};
 }
 
+function draftContextField(startsOn:()=>string,value=''){
+  const context=select('Earlier draft for checks',[],value,false,'Published rotas only');
+  let request=0,loadedDay='';
+  const load=async()=>{
+    const day=startsOn();
+    if(day&&day===loadedDay)return;
+    const id=++request,current=context.input.value||value;
+    loadedDay=day;
+    context.input.disabled=true;
+    if(!day)return;
+    const rows:Row[]=[];
+    try{
+      let more=true;
+      while(more){
+        const page=await get<{workspaces:Row[];has_more:boolean}>(`/api/workspaces?context_before=${day}&offset=${rows.length}`);
+        if(id!==request)return;
+        rows.push(...page.workspaces);more=page.has_more;
+      }
+      const dates=(row:Row)=>spanLabel(row.starts_on+'T00:00:00Z',row.ends_on+'T00:00:00Z','UTC');
+      const choices=rows.map(row=>el('option',{value:row.id},`${labelOf(row)} · ${dates(row)}`));
+      if(current&&!rows.some(row=>row.id===current)&&current===value)choices.push(el('option',{value},'Previous draft no longer available'));
+      context.input.replaceChildren(el('option',{value:''},'Published rotas only'),...choices);
+      context.input.value=[...context.input.options].some(option=>option.value===current)?current:'';
+      context.input.disabled=false;
+      value=context.input.value;
+    }catch(error){
+      if(id===request){loadedDay='';reportError(error);}
+    }
+  };
+  context.input.addEventListener('change',()=>{value=context.input.value;});
+  return {...context,load};
+}
+
+export function draftContextForm(workspace:Row,done:()=>unknown){
+  formDialog('Earlier draft for checks','',form=>{
+    const context=draftContextField(()=>workspace.starts_on,workspace.context_draft_id??'');
+    form.append(context.wrap);
+    void context.load();
+    return async()=>{
+      if(context.input.disabled)throw new Error('Wait for the earlier drafts to load.');
+      await command('workspace.context',{context_draft_id:context.input.value||null,reason:'Changed the earlier draft used for checks'},workspace.id,workspace.revision);
+      await done();
+    };
+  });
+}
+
 /** New draft (or, with `base`, an amendment of a published rota). `preset`: a name and dates to start from, as Home's
  *  "Start" for one month gives them (`ends_on` is the day after the last). */
 export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;starts_on:string;ends_on:string}){
@@ -671,6 +717,7 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
     const rotaChoice=(r:Row)=>({value:r.id,label:[labelOf(r),dates(r.starts_on,r.ends_on),STATE[r.status]||r.status].filter(Boolean).join(' · ')});
     const byNewest=[...previous].sort((a,b)=>String(b.starts_on).localeCompare(String(a.starts_on))||String(b.created_at||'').localeCompare(String(a.created_at||'')));
     const source=select('Previous rota',byNewest.map(rotaChoice));
+    const context=base?null:draftContextField(()=>choice?.value()?.starts_on||start.input.value);
     // The list is the newest 100 rotas: said when there are more, never cut silently (maintenance).
     if(list.has_more)source.wrap.append(el('small',{class:'muted'},`Showing the latest ${previous.length} rotas`));
     source.wrap.append(el('small',{class:'muted'},'Copies sessions day by day; the last day follows its length.'));
@@ -727,6 +774,7 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
       // a takeover date the person chose.
       choice=o&&o.publications.length?overlapChoice(o,ctx.me.organisation.timezone,label,undefined,choice?.kept()):null;
       suggest((o as {suggested_name?:string}|null)?.suggested_name);
+      void context?.load();
       fit.replaceChildren(...(choice?[choice.root]:o?.drafts.length?[note(`Also being planned for these days: ${o.drafts.map(d=>d.name).join(', ')}. You can compare them side by side once this one is created.`,'info')]:[]),...gapNotes());label();
     };
     // Days in no rota: next to these dates, or anywhere ahead in the department. One line each, with the dates to use.
@@ -751,16 +799,17 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
     start.input.addEventListener('change',()=>{if(sourceChosen)fitSource();else void pickSource();});
     queueMicrotask(()=>{void checkDates();void pickSource();});
     form.append(name.wrap,dateRange('Dates',start,end),fit);if(base)form.append(urgency.wrap,urgentReason.wrap);
-    else form.append(setup.wrap,source.wrap,people.wrap,allTemplates.wrap,templates.wrap,automate.wrap);
+    else form.append(setup.wrap,source.wrap,people.wrap,allTemplates.wrap,templates.wrap,automate.wrap,context!.wrap);
     form.append(baseline);
     // "Use all" with none active is an empty rota, never a choice to make; only a hand-picked empty list asks for one.
     return async()=>{if(!base&&setup.input.value==='patterns'&&!allTemplates.input.checked&&!templates.values().length)throw new Error('Choose at least one recurring session.');
       const fits=choice?.value();
+      if(context?.input.disabled&&context.input.value)throw new Error('Wait for the earlier drafts to load.');
       if(fits?.choice==='amend'){const p=(await get<{publications:Row[]}>('/api/publications')).publications.find(x=>x.id===fits.publication_id);if(p){form.closest('dialog')?.remove();return workspaceForm(ctx,p);}}
       const custom=customScope.input.checked,sources=scopeChecks.filter(f=>f.input.checked).map(f=>f.input.value);
       if(custom&&!sources.length){baseline.open=true;throw new Error('Choose at least one baseline group.');}
       const urgent=Boolean(base&&urgency.input.value==='urgent');const result=await command('workspace.create',{name:name.input.value,starts_on:fits?fits.starts_on:start.input.value,
-        ...(fits?.choice==='replace_from'?{replaces_publication_id:fits.publication_id}:{}),ends_on:base?base.ends_on:shift(end.input.value,1),base_publication_id:base?.id||null,urgency:urgent?'urgent':'routine',urgency_reason:urgent?urgentReason.input.value:'',baseline:custom?{mode:'custom',sources}:{mode:'department'},source_workspace_id:!base&&setup.input.value==='previous'?source.input.value:null,source_revision:!base&&setup.input.value==='previous'?previous.find(r=>r.id===source.input.value)?.revision:null,copy_people:people.input.checked,series_ids:!base&&setup.input.value==='patterns'?templateIds():[],generate_assignments:!base&&setup.input.value!=='empty'&&automate.input.checked});
+        ...(fits?.choice==='replace_from'?{replaces_publication_id:fits.publication_id}:{}),ends_on:base?base.ends_on:shift(end.input.value,1),base_publication_id:base?.id||null,context_draft_id:context?.input.value||null,urgency:urgent?'urgent':'routine',urgency_reason:urgent?urgentReason.input.value:'',baseline:custom?{mode:'custom',sources}:{mode:'department'},source_workspace_id:!base&&setup.input.value==='previous'?source.input.value:null,source_revision:!base&&setup.input.value==='previous'?previous.find(r=>r.id===source.input.value)?.revision:null,copy_people:people.input.checked,series_ids:!base&&setup.input.value==='patterns'?templateIds():[],generate_assignments:!base&&setup.input.value!=='empty'&&automate.input.checked});
       if(!base&&setup.input.value!=='empty'&&automate.input.checked)window.dispatchEvent(new CustomEvent('rota-auto-schedule',{detail:{workspace:result.workspace.id}}));
       ctx.setWorkspace(result.workspace.id);ctx.navigate('schedule');notify(base?'Amendment draft saved. Nothing published.':['Draft saved',result.setup?.created?plural(result.setup.created,'session')+' created':!base&&setup.input.value==='previous'&&!result.setup?.skipped?'0 sessions copied (the previous rota has none)':'',result.setup?.skipped?plural(result.setup.skipped,'date')+' skipped':'',result.template_skipped?.length?plural(result.template_skipped.length,'template place')+' left open (on leave, away or already booked)':''].filter(Boolean).join(' · ')+'. Nothing published.');await ctx.refresh();};
   },'Create draft');
