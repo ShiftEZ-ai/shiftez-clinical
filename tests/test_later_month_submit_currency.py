@@ -85,3 +85,44 @@ def test_a_frozen_longer_wish_period_still_reads_the_later_month(database, reque
     h.lifecycle(h.detail(later)['workspace'], 'submit')
 
     assert input_revision(h) == revision + 1
+
+
+@pytest.mark.parametrize('database', DATABASES)
+def test_unrelated_draft_lifecycle_keeps_a_review_current(database, request):
+    h = request.getfixturevalue(database)
+    assert any(p['definition']['rule'].get('id') == 'fair_share' and p['status'] == 'active'
+               for p in h.get('coordinator', '/api/catalogues')['policies'])
+    first = month(h, 'First month', '2026-10-01', '2026-11-01', '2026-10-05')
+    first = h.lifecycle(first, 'submit')['workspace']
+    before, revision = h.snapshot(first)['fingerprint'], input_revision(h)
+
+    later = month(h, 'Later month', '2027-02-01', '2027-03-01', '2027-02-09')
+    assert input_revision(h) == revision
+    assert h.snapshot(first)['fingerprint'] == before
+    assert 'resubmit' not in attention(h, 'coordinator')
+
+    later = h.lifecycle(later, 'archive')['workspace']
+    assert input_revision(h) == revision
+    assert h.snapshot(first)['fingerprint'] == before
+    assert 'resubmit' not in attention(h, 'coordinator')
+
+    later = h.lifecycle(later, 'restore')['workspace']
+    h.publish(later)
+    assert input_revision(h) == revision
+    assert h.snapshot(first)['fingerprint'] == before
+    assert 'resubmit' not in attention(h, 'coordinator')
+
+
+@pytest.mark.parametrize('database', DATABASES)
+def test_a_publication_inside_the_snapshot_window_invalidates_its_reader(database, request):
+    h = request.getfixturevalue(database)
+    first = month(h, 'First month', '2026-10-01', '2026-11-01', '2026-10-05')
+    first = h.lifecycle(first, 'submit')['workspace']
+    later = month(h, 'Next month', '2026-11-01', '2026-12-01', '2026-11-09')
+    before, revision = h.snapshot(first)['fingerprint'], input_revision(h)
+
+    h.publish(later)
+
+    assert input_revision(h) > revision
+    assert h.snapshot(first)['fingerprint'] != before
+    assert 'resubmit' in attention(h, 'coordinator')
