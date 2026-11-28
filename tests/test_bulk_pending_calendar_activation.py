@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from .governance_support import identity
 from .test_bulk import REASON, preview
 from .test_rule_templates import propose
 
@@ -50,7 +51,12 @@ def test_successive_bulk_calendar_activations_retire_pending_predecessor(h):
         assert [entry.snapshot["status"] for entry in history] == ["active", "retired"]
     undo = applied["undo"]
     assert preview(h, "approver", undo["payload"])["counts"]["problem"] == 0
-    h.command("approver", **undo)
+    pending = h.command("approver", **undo)
+    assert not pending["items"][0]["results"][0]["approval"]["complete"]
+    with transaction(h.app.state.engine) as db:
+        assert [db.get(m.Policy, row["id"]).status for row in rows] == ["retired", "active"]
+    identity(h, "second_approver", ["approver"])
+    h.command("second_approver", **undo)
     with transaction(h.app.state.engine) as db:
         assert [db.get(m.Policy, row["id"]).status for row in rows] == ["retired", "retired"]
 

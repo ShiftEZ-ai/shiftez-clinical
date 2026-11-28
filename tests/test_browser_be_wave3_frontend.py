@@ -8,11 +8,10 @@ import pytest
 from playwright.sync_api import expect
 
 from apps.worker.main import process_one
-from .test_browser import wait_run_created, browser, live_server, sign_in, navigate, open_config, open_rota, open_rule, open_scheduling, save_dialog  # noqa: F401
+from .test_browser import wait_run_created, browser, holding, live_server, sign_in, navigate, open_config, open_rota, open_rule, open_scheduling, save_dialog  # noqa: F401
 from .test_browser_cp_sat import cp_server  # noqa: F401
 from .test_browser_autoschedule_budget import confirm
 from .test_bulk_reverse_transitions import proposal, transition
-from .test_policy_transition_approvals import settings
 
 pytestmark = pytest.mark.browser
 REASON = 'Only cover available; arrange relief before submission'
@@ -113,11 +112,20 @@ def test_several_people_on_leave_are_saved_without_then_assigned_in_the_fill_pan
         expect(editor.get_by_text('Save the session without this person, then use the planner fill panel', exact=False)).to_be_visible(timeout=20000)
         expect(editor.get_by_role('textbox', name=re.compile('^Reason to assign'))).to_have_count(0)
         assert not h.detail(w)['shifts'][0]['participants']
-        editor.get_by_role('button', name=f'Save without {order[0]} and {order[1]}', exact=True).click()
-        toast = page.locator('.toast').filter(has_text='Session saved.')
-        expect(toast.get_by_role('button', name='Undo', exact=True)).to_be_visible(timeout=20000)
-        assert not h.detail(w)['shifts'][0]['participants']
-        toast.get_by_role('button', name=f'Assign {order[0]} in the fill panel', exact=True).click()
+        with holding(page) as held:
+            # The save's refresh is held: its message (and Assign) shows while the saved editor is still open, and a
+            # press then closes the editor and goes on at once, never lost to the editor closing later.
+            held.hold('**/api/me')
+            with page.expect_request(lambda r: r.url.endswith('/api/me')):
+                editor.get_by_role('button', name=f'Save without {order[0]} and {order[1]}', exact=True).click()
+            toast = page.locator('.toast').filter(has_text='Session saved.')
+            expect(toast.get_by_role('button', name='Undo', exact=True)).to_be_visible(timeout=20000)
+            expect(editor).to_be_visible()
+            assert not h.detail(w)['shifts'][0]['participants']
+            toast.get_by_role('button', name=f'Assign {order[0]} in the fill panel', exact=True).click()
+            expect(editor).to_have_count(0)
+            expect(page.locator('.unsaved-bar')).to_have_count(0)
+            held.release('**/api/me')
         panel = page.get_by_role('dialog').filter(has_text='Can work this session')
         expect(panel.get_by_role('searchbox', name='Find a person', exact=True)).to_have_value(order[0])
         expect(panel.get_by_role('button', name=f'Break rule and assign {order[0]}', exact=True)).to_be_visible(timeout=20000)
@@ -154,12 +162,14 @@ def test_retire_approval_count_is_configured_validated_and_undone(browser, live_
 
 def test_retire_waiting_for_more_approvals_says_who_and_how_many(browser, live_server, h):
     row = transition(h, 'approver', 'policy.activate', proposal(h))['record']
-    settings(h, 2)
+    assert h.get('admin', '/api/me')['department']['policy_retire_approvals_required'] == 1
     context, page = sign_in(browser, live_server, 'approver')
     try:
         navigate(page, 'rules')
         sheet = open_rule(page, row['name'])
         sheet.get_by_role('button', name='Retire rule', exact=True).click()
+        expect(page.get_by_role('dialog', name='Retire rule')).to_contain_text(
+            'Retiring a safety rule needs approval from at least two different people')
         confirm(page, 'Retire rule', 'Retire rule', 'First of two approvals')
         expect(page.locator('.toast').filter(
             has_text='Retiring approved by you (1 of 2) · 1 more approval needed from a different approver')).to_be_visible()

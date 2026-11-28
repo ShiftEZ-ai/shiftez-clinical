@@ -453,35 +453,55 @@ def safety_display_key(policy):
         for field, direction in limits.items()))
 
 
-def weakens_safety_rules(before, after):
+def mandatory_safety_copies(policies):
+    for copy in active_rules(policies):
+        definition = copy['definition']
+        if (safety_rule(definition) and definition.get('severity', 'mandatory') == 'mandatory'
+                and not copy.get('_advisory_catalogue_slot')):
+            yield copy
+
+
+def weakens_safety_rules(before, after, *, matching_scopes_only=False, from_day=None):
     """Every effective safety obligation must still hold at least as strictly after an own decision."""
     from .rule_groups import _canonical_scope
     from .supervision_levelling import spread_gap
 
+    def scope_key(copy):
+        definition = copy['definition']
+        return json.dumps([copy.get('department_id'), definition.get('workspace_id'),
+                           definition['rule']['kind'], _canonical_scope(definition['scope'])], sort_keys=True)
+
     def obligations(policies):
-        for copy in active_rules(policies):
+        for copy in mandatory_safety_copies(policies):
             definition = copy['definition']
             rule = definition['rule']
             kind = rule['kind']
-            if not safety_rule(definition) or definition.get('severity', 'mandatory') != 'mandatory' or copy.get('_advisory_catalogue_slot'):
-                continue
             directions = SAFETY_STRICTNESS.get(kind, {})
             if kind == 'spread_evenly':
                 # Both spread modes enforce the same gap bound.
                 rule = {key: value for key, value in rule.items() if key != 'mode'}
                 rule['maximum_gap'] = spread_gap(copy)
                 directions = {'maximum_gap': 'min'}
-            shape = json.dumps([copy.get('department_id'), definition.get('workspace_id'),
-                                _canonical_scope(definition['scope']),
-                                {key: value for key, value in rule.items() if key not in directions}], sort_keys=True)
-            first = str(copy.get('starts_on') or '')
+            shape = json.dumps({key: value for key, value in rule.items() if key not in directions}, sort_keys=True)
+            first = max(str(copy.get('starts_on') or ''), from_day or '')
             last = str(copy.get('ends_on') or '\uffff')
-            yield shape, first, last, rule, directions
+            if from_day is None or first < last:
+                yield scope_key(copy), shape, first, last, rule, directions
 
+    scopes = set()
+    if matching_scopes_only:
+        for row in after:
+            definition = row['definition']
+            if definition['rule']['kind'] == 'catalogue':
+                definition = {**definition, 'rule': {**definition['rule'], 'on': True}}
+            scopes.update(scope_key(copy) for copy in active_rules([{**row, 'definition': definition, 'active': True}])
+                          if safety_rule(copy['definition']) and not copy.get('_advisory_catalogue_slot'))
     replacements = {}
-    for shape, first, last, rule, _ in obligations(after):
-        replacements.setdefault(shape, []).append((first, last, rule))
-    for shape, first, last, rule, directions in obligations(before):
+    for scope, shape, first, last, rule, _ in obligations(after):
+        replacements.setdefault((scope, shape), []).append((first, last, rule))
+    for scope, shape, first, last, rule, directions in obligations(before):
+        if matching_scopes_only and scope not in scopes:
+            continue
         def preserves(bounds):
             start, end, replacement = bounds
             return start <= first and end >= last and all(
@@ -489,9 +509,21 @@ def weakens_safety_rules(before, after):
                     replacement[field] >= rule[field] if direction == 'max' else replacement[field] <= rule[field])
                 for field, direction in directions.items())
 
-        if not any(map(preserves, replacements.get(shape, ()))):
+        if not any(map(preserves, replacements.get((scope, shape), ()))):
             return True
     return False
+
+
+def weakens_scheduling_fact_safety(before, after):
+    """Personal/calendar no-duties facts are restriction inputs, including bound safety primitives.
+
+    Workload counts, personal targets and overtime offers add no mandatory safety obligation.
+    """
+    if not before or not _safety_fact(before['data']):
+        return False
+    old = fact_policy({**before, 'status': 'active'})
+    new = [fact_policy({**after, 'status': 'active'})] if after else []
+    return weakens_safety_rules([old], new)
 
 
 def catalogue_display_policies(policies, context):

@@ -6,7 +6,8 @@ from datetime import date, timedelta
 import re
 from types import SimpleNamespace as Line
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, or_, select, tuple_
+from sqlalchemy.orm import aliased
 from packages.contracts import schemas as s
 from packages.domain.conditions import (TAG_FIELDS, absolute_values, tag_scope, with_tags, check_definition_count_budget,
                                         scope_applies, scope_has_duty_witness)
@@ -14,12 +15,12 @@ from packages.domain.validation import evaluate, finding_observations
 from packages.domain.feasibility import unchanged_input_issues
 from packages.domain.solver_rules import definition_issues, COMPILER_VERSION
 from packages.domain.rule_map import numeric_limit
-from packages.domain.rule_lines import weakens_safety_rules
+from packages.domain.rule_lines import mandatory_safety_copies, weakens_safety_rules
 from packages.domain.rule_serialization import stored_definition
 from apps.api import models as m
 from apps.api.auth import require_catalogue_read, require_permission, require_role, person_access, current_roles
 from apps.api.errors import require
-from apps.api.serialization import CHECK_SUMMARY, record, json_value
+from apps.api.serialization import CHECK_SUMMARY, record, records_many, json_value
 from apps.api.snapshots import (DomainSnapshot, domain_snapshot, fingerprint, feasibility_fingerprints,
                                 snapshot_hash, snapshot_inputs, tag_data)
 from .common import scoped, expected, bump_inputs, history, history_many, history_version
@@ -362,12 +363,14 @@ def people_data(db, actor, day, *, last=None):
     last = last or day + timedelta(days=1)
     department = db.get(m.Department, actor.department_id)
     zone = db.get(m.Organisation, department.organisation_id).timezone
-    rows = lambda cls: [record(r) for r in db.scalars(select(cls).where(cls.department_id == actor.department_id))]
+    # Dated person records come period-bounded (rotations through the ORM for their mentor); catalogues in one read.
     data = DomainSnapshot({"organisation": {"timezone": zone}, **period_records(db, department.id, day, last)})
-    for name, cls in {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
-                      "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
-                      "services": m.Service, "locations": m.Location}.items():
-        data[name] = {r["id"]: r for r in rows(cls)}
+    keyed = {"categories": m.Category, "capabilities": m.Capability, "programmes": m.Programme,
+             "rotation_types": m.RotationType, "cohorts": m.Cohort, "types": m.AssignmentType,
+             "services": m.Service, "locations": m.Location}
+    rows = records_many(db, {name: (cls, cls.department_id == actor.department_id) for name, cls in keyed.items()})
+    for name in keyed:
+        data[name] = {r["id"]: r for r in rows[name]}
     first_membership = {}
     for row in data["memberships"]:
         first = max(day, date.fromisoformat(row["starts_on"]))
@@ -888,6 +891,38 @@ def _require_independent_safety_change(weakens):
             'Another authorised person must approve a change that weakens a safety rule', 403)
 
 
+def _own_retired_safety_rules(db, actor, creator_id, day):
+    """Read explicit retirements only, including legacy retirements recorded in the audit log."""
+    if not creator_id:
+        return []
+    identity = db.get(m.Identity, creator_id)
+    identities = {creator_id}
+    if identity and identity.person_id:
+        identities.update(db.scalars(select(m.Identity.id).where(m.Identity.person_id == identity.person_id)))
+    P, H, A = m.Policy, m.DefinitionHistory, m.AuditEvent
+    earlier = aliased(H)
+    legacy = select(A.id).where(A.department_id == actor.department_id, A.target_id == P.id,
+        A.action == 'policy.retire', A.actor_id == H.actor_id, A.created_at >= earlier.created_at,
+        earlier.snapshot['active'].as_boolean().is_(True)).correlate(P, H, earlier).exists()
+    retired = {}
+    for old, transition, had_retirement in db.execute(select(P, H, legacy)
+            .join(H, (H.object_id == P.id) & (H.object_revision == P.revision) & (H.kind == 'policy'))
+            .outerjoin(earlier, (earlier.object_id == P.id) & (earlier.object_revision == P.revision - 1)
+                       & (earlier.kind == 'policy') & (earlier.department_id == P.department_id))
+            .where(P.department_id == actor.department_id, P.status == 'retired',
+                   or_(P.ends_on.is_(None), P.ends_on > day), H.department_id == actor.department_id)):
+        if old.status != 'retired' or old.revision != transition.object_revision:
+            continue
+        explicit = had_retirement and not transition.reason.startswith((MERGED_INTO, CHANGED_INTO, 'Replaced by '))
+        signers = transition.snapshot.get('retirement_approvers', [transition.actor_id] if explicit else [])
+        if identities.intersection(signers) and s.safety_rule(old.definition):
+            retired[old.id] = {**record(old), 'status': 'active', 'active': True}
+    for kind, old, _, version in db.info.get('bulk', {}).get('history', ()):
+        if (kind == 'policy' and old.department_id == actor.department_id and old.status == 'retired'
+                and version['revision'] == old.revision and identities.intersection(version.get('retirement_approvers', ()))):
+            retired[old.id] = {**record(old), 'status': 'active', 'active': True}
+    return list(retired.values())
+
 def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessors=None):
     from .rule_effects import predecessor_rows
     from .scoring_defaults import seeded_rows
@@ -900,7 +935,15 @@ def activation_weakens_safety(db, actor, policy, replaces_ids=(), *, predecessor
         before.extend(old for old in policies_with_status(db, actor, 'active')
                       if old.id not in replaced and old.definition.get('calendar_entry_id') == entry)
     before = [record(old) for old in before if old.status == 'active']
-    return bool(before) and weakens_safety_rules(seeded_rows(db, before), [{**record(policy), 'status': 'active'}])
+    after = [{**record(policy), 'status': 'active'}]
+    if before and weakens_safety_rules(seeded_rows(db, before), after):
+        return True
+    if not s.safety_rule(policy.definition):
+        return False
+    day = independence.today(db, actor.department_id)
+    retired = _own_retired_safety_rules(db, actor, policy.created_by, day)
+    return bool(retired) and weakens_safety_rules(seeded_rows(db, retired), after,
+        matching_scopes_only=True, from_day=day.isoformat())
 
 
 def _activation_independence(db, actor, policy, value):
@@ -1113,7 +1156,9 @@ def activate_many(db, actor, command, require_checks=False):
 
 def transition_approval_state(db, actor, policy, *, excluded=()):
     """Replay revision-bound votes once; withdrawals cancel only their signing account's vote."""
-    proposers = {independence.person_key(db, policy.created_by), *excluded}
+    proposers = set(excluded)
+    if policy.created_by:
+        proposers.add(independence.person_key(db, policy.created_by))
     kind = "policy_transition_approval"
     H = m.DefinitionHistory
     scope = (H.department_id == actor.department_id, H.kind == kind, H.object_id == policy.id)
@@ -1142,18 +1187,31 @@ def transition_approval_state(db, actor, policy, *, excluded=()):
     return max([last_revision, *(row.object_revision for row in pending)]), approved
 
 
-def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), restoring=()):
-    required = db.get(m.Department, actor.department_id).policy_retire_approvals_required
-    proposers = {independence.person_key(db, policy.created_by), *excluded}
+def _safety_retirement(policy):
+    definition = policy['definition']
+    if not s.safety_rule(definition):
+        return False
+    if policy['kind'] == 'catalogue':
+        definition = {**definition, 'rule': {**definition['rule'], 'on': True}}
+    return any(mandatory_safety_copies(
+        [{**policy, 'definition': definition, 'active': True, 'status': 'active'}]))
+
+
+def transition_approvals_required(configured, policy, action):
+    return max(configured, 2) if action == 'retire' and _safety_retirement(policy) else configured
+
+
+def transition_approval(db, actor, policy, action, reason, effects, *, excluded=(), minimum=1):
+    configured = db.get(m.Department, actor.department_id).policy_retire_approvals_required
+    view = record(policy)
+    required = max(minimum, transition_approvals_required(configured, view, action))
+    proposers = set(excluded)
+    if policy.created_by:
+        proposers.add(independence.person_key(db, policy.created_by))
     reviewer = independence.person_key(db, actor.identity_id)
     safety = s.safety_rule(policy.definition)
-    if action == 'retire' and reviewer in proposers and safety:
-        from .scoring_defaults import seeded_rows
-
-        before = seeded_rows(db, [record(policy)])
-        after = seeded_rows(db, [{**record(old), 'status': 'active',
-                                  'active': approved_active_before_retirement(db, actor, old)} for old, _ in restoring])
-        _require_independent_safety_change(weakens_safety_rules(before, after))
+    if action == 'retire' and reviewer in proposers and _safety_retirement(view):
+        _require_independent_safety_change(True)
     independence.ensure(db, actor, "rule.activate", reviewer not in proposers,
         "The rule proposer cannot approve its retirement or restoration", reason, policy.id,
         allow_self_approval=required == 1 and (
@@ -1228,14 +1286,14 @@ def policy_transition(db, actor, command, require_checks=False):
             restoring.append((old, last))
     require_policy_version(db, actor, *(old.definition for old, _ in restoring), retained=[old for old, _ in restoring])
     approval = transition_approval(db, actor, policy, "retire", value.reason,
-        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason},
-        restoring=restoring)
+        {"restoring": [(old.id, old.revision) for old, _ in restoring], "retirement_reason": retirement_reason})
     if approval and not approval["complete"]:
         return {"record": record(policy), "impact": [], "restored_ids": [], "restored": [], "approval": approval}
+    retirement = {'retirement_approvers': approval['approved_by']} if policy.active and approval else None
     policy.status, policy.active = "retired", False
     impact = []
     advance_revision(db, policy)
-    history(db, actor, "policy", policy, retirement_reason or value.reason)
+    history(db, actor, "policy", policy, retirement_reason or value.reason, snapshot_extra=retirement)
     restored = []
     for old, last in restoring:
         check_policy_references(db, actor, old.definition)

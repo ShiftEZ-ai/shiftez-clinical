@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from sqlalchemy import false, or_, select
 from packages.contracts import schemas as s
 from packages.domain.conditions import active_rules, check_definition_count_budget, with_tags, scope_applies
-from packages.domain.rule_lines import counting_attention, expand, fact_policy, fair_share_goal_settings
+from packages.domain.rule_lines import (counting_attention, expand, fact_policy, fair_share_goal_settings,
+                                        weakens_scheduling_fact_safety)
 from packages.domain.rule_serialization import stored_definition
 from packages.domain.solver_rules import definition_issues
 from apps.api import models as m
@@ -284,6 +285,19 @@ def require_available_proposal(db, actor, value, previous):
             require(False, "PROPOSAL_WAITING", "This fact already has an approved version or a waiting proposal", 409)
 
 
+def _require_independent_protection(db, actor, proposal, before, after):
+    if before is None:
+        return
+    reviewer = independence.person_key(db, actor.identity_id)
+    own = reviewer == independence.person_key(db, proposal.proposed_by) or (
+        not independence.subject_independent(db, actor, (proposal.person_id,), proposal.proposed_by))
+    if own:
+        from .policies import _require_independent_safety_change
+
+        _require_independent_safety_change(weakens_scheduling_fact_safety(
+            record(before), record(after) if after is not None else None))
+
+
 def command(db, actor, command, require_checks=False):
     kinds, action = _family(command)
     if action == "propose":
@@ -308,6 +322,11 @@ def command(db, actor, command, require_checks=False):
     if action == "activate":
         require_role(actor, "approver")
         require(row.status == "proposed", "WORKFLOW_STATE", "Only a proposed fact can be activated", 409)
+        previous = scoped(db, m.SchedulingFact, row.replaces_id, actor) if row.replaces_id else None
+        if previous is not None:
+            expected(previous, row.replaces_revision)
+            require(previous.status == "active", "STALE_REVISION", "The fact being replaced is no longer in force", 409)
+            _require_independent_protection(db, actor, row, previous, row)
         independence.ensure_subject(db, actor, "rule.activate", (row.person_id,), row.proposed_by,
             "Another authorised person must approve this scheduling fact", value.reason, row.id)
         if row.replaces_id:
@@ -324,10 +343,7 @@ def command(db, actor, command, require_checks=False):
                 starts_on=row.starts_on or date.min, ends_on=row.ends_on, definition=policy["definition"])
             evidence = require_context_receipts(db, actor, [(adapter, value.reason)], [value],
                 source_records={row.id: source}, checked_records={row.id: candidate})
-        if row.replaces_id:
-            previous = scoped(db, m.SchedulingFact, row.replaces_id, actor)
-            expected(previous, row.replaces_revision)
-            require(previous.status == "active", "STALE_REVISION", "The fact being replaced is no longer in force", 409)
+        if previous is not None:
             previous.status, previous.revision = "retired", previous.revision + 1
             history(db, actor, "scheduling_fact", previous, value.reason)
         row.status, row.approved_by, row.approved_at = "active", actor.identity_id, m.now()
@@ -361,6 +377,7 @@ def command(db, actor, command, require_checks=False):
         require(row.status == "active", "WORKFLOW_STATE", "Only an active fact can be retired", 409)
         require(not row.data["line"].get("source_default"), "FACT_SOURCE_DEFAULT",
                 "This fact retains an inherited rule default; use a reviewed replacement instead", 409)
+        _require_independent_protection(db, actor, row, row, None)
         guard_goal_change(db, actor, [row.id])
         row.status, changed = "retired", True
     elif action == "undo":
@@ -375,9 +392,8 @@ def command(db, actor, command, require_checks=False):
             "LATER_REPLACEMENT", "A later replacement blocks restoring this fact", 409)
         guard_goal_change(db, actor, [row.id])
         if row.status == "active":
-            row.status = "retired"
-            if row.replaces_id:
-                previous = scoped(db, m.SchedulingFact, row.replaces_id, actor)
+            previous = scoped(db, m.SchedulingFact, row.replaces_id, actor) if row.replaces_id else None
+            if previous is not None:
                 require(previous.revision == row.replaces_revision + 1, "STALE_REVISION",
                         f"{previous.id}: Another session changed this record; reload and reconcile", 409,
                         {"current_revision": previous.revision, "id": previous.id})
@@ -386,6 +402,9 @@ def command(db, actor, command, require_checks=False):
                     if k in s.SchedulingFactInput.model_fields}, "kind": previous.kind, "person_id": previous.person_id,
                     "calendar_entry_id": previous.calendar_entry_id, "on": previous.on, "reason": previous.reason}),
                     exception_allowed=bool(previous.data.get('exception_allowed')))
+            _require_independent_protection(db, actor, row, row, previous)
+            row.status = "retired"
+            if previous is not None:
                 previous.status, previous.revision = "active", previous.revision + 1
                 history(db, actor, "scheduling_fact", previous, value.reason)
                 restored = record(previous)
@@ -409,6 +428,7 @@ def command(db, actor, command, require_checks=False):
             _references(db, actor, candidate, exception_allowed=bool(row.data.get('exception_allowed')))
             if row.replaces_id:
                 if value.predecessor_revision is not None:
+                    _require_independent_protection(db, actor, row, previous, row)
                     previous.status, previous.revision = "retired", previous.revision + 1
                     history(db, actor, "scheduling_fact", previous, value.reason)
                 row.replaces_revision = previous.revision - 1
