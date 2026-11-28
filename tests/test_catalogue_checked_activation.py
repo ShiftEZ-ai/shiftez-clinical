@@ -2,9 +2,11 @@
 propose → check → approve and activate, for a new rule, a revision and a rule proposed Off (the browser journey's API)."""
 import pytest
 
+from apps.api import models as m
+from apps.api.db import transaction
 from apps.worker.main import process_one
 from .test_contextual_feasibility import use_checked_activation
-from .test_rule_catalogue_api import approve, line, propose
+from .test_rule_catalogue_api import approve, entry, line, propose
 
 
 def catalogue_department(h):
@@ -57,6 +59,35 @@ def test_checked_catalogue_proposal_is_active_once_another_person_approves(reque
     if old:
         assert status_of(h, old['id'])['status'] == 'retired'
     assert h.detail(workspace)['shifts'] == before
+
+
+def test_fair_share_proposal_keeps_impact_comparison_complete(h):
+    catalogue_department(h)
+    historical = h.workspace('Earlier rota', start='2026-09-27', end='2026-10-04')
+    historical = h.shift(historical, start='2026-09-30T08:00:00+03:00', end='2026-09-30T12:00:00+03:00')['workspace']
+    h.publish(historical)
+    workspace = h.shift(h.workspace())['workspace']
+    current = entry(h, 'fair_share')['rule']
+    existing = current['definition']['rule']['lines']
+    pending = propose(h, 'fair_share', [*existing, line(numbers={'apply': {'level': 'medium'}},
+        settings={'balance_goal': {'metric': 'duties', 'period': 'rolling', 'period_months': 1}})],
+        expected_line_ids=[row['id'] for row in existing])['record']
+    use_checked_activation(h)
+    h.clients.clear()
+    job = h.command('approver', 'job.create', {'workspace_id': workspace['id'], 'kind': 'feasibility',
+        'rule_changes': [{'policy_id': pending['id'], 'expected_revision': pending['revision']}]},
+        revision=workspace['revision'])['job']
+    with transaction(h.app.state.engine) as db:
+        snapshot = db.get(m.Job, job['id']).input_snapshot
+        assert snapshot['baseline']['fairness_history'] != snapshot['proposed']['fairness_history']
+
+    assert process_one(h.app.state.engine)
+    result = h.get('approver', f"/api/jobs/{job['id']}")['job']['result']
+    assert result['comparison_complete'] and result['no_new_problems'], result
+    review = h.get('approver', f"/api/policies/{pending['id']}/review")
+    effect, = review['effect']
+    assert effect['job_id'] == job['id'] and effect['comparison_complete']
+    assert review['ready'] and not review['requires_acknowledgement']
 
 
 def rest_line_proposal(h):

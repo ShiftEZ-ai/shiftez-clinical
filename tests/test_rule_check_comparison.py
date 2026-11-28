@@ -69,6 +69,25 @@ def test_mixed_rule_and_fact_check_still_compares_both_phases(monkeypatch):
     assert result['comparison_complete'] and result['no_new_problems']
 
 
+@pytest.mark.parametrize('known_history_start', ['2026-09-27', '2026-09-20'])
+def test_rule_check_distinguishes_goal_history_from_a_changed_source(monkeypatch, known_history_start):
+    from packages.domain import feasibility
+
+    baseline = {'workspace': {'status': 'draft'}, 'shifts': [], 'focus_ids': [], 'people': {}, 'policies': [],
+                'fairness_history': {}, 'fairness_history_start': '2026-09-27'}
+    proposed = {**baseline, 'fairness_history': {'goal': {'people': {'person': {'value': 1}}}},
+                'fairness_history_start': known_history_start}
+    monkeypatch.setattr(feasibility, 'generate', lambda *args, **kwargs: {'status': 'candidate_feasible',
+        'candidate_evidence': []})
+    monkeypatch.setattr(feasibility, 'evaluate', lambda data: {'findings': []})
+
+    result = feasibility.check({'baseline': baseline, 'proposed': proposed, 'bindings': [{'policy_id': 'goal'}],
+                                'fingerprint': 'same-inputs', 'check_seconds': 1})
+
+    assert result['comparison_complete'] is (known_history_start == baseline['fairness_history_start'])
+    assert result['no_new_problems'] is result['comparison_complete']
+
+
 def test_published_fact_conflict_keeps_required_protected_assignment_evidence(monkeypatch):
     from packages.domain import feasibility
     baseline = {'workspace': {'status': 'published'}, 'shifts': [], 'policies': []}
