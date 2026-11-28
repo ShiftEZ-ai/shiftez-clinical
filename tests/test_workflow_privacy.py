@@ -170,9 +170,9 @@ class DefaultBranchTests(unittest.TestCase):
                         offenders.append(where)
         self.assertEqual(offenders, [])
         self.assertEqual(triggers, 2)
-        for name in ("ci.yml", "dependency-graph.yml"):
+        for name, branches in (("ci.yml", ["dev", "main", "release/*"]), ("dependency-graph.yml", ["dev", "main"])):
             doc = yaml.load((self.REPO / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
-            self.assertEqual(doc["on"]["push"]["branches"], ["dev", "main"])
+            self.assertEqual(doc["on"]["push"]["branches"], branches)
 
     def test_default_branch_image_keeps_the_dev_tag_names(self):
         doc = yaml.load((self.REPO / ".github/workflows/image.yml").read_text(), Loader=yaml.BaseLoader)
