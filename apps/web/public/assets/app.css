@@ -4570,19 +4570,21 @@ td .rt-always-word{padding:0;font-weight:500}
   .rt-conflict{padding-left:8px}
 }
 tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
-.rt-table.rt-issues{table-layout:auto;min-width:100%;width:max-content}
+/* The issue table fits its pane: the sentence and the actions wrap rather than run past the edge (issue 1639). */
+.rt-table.rt-issues{table-layout:auto;width:100%}
 .rt-issues [data-col=issue-rule]{min-width:160px}
-.rt-issues [data-col=issue-what]{min-width:240px}
-.rt-issues [data-col=issue-recommendation]{min-width:280px}
+.rt-issues [data-col=issue-what]{min-width:200px}
+.rt-issues [data-col=issue-recommendation]{min-width:220px}
 .rt-issues td{vertical-align:top;overflow-wrap:normal}
 .rt-issues td:not(.dt-wrap){white-space:nowrap}
+.rt-issues td:is([data-col=issue-what],[data-col=issue-recommendation]){white-space:normal}
 .rt-issues td.dt-wrap[data-col=issue-rule]{width:180px;max-width:240px}
 .rt-issues td.dt-wrap[data-col=issue-what]{width:280px;max-width:340px}
 .rt-issues td.dt-wrap[data-col=issue-recommendation]{width:300px;max-width:360px}
-.rt-issues td[data-col=issue-lines],.rt-issues td.dt-wrap[data-col=issue-lines]{width:auto;min-width:600px;max-width:none}
+.rt-issues td[data-col=issue-lines],.rt-issues td.dt-wrap[data-col=issue-lines]{width:auto;max-width:none}
 .rt-ilines{display:grid;gap:8px;min-width:min-content}
 /* Scan a line left to right: number, who, where, limits. Both issue views share the same columns. */
-.rt-iline{display:grid;grid-template-columns:4ch minmax(220px,1fr) minmax(220px,1fr) max-content;align-items:start;gap:8px;min-width:min-content}
+.rt-iline{display:grid;grid-template-columns:4ch minmax(120px,1fr) minmax(120px,1fr) max-content;align-items:start;gap:8px;min-width:min-content}
 .dt-wrap .rt-iline{grid-template-columns:4ch 220px 220px max-content}
 .rt-iline>.rt-n{padding-top:5px}
 .rt-iline>:not(.rt-n){min-width:0;max-width:100%}
@@ -4590,15 +4592,30 @@ tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
 .rt-iline>.rule-num{white-space:nowrap}
 .rt-rec{display:grid;gap:6px}
 .rt-best{display:grid;justify-items:start;gap:4px}
-.rt-recommended-action{height:auto;min-height:30px;max-width:100%;text-align:left;white-space:nowrap}
-.dt-wrap .rt-recommended-action{white-space:normal}
+.rt-recommended-action{height:auto;min-height:30px;max-width:100%;text-align:left;white-space:normal}
 .rt-star{color:var(--accent-text);font-weight:650;font-size:11.5px}
 .rt-fixes{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
-.rt-fixes .link-button{white-space:nowrap;text-align:left}
-.dt-wrap .rt-fixes .link-button{white-space:normal}
+.rt-fixes .link-button{white-space:normal;text-align:left}
 .rt-ack-detail{display:grid;gap:4px}
 .rt-acked small{display:block}
 .rt-acked .link-button{justify-self:start}
+/* A phone or narrow pane (the shared collection container) reads each issue as one block: checkbox, then rule, lines,
+   sentence and actions stacked, with no sideways scroll. Headings stay as one wrapping row for their column menus. */
+@media screen{@container collection (max-width:720px){
+  .rt-table.rt-issues,.rt-issues>:is(thead,tbody){display:block;width:100%}
+  .rt-issues thead{position:sticky;top:0;z-index:2}
+  .rt-issues tr{display:grid;grid-template-columns:var(--dt-check-w,36px) minmax(0,1fr);border-bottom:1px solid var(--line-soft)}
+  .rt-issues thead tr{display:flex;flex-wrap:wrap;align-items:center;background:var(--subtle);border-bottom-color:var(--line)}
+  .rt-issues th{position:static;border-bottom:0}
+  .rt-issues .dt-resize{display:none}
+  .rt-issues :is(td,th).dt-check{grid-row:span 4}
+  .rt-table.rt-issues :is(td,th)[data-col],.rt-table.rt-issues td[colspan]{grid-column:2;width:auto;min-width:0;max-width:none;white-space:normal;border-bottom:0}
+  .rt-issues tbody td{padding-top:4px;padding-bottom:4px;border-bottom:0}
+  .rt-issues tr.rt-issue{padding:4px 0}
+  .rt-issues .rt-ilines,.rt-issues .rt-iline{min-width:0}
+  .rt-issues .rt-iline{grid-template-columns:4ch minmax(0,1fr);row-gap:4px}
+  .rt-issues .rt-iline>:not(.rt-n){grid-column:2}
+  .rt-issues .rt-iline>.rule-num{white-space:normal}}}
 .rt-propose h4{margin:10px 0 2px;font-size:13px}
 .rc-numbers-pop{display:grid;gap:8px;min-width:280px}
 .rc-numbers-pop p{margin:0}

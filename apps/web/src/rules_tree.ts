@@ -677,7 +677,7 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
       el('td',{'data-col':'issue-rule',class:wrapped('issue-rule').trim()},e?
         captured?el('strong',{},e.name):button(e.name,()=>go('rules/'+e.id),'',{class:'link-button rt-rule-link'}):''),
       el('td',{'data-col':'issue-lines',class:wrapped('issue-lines').trim()},x.lines.length?lineCell:el('span',{class:'muted'},'The rule')),
-      el('td',{'data-col':'issue-what',class:wrapped('issue-what').trim()},el('span',{class:'dt-clip rt-what-text','data-tip':description},description)),
+      el('td',{'data-col':'issue-what',class:wrapped('issue-what').trim()},el('span',{class:'rt-what-text'},description)),
       el('td',{'data-col':'issue-recommendation',class:(a?'rt-acked':'rt-recommendation')+wrapped('issue-recommendation')},el('div',{class:'rt-rec'},
         el('div',{class:'rt-best'},el('small',{class:'rt-star'},'★ Recommended'),
           !a&&can?button(fixWords(x,best,true),()=>fix(x,best),'secondary small rt-recommended-action'):el('span',{class:'rt-choice'},fixWords(x,best))),
