@@ -92,9 +92,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Test policy
 - No retries to get green, no skipped or quietly removed tests. Fix causes; never re-run an unchanged failure.
-  Until issue #885 removes the exception, the trusted runner re-runs eligible failed nodes once in the same job on
-  pull requests, merge groups and pushes to the default branch (`.github/scripts/trusted_ci.py`).
-  On default-branch pushes, a failure followed by a pass is recorded as unstable.
+  The first test attempt determines the verdict for single-replica pull request, merge group and
+  default-branch push plans. Later observations are diagnostic evidence.
 - A failing test is repaired by restoring what it asserts. Never weaken, skip, delete, quarantine or
   re-parameterise away a failing assertion.
 - A replaced test keeps every assertion, or says for each retired one which design decision made it untrue.
@@ -130,10 +129,9 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 - Wait for states (`expect`, `wait_for`), never fixed times; `tests/test_timing_guard.py` rejects new
   `wait_for_timeout`/`sleep` calls. Browser tests use `sign_in` unless the sign-in form is under test, and create
   data through `h.command(...)` unless the creating UI is under test. Hosted shards set `PW_TRACE_MODE=off` and
-  save failure screenshots in `PW_SCREENSHOT_DIR`. The protected runner sets `PW_TRACE_MODE=on` only for the
-  focused browser retry, which saves traces in `PW_TRACE_DIR` even when the node recovers. For local diagnostics,
-  setting `PW_TRACE_DIR` alone keeps traces on failure and saves screenshots in a sibling directory with a
-  `-screenshots` suffix. `PW_CPU_THROTTLE=4` and `PW_API_DELAY_MS=800` reproduce a loaded runner.
+  save failure screenshots in `PW_SCREENSHOT_DIR`. For local diagnostics, setting `PW_TRACE_DIR` alone keeps traces
+  on failure and saves screenshots in a sibling directory with a `-screenshots` suffix. `PW_CPU_THROTTLE=4` and
+  `PW_API_DELAY_MS=800` reproduce a loaded runner.
 - Tests use local services and mocks only: never a remote or paid service, never a real secret.
 
 ## Environments

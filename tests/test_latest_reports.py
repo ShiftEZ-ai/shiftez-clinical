@@ -46,7 +46,7 @@ def write_shard(reports, plan, shard, attempt, *, replica=1, red=False, error=Fa
 
 @pytest.fixture(autouse=True)
 def no_ci_event(monkeypatch):
-    """Tests that need retry semantics choose their event explicitly."""
+    """Tests that need first-attempt policy choose their event explicitly."""
     monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
 
 
@@ -145,6 +145,7 @@ def rerun(tmp_path, monkeypatch, plan, current):
 
 
 def test_failed_then_passed_is_proposed_unstable_and_group_passes(plan, current, rerun):
+    """Keep the collected node ID as the gate changes to red."""
     reports, output, summary, observe = rerun
     write_shard(reports, plan, 1, 1, red=True, retry="failure")
     write_shard(reports, plan, 1, 2)
@@ -153,7 +154,13 @@ def test_failed_then_passed_is_proposed_unstable_and_group_passes(plan, current,
     assert maker.classified_results(runs, set(), set(), evidence.recovered)["unstable"] == {NODE}
     proposal, = outside["proposed_list_entries"]
     assert (proposal["node"], proposal["class"], proposal["status"]) == (NODE, "unstable", "PROPOSED")
-    assert maker.evaluate(current, current, runs, group=True, merge_group=True, recovered=evidence.recovered)
+    assert runs[0][NODE] == "failed"
+    assert evidence.first_receipts["unit", 1, 1].is_relative_to(latest_reports.earlier_reports(reports))
+    census = node_census.base_nodes(plan, reports, plan["base_sha"], "10", "2", maker.canonical_node,
+                                    {"tests/test_a.py", "tests/test_b.py"}, receipts=evidence.first_receipts.values())
+    assert census == set(runs[0])
+    with pytest.raises(ValueError, match="New failures outside"):
+        maker.evaluate(current, current, runs, group=True, merge_group=True, recovered=evidence.recovered)
     assert json.loads((output / "recovered-tests.json").read_bytes()) == [
         {"node": NODE, "class": "unstable", "observations": ["failed", "passed"]}]
     assert "recovered on re-run (attempt 1)" in summary.read_text(encoding="utf-8")
@@ -171,15 +178,18 @@ def test_failed_then_failed_stays_red(plan, current, rerun):
 
 
 def test_error_then_passed_is_unstable_without_a_new_error(plan, current, rerun):
+    """The unstable diagnosis accompanies the original blocking error."""
     reports, _, _, observe = rerun
     write_shard(reports, plan, 1, 1, error=True, retry="error")
     write_shard(reports, plan, 1, 2)
     runs, evidence, outside = observe()
     assert evidence.recovered == {NODE: "error"}
     assert outside["proposed_list_entries"][0]["observations"] == ["error", "passed"]
-    groups = maker.classified_results(runs, set(), set(), evidence.recovered)
-    assert groups["unstable"] == {NODE} and not groups["baseline-error"]
-    assert maker.evaluate(current, current, runs, group=True, merge_group=True, recovered=evidence.recovered)
+    groups = maker.classified_results(runs, set(), set())
+    assert not groups["unstable"] and groups["baseline-error"] == {NODE}
+    assert runs[0][NODE] == "error"
+    with pytest.raises(ValueError, match="New errors outside"):
+        maker.evaluate(current, current, runs, group=True, merge_group=True, recovered=evidence.recovered)
 
 
 def test_passed_then_passed_has_no_recovery(plan, current, rerun):

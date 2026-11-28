@@ -15,7 +15,7 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
-from trusted_ci import (PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy,
+from trusted_ci import (PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, quarantine_revision,
                         require_plan_allowance_date, settings)
 from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, expired_issue_summary, utc_today
 from latest_reports import earlier_reports, validate_selected_reports
@@ -193,12 +193,12 @@ def main():
     # All code imports resolve under this trusted source, never the candidate or artifact directory.
     sys.path[:0] = [str(TRUSTED / "ci"), str(TRUSTED / ".github/scripts")]
     import make_known_failures as maker
-    quarantine_registry, quarantine = quarantine_policy(base, base if release else candidate, old, current)
+    quarantine_registry, quarantine = quarantine_policy(base, quarantine_revision(branch, default, base, candidate), old, current)
     if quarantine:
         maker.write_summary_lines([expired_issue_summary(quarantine, utc_today())])
-    retry = maker.retry_run(plan)
+    first_attempt = maker.first_attempt_gate(plan)
     if flags['canaries']:
-        verify_canaries(reports, allow_product_errors=True, partial=partial, allow_retry=retry)
+        verify_canaries(reports, allow_product_errors=True, partial=partial, allow_retry=first_attempt)
     root_raw = policy.read_file(base, "ci/root-run-evidence.json")
     skips_raw = policy.read_file(base, "ci/known-skips.json")
     if root_raw is None or skips_raw is None:
@@ -251,7 +251,8 @@ def main():
                 raw_files=policy.paths(git("ls-tree","-r","--name-only","-z",census_base,"--","tests"))
                 expected_files={p.decode() for p in raw_files if policy.re.fullmatch(rb"tests/(?:[\w-]+/)*test_[\w-]+\.py",p)}
                 before_nodes=node_census.base_nodes(plan,reports,census_base,os.environ["GITHUB_RUN_ID"],
-                    os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,census_files(plan, expected_files))
+                    os.environ["GITHUB_RUN_ATTEMPT"],maker.canonical_node,census_files(plan, expected_files),
+                    receipts=evidence.first_receipts.values())
                 ledger=policy.read_file(base,"ci/removed-tests.json")
                 if ledger is None:raise ValueError("Target node-removal ledger is missing")
                 candidate_ledger=policy.read_file(candidate,'ci/removed-tests.json') if candidate_ledger_allowed else ledger
@@ -261,14 +262,16 @@ def main():
             if release and policy.tree(base) != source_tree:
                 raise ValueError("Main execution tree differs from the accepted dev source")
             error_nodes = {row["node"] for row in policy.decode(current)["fails"] if row["class"] == "baseline-error"}
-            recovered = evidence.recovered
-            product_errors = maker.product_error_nodes(reports, listed=failure_nodes | quarantine.keys(),
-                                                       allow_retry=retry, quarantined={} if release else quarantine)
-            if recovered and (release or allowed_skips & recovered.keys()):
-                raise ValueError("Release/known-skip execution contains a failure or error")
+            product_errors = maker.product_error_nodes(
+                reports, listed=failure_nodes | quarantine.keys(),
+                single_replica=first_attempt, quarantined={} if release else quarantine,
+                receipts=evidence.first_receipts.values() or None)
             error_nodes |= maker.mixed_listed_nodes(policy.decode(current), runs)
             outside = {row["node"] for row in maker.outside_observations(policy.decode(current), runs)}
             error_nodes |= product_errors & outside
+            recovered = evidence.recovered
+            if recovered and (release or allowed_skips & recovered.keys()):
+                raise ValueError("Release/known-skip execution contains a failure or error")
             compared, skipped = known_skips.comparison_runs(
                 runs, allowed_skips, release=release, allowed_errors=error_nodes, quarantined=quarantine)
             print("Known skips: reviewed=" + str(len(allowed_skips)) + "; observed=" + str(len(skipped)))

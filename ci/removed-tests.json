@@ -263,6 +263,11 @@
       "reason": "The revert restores two observations on main pushes and removes the one-replica verdict behavior. Fix-forward is #1264."
     },
     {
+      "node": "tests/test_known_failures.py::test_main_push_verdict[case-odakocibfegmdcpdbdebioemphpomfmkelmbophofkodjndbmkbggjmkhngdeded]",
+      "owner": "maintainer",
+      "reason": "The main-push case expected the reader to require a retry receipt before producing a verdict. The first-attempt gate removes that requirement. The replacement uses the same failed push and requires a red verdict with the exact failing node in its reason."
+    },
+    {
       "node": "tests/test_known_failures.py::test_only_current_two_run_difference_defines_unstable",
       "owner": "maintainer",
       "reason": "Original root test identity restored as test_two_run_difference_and_seed_membership_define_unstable; assertions remain."

@@ -1207,8 +1207,8 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             maker = types.ModuleType("make_known_failures")
             import make_known_failures as actual_reader
             maker.ReportEvidence = actual_reader.ReportEvidence
-            retry_run = actual_reader.retry_run
-            maker.retry_run = retry_run
+            first_attempt_gate = actual_reader.first_attempt_gate
+            maker.first_attempt_gate = first_attempt_gate
             maker.write_summary_lines = actual_reader.write_summary_lines
             maker.canonical_node=lambda n:n
             maker.SAFE_NODE = re.compile(r"tests/.+::test_.+")
@@ -1219,7 +1219,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
             def collect(*a, evidence=None, **kw):
                 if recovered and evidence is not None:
                     evidence.recovered.update(recovered)
-                return [observed]
+                return [observed | (recovered or {})]
 
             maker.collect_reports = collect
             maker.product_error_nodes = lambda *a, **kw: set()
@@ -1285,7 +1285,7 @@ setattr(sys.modules[__name__], "pytest_" + "runtest_makereport", forged)
                     verifier.main()
                 if verifier.hardening.load()["canaries"]:
                     canaries.verify_directory.assert_called_once_with(
-                        reports, allow_product_errors=True, partial=False, allow_retry=retry_run(plan))
+                        reports, allow_product_errors=True, partial=False, allow_retry=first_attempt_gate(plan))
                 else:  # stop-loss profiles reuse this helper with canaries switched off
                     canaries.verify_directory.assert_not_called()
             if expired_summary:

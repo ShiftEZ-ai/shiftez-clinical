@@ -86,8 +86,8 @@ class TwoObservationGateTests(unittest.TestCase):
                         with self.assertRaisesRegex(ValueError, "Infrastructure"):
                             maker.product_error_nodes(self.folder)
                 with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
-                    retry = maker.retry_run({"replicas": [1]})
-                    self.assertEqual(maker.product_error_nodes(self.folder, allow_retry=retry), {NODE} if tag == "error" else set())
+                    single = maker.first_attempt_gate({"replicas": [1]})
+                    self.assertEqual(maker.product_error_nodes(self.folder, single_replica=single), {NODE} if tag == "error" else set())
                     path = self.folder / "junit.xml"
                     report = ET.parse(path)
                     case = ET.SubElement(report.getroot(), "testcase",
@@ -95,10 +95,10 @@ class TwoObservationGateTests(unittest.TestCase):
                     ET.SubElement(case, "failure", message="ConnectionError: connection refused")
                     report.write(path)
                     with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
-                        maker.product_error_nodes(self.folder, allow_retry=retry)
+                        maker.product_error_nodes(self.folder, single_replica=single)
                     with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
                         with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
-                            maker.product_error_nodes(self.folder, allow_retry=retry)
+                            maker.product_error_nodes(self.folder, single_replica=single)
 
     def test_pr_recovery_cannot_hide_multiple_infrastructure_failures(self):
         self.report("error", "ConnectionError: connection refused")
@@ -108,10 +108,10 @@ class TwoObservationGateTests(unittest.TestCase):
         ET.SubElement(case, "failure", message="ConnectionError: connection refused")
         report.write(path)
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "pull_request"}):
-            retry = maker.retry_run({"replicas": [1]})
+            single = maker.first_attempt_gate({"replicas": [1]})
             with patch.object(maker, "recovered_nodes", return_value={NODE, "tests/test_product.py::test_b"}):
                 with self.assertRaisesRegex(ValueError, "Infrastructure failure in multiple test nodes"):
-                    maker.product_error_nodes(self.folder, allow_retry=retry)
+                    maker.product_error_nodes(self.folder, single_replica=single)
 
     def test_database_lock_is_infrastructure(self):
         self.report("error", "sqlalchemy.exc.OperationalError: database is locked")
@@ -119,8 +119,8 @@ class TwoObservationGateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Infrastructure"):
                 maker.product_error_nodes(self.folder)
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "merge_group"}):
-            retry = maker.retry_run({"replicas": [1]})
-            classified = maker.product_error_nodes(self.folder, allow_retry=retry)
+            single = maker.first_attempt_gate({"replicas": [1]})
+            classified = maker.product_error_nodes(self.folder, single_replica=single)
             self.assertEqual(classified, {NODE})
             runs, _ = known_skips.comparison_runs([{NODE: "error"}, {NODE: "passed"}], set(),
                                                   release=False, allowed_errors=classified)
@@ -129,7 +129,7 @@ class TwoObservationGateTests(unittest.TestCase):
                 self.evaluate(["error", "error"], product_errors=classified)
             self.report("error", "error collecting tests/test_product.py")
             with self.assertRaisesRegex(ValueError, "Collection error"):
-                maker.product_error_nodes(self.folder, allow_retry=retry)
+                maker.product_error_nodes(self.folder, single_replica=single)
 
     def test_schema_error_with_product_frame_is_product(self):
         self.report("error", "sqlalchemy.exc.OperationalError: no such table: example")
@@ -221,7 +221,7 @@ class TwoObservationGateTests(unittest.TestCase):
             self.assertIn("- " + NODE, summary.read_text())
             self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, **output))
             self.assertEqual(json.loads(artifact.read_text()), report)
-            self.assertTrue(self.evaluate(["passed"], group=True, expected_replicas=1, recovered={NODE: "error"}, **output))
+            self.assertTrue(self.evaluate(["error"], group=True, expected_replicas=1, recovered={NODE: "error"}, **output))
             self.assertEqual(json.loads(artifact.read_text()), {**report, "nodes": []})
             self.assertTrue(self.evaluate(["passed", "error"], **output))
             self.assertEqual(json.loads(artifact.read_text()), {**report, "nodes": []})
@@ -426,7 +426,7 @@ class TwoObservationGateTests(unittest.TestCase):
                     self.assertEqual(plan["base_sha"], base)
                     self.assertEqual(at_revision.call_args_list[0].args, (base,))
                     self.assertEqual(plan["replicas"], replicas)
-                    self.assertEqual(maker.retry_run(plan), single)
+                    self.assertEqual(maker.first_attempt_gate(plan), single)
                     actual = {file for row in plan["suites"].values() for shard in row["shards"] for file in shard["files"]}
                     if partial:
                         self.assertEqual(plan["selection"], {"reason": "affected"})
@@ -449,15 +449,15 @@ class TwoObservationGateTests(unittest.TestCase):
 
     def test_retry_reads_the_quarantine_the_verdict_reads(self):
         import trusted_ci
+        import trusted_verdict
         # main is the release branch only while it is not the default; after the rename it is integration.
         cases = {("main", "dev"): "base", ("dev", "dev"): "candidate", ("main", "main"): "candidate",
                  ("dev", "main"): "candidate", ("release/v1.2.3", "main"): "candidate"}
         for (branch, default), expected in cases.items():
             with self.subTest(branch=branch, default=default):
                 self.assertEqual(trusted_ci.quarantine_revision(branch, default, "base", "candidate"), expected)
-        # The shard retry path must use the helper with the trusted default, not its own branch test.
-        source = Path(trusted_ci.__file__).read_text(encoding="utf-8")
-        self.assertIn('quarantine_revision(branch, policy.default_branch(event), base, candidate["sha"])', source)
+        source = Path(trusted_verdict.__file__).read_text(encoding="utf-8")
+        self.assertIn("quarantine_revision(branch, default, base, candidate)", source)
         self.assertNotIn('base if branch == "main" else candidate', source)
 
     def test_nightly_uses_the_same_pinned_dev_source_for_checks_and_verdict(self):

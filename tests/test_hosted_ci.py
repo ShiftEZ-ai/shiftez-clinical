@@ -142,7 +142,6 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
 
     monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
     monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parents[2] / "ci"))
-    import make_known_failures as maker
     import trusted_ci
 
     sources = tmp_path / "tests"
@@ -172,31 +171,27 @@ def test_success_requires_complete_original_execution(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_EVENT_NAME", "merge_group")
     run = trusted_ci.invocation_receipt
     listed_node = "tests/test_x.py::test_listed_red[0]"
-    listed = {maker.canonical_node(listed_node)}
-    candidate = {"replicas": [1], "smoke": False}
-    evidence = run(["tests/test_x.py"], "unit", report, [], "0", None, candidate=candidate, listed=listed)
+    evidence = run(["tests/test_x.py"], "unit", report, [], "0", None)
     original = trusted_ci.canaries.report_cases(report, evidence)
-    assert evidence["exit_code"] == evidence["retry"]["exit_code"] == 1
+    assert evidence["exit_code"] == 1 and "retry" not in evidence
     assert trusted_ci.canaries.failed_nodes(original) == [node, "tests/test_x.py::test_always_red", listed_node]
-    failures = maker.retry_nodes(original, listed)
-    assert failures == [node, "tests/test_x.py::test_always_red"]
-    assert trusted_ci.canaries.recovered_nodes(report, evidence, failures, allow_retry=True) == {node}
-    assert sorted(path.name for path in tmp_path.glob("*.raw.xml")) == ["junit-retry.raw.xml", "junit.raw.xml"]
-    listed_only = run([listed_node], "unit", tmp_path / "listed.xml", [], "0", None, candidate=candidate, listed=listed)
+    assert sorted(path.name for path in tmp_path.glob("*.raw.xml")) == ["junit.raw.xml"]
+    listed_only = run([listed_node], "unit", tmp_path / "listed.xml", [], "0", None)
     assert listed_only["exit_code"] == 1 and "retry" not in listed_only
     assert not (tmp_path / "listed-retry.xml").exists()
     (tmp_path / "shard-receipt.json").write_text(json.dumps({
         "sha": "a" * 40, "tree": "a" * 40, "run_id": "fixture", "run_attempt": "1", "reports": [evidence],
     }))
-    trusted_ci.canaries.verify_directory(tmp_path, allow_retry=True)
+    trusted_ci.canaries.verify_directory(tmp_path)
     monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
     monkeypatch.delenv("GITHUB_REF", raising=False)
-    single = run(["tests/test_x.py"], "unit", tmp_path / "push.xml", [], "0", None, candidate=candidate)
+    single = run(["tests/test_x.py"], "unit", tmp_path / "push.xml", [], "0", None)
     assert single["exit_code"] == 1 and "retry" not in single
     assert not (tmp_path / "push-retry.xml").exists()
 
 
 def test_browser_retry_enables_tracing_for_failed_nodes(tmp_path, monkeypatch):
+    """The first attempt now supplies the failure evidence. Keep the collected node ID."""
     monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
     import trusted_ci
 
@@ -223,28 +218,28 @@ def test_browser_retry_enables_tracing_for_failed_nodes(tmp_path, monkeypatch):
     monkeypatch.setattr(trusted_ci.subprocess, "call", execution)
     monkeypatch.setattr(trusted_ci.hardening, "load", lambda: {"canaries": False, "node_census": False})
     evidence = trusted_ci.invocation_receipt(
-        [path], "browser", tmp_path / "junit.xml", [], "4", None, candidate={"replicas": [1]},
+        [path], "browser", tmp_path / "junit.xml", [], "4", None,
     )
 
-    assert evidence["exit_code"] == 1 and evidence["retry"]["exit_code"] == 0
-    assert calls == [(False, "off"), (True, "on")]
+    assert evidence["exit_code"] == 1 and "retry" not in evidence
+    assert calls == [(False, "off")]
     assert os.environ["PW_TRACE_MODE"] == "off"
 
 
-@pytest.mark.parametrize("replicas,smoke,retry_expected,branch,event,retired,default", [
-    pytest.param([1], False, True, "dev", "pull_request", False, "dev", id="replicas0-False-True"),
-    pytest.param([1], True, False, "dev", "pull_request", False, "dev", id="replicas1-True-False"),
-    pytest.param([1, 2], False, False, "dev", "pull_request", False, "dev", id="replicas2-False-False"),
-    pytest.param([1], False, True, "dev", "pull_request", True, "dev", id="pr-retirement"),
-    pytest.param([1], False, True, "dev", "merge_group", True, "dev", id="group-retirement"),
-    pytest.param([1], False, True, "main", "merge_group", True, "dev", id="release-uses-accepted-dev"),
-    # After the rename main is the default, so its merge groups are integration and read the candidate.
-    pytest.param([1], False, True, "main", "merge_group", True, "main", id="renamed-main-group-retirement"),
-    pytest.param([1], False, True, "main", "push", False, "main", id="default-branch-push"),
-    pytest.param([1], False, False, "main", "push", False, "dev", id="non-default-push"),
+@pytest.mark.parametrize("replicas,smoke,event,branch,default", [
+    pytest.param([1], False, "pull_request", "dev", "dev", id="replicas0-False-True"),
+    pytest.param([1], True, "pull_request", "dev", "dev", id="replicas1-True-False"),
+    pytest.param([1, 2], False, "pull_request", "dev", "dev", id="replicas2-False-False"),
+    pytest.param([1], False, "pull_request", "dev", "dev", id="pr-retirement"),
+    pytest.param([1], False, "merge_group", "dev", "dev", id="group-retirement"),
+    pytest.param([1], False, "merge_group", "main", "dev", id="release-uses-accepted-dev"),
+    pytest.param([1], False, "merge_group", "main", "main", id="renamed-main-group-retirement"),
+    pytest.param([1], False, "push", "main", "main", id="default-branch-push"),
+    pytest.param([1], False, "push", "main", "dev", id="non-default-push"),
 ])
 def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
-        tmp_path, monkeypatch, replicas, smoke, retry_expected, branch, event, retired, default):
+        tmp_path, monkeypatch, replicas, smoke, event, branch, default):
+    """All previously retry-eligible cases now seal only the first attempt."""
     monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
     import trusted_ci
 
@@ -257,8 +252,8 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
                  "suites": {"unit": {"shards": [{"files": [path]}]}}}
     calls = []
 
-    def invocation(targets, suite, report, extra, workers, base_targets, *, partial, trace=False):
-        calls.append((targets, workers, trace))
+    def invocation(targets, suite, report, extra, workers, base_targets, *, partial):
+        calls.append((targets, workers))
         nodes = [red, listed, quarantined, new_flake] if targets == [path] else targets
         cases = ET.Element("testsuite")
         for node in nodes:
@@ -270,10 +265,6 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
         report.with_suffix(".deselected.json").write_text("[]", encoding="utf-8")
         return int(targets == [path])
 
-    known = {"schema": 2, "tree": "c" * 40, "root_evidence_sha256": "d" * 64, "cleanup_cap": 0,
-             "root_runs": [{"run_id": "1", "run_attempt": "1", "replica": i} for i in (1, 2)],
-             "fails": [{"node": listed, "class": "baseline"}], "unstable": []}
-
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GITHUB_EVENT_NAME", event)
     monkeypatch.setenv("GITHUB_REF", "refs/heads/" + branch)
@@ -283,7 +274,6 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
     elif event == "merge_group":
         payload[event] = {"base_ref": "refs/heads/" + branch}
     monkeypatch.setattr(trusted_ci.policy, "event", lambda: payload)
-    release = branch == "main" and default != "main"
     monkeypatch.setenv("GITHUB_RUN_ID", "fixture")
     monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
     monkeypatch.setenv("CI_UNIT_WORKERS", "4")
@@ -292,28 +282,15 @@ def test_pr_runner_retries_only_unlisted_nodes_on_an_eligible_plan(
     monkeypatch.setattr(trusted_ci, "plan", lambda *_: candidate)
     monkeypatch.setattr(trusted_ci, "invocation", invocation)
     monkeypatch.setattr(trusted_ci.hardening, "load", lambda: {"node_census": False})
-    def read_file(sha, name):
-        assert sha in {candidate["sha"], candidate["base_sha"]}
-        if name == trusted_ci.policy.KNOWN:
-            return json.dumps(known).encode()
-        if name == trusted_ci.policy.QUARANTINE_RETIRED:
-            if release:
-                assert sha == candidate["base_sha"]
-            return json.dumps([quarantined] if retired and sha == candidate["sha"] else []).encode()
-        assert name == "tests/quarantine.json"
-        row = {"nodeid": quarantined, "reason": "baseline: reviewed", "owner": "maintainers",
-               "added": "2000-01-01", "expires": "2000-01-02", "issue": 123, "blocker": False}
-        flake = {**row, "nodeid": new_flake, "reason": "unstable: recovered", "recovered_runs": ["1"]}
-        return json.dumps([row, flake] if sha == candidate["sha"] else [row]).encode()
-
-    monkeypatch.setattr(trusted_ci.policy, "read_file", read_file)
     trusted_ci.main()
     receipt = json.loads((tmp_path / ".run/reports/shard-receipt.json").read_text(encoding="utf-8"))
     assert receipt["reports"][0]["exit_code"] == 1
-    assert ("retry" in receipt["reports"][0]) == retry_expected
-    retried = [new_flake, quarantined, red] if retired and not release else [new_flake, red]
-    assert calls == [([path], "4", False)] + ([(retried, "0", False)] if retry_expected else [])
-    assert (tmp_path / ".run/reports/junit-retry.xml").exists() == retry_expected
+    assert "retry" not in receipt["reports"][0]
+    assert calls == [([path], "4")]
+    assert not (tmp_path / ".run/reports/junit-retry.xml").exists()
+    report = tmp_path / ".run/reports/junit.xml"
+    assert trusted_ci.canaries.failed_nodes(trusted_ci.canaries.report_cases(report, receipt["reports"][0])) == sorted(
+        [red, listed, quarantined, new_flake])
 
 
 def test_scoped_shard_accepts_only_verified_deselection(tmp_path, monkeypatch):
@@ -333,7 +310,7 @@ def test_scoped_shard_accepts_only_verified_deselection(tmp_path, monkeypatch):
     monkeypatch.setattr(trusted_ci.hosted, "git", lambda *args: "a" * 40)
     report = tmp_path / "junit.xml"
     evidence = trusted_ci.invocation_receipt(
-        [path], "unit", report, [], "0", None, candidate={"replicas": [1]}, partial=True)
+        [path], "unit", report, [], "0", None, partial=True)
     assert trusted_ci.canaries.report_cases(report, evidence, selected_scope={path}) == []
     for scope in ((), {"tests/test_other.py"}):
         with pytest.raises(ValueError, match="Incomplete execution"):

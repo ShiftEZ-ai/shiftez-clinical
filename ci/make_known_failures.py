@@ -43,7 +43,7 @@ def single_replica_event():
     return kind in {"pull_request", "merge_group"}
 
 
-def retry_run(plan):
+def first_attempt_gate(plan):
     return plan["replicas"] == [1] and not plan.get("smoke") and single_replica_event()
 
 
@@ -203,13 +203,12 @@ class ReportEvidence:
     recovered: dict[str, str] = field(default_factory=dict)
     reruns: dict[str, int] = field(default_factory=dict)
     unobserved: list[dict] = field(default_factory=list)
+    first_receipts: dict[tuple, Path] = field(default_factory=dict)
 
 
 def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed=None, historical_capture=False,
                     evidence=None, quarantine_nodes=None):
-    retry = not historical_capture and retry_run(plan)
-    if retry and listed is None:
-        listed = listed_nodes(at_revision(plan["sha"]))
+    first_attempt = not historical_capture and first_attempt_gate(plan)
     if evidence is None:
         evidence = ReportEvidence()
     expected = planned_shards(plan)
@@ -241,7 +240,13 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
         for row in receipt["reports"]:
             report = path.parent / row["file"]
             cases = report_cases(report, row, selected_scope=files if "selection" in plan else ())
-            recovered = recovered_nodes(report, row, retry_nodes(cases, listed) if retry else (), allow_retry=retry)
+            recovered = set()
+            if "retry" in row:
+                eligible = listed
+                if first_attempt and eligible is None:
+                    eligible = listed_nodes(at_revision(plan["sha"]))
+                recoverable = retry_nodes(cases, eligible) if first_attempt else ()
+                recovered = recovered_nodes(report, row, recoverable, allow_retry=first_attempt)
             for case in cases:
                 node = report_node(case)
                 if node.split("::")[0] not in files:
@@ -260,7 +265,8 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
                     retries[canonical] = outcome
         return identity, int(attempt), outcomes, retries
 
-    latest, runs = {}, {replica: {} for replica in plan["replicas"]}
+    latest, first_outcomes = {}, {}
+    runs = {replica: {} for replica in plan["replicas"]}
     for path in sorted(directory.rglob("shard-receipt.json")):
         identity, attempt, outcomes, retries = read_shard(path, directory)
         if identity in latest:
@@ -270,7 +276,9 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
         if run.keys() & outcomes.keys():
             raise ValueError("A node executed more than once in a full run")
         run.update(outcomes)
-        run.update(dict.fromkeys(retries, "passed"))
+        if first_attempt:
+            evidence.first_receipts[identity] = path
+            first_outcomes[identity] = outcomes
         evidence.recovered.update(retries)
     if latest.keys() != expected:
         raise ValueError("Missing shard: every planned producer must report")
@@ -291,7 +299,11 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
                 observed = read_shard(path, archive, earlier=True)
                 if observed is None:
                     continue
-                _, _, outcomes, _ = observed
+                _, _, outcomes, retries = observed
+                if first_attempt and attempt == 1:
+                    evidence.first_receipts[identity] = path
+                    first_outcomes[identity] = outcomes
+                    evidence.recovered.update(retries)
                 if (identity, attempt) in seen:
                     raise ValueError("Duplicate shard artifact attempt: " + folder.name)
                 seen.add((identity, attempt))
@@ -311,6 +323,22 @@ def collect_reports(plan, directory, run_id, run_attempt, output=None, *, listed
             {"node": node, "class": "unstable", "observations": [outcome, "passed"]}
             for node, outcome in sorted(evidence.recovered.items())
         ]), encoding="utf-8")
+    if first_attempt:
+        first_run = {}
+        for outcomes in first_outcomes.values():
+            if first_run.keys() & outcomes.keys():
+                raise ValueError("A node executed more than once in a full run")
+            first_run.update(outcomes)
+        if output is not None and int(run_attempt) > 1:
+            later_failures = [
+                {"node": node, "observations": ["passed", outcome]}
+                for node, outcome in sorted(runs[1].items())
+                if outcome in {"failed", "error"} and first_run.get(node) == "passed"
+            ]
+            if later_failures:
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "later-test-failures.json").write_text(encoded(later_failures), encoding="utf-8")
+        return [first_run]
     return [runs[replica] for replica in plan["replicas"]]
 
 
@@ -448,20 +476,20 @@ def outside_observations(current, runs, exceptions=frozenset()):
              "red_count": sum(run.get(node) in {"failed", "error"} for run in runs)} for node in sorted(outside)]
 
 
-def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False, quarantined=frozenset()):
+def product_error_nodes(directory, *, listed=frozenset(), single_replica=False, quarantined=frozenset(), receipts=None):
     """Classify individual errors after the producer and report checks."""
     infrastructure = re.compile(r"connection refused|could not connect|server closed the connection|connection reset|could not translate host|temporary failure in name resolution|no route to host|network is unreachable|too many connections|remaining connection slots|password authentication failed|database is locked|database is busy|deadlock detected|no space left on device|out of memory|browser executable.*(?:missing|exist)|ECONNREFUSED|permission denied", re.I)
     product_types = {"AssertionError", "AttributeError", "KeyError", "NameError", "TypeError", "ValueError", "IndexError", "LookupError", "ZeroDivisionError", "NotImplementedError", "IntegrityError", "ProgrammingError", "DataError"}
     result = set()
     infrastructure_nodes = set()
     listed = set(listed) | set(quarantined)
-    for receipt_path in sorted(directory.rglob("shard-receipt.json")):
+    if receipts is None:
+        receipts = directory.rglob("shard-receipt.json")
+    for receipt_path in sorted(receipts):
         receipt = json.loads(receipt_path.read_bytes())
         for row in receipt["reports"]:
             report = receipt_path.parent / row["file"]
             cases = list(ET.parse(report).getroot().iter("testcase"))
-            recovered_raw = recovered_nodes(report, row, retry_nodes(cases, listed) if allow_retry and "retry" in row else (),
-                                            allow_retry=allow_retry)
             for case in cases:
                 error = case.find("error")
                 element = error if error is not None else case.find("failure")
@@ -472,20 +500,20 @@ def product_error_nodes(directory, *, listed=frozenset(), allow_retry=False, qua
                 message, text = element.get("message", ""), element.text or ""
                 if collection_error(case):
                     raise ValueError("Collection error in test evidence: " + node)
-                if node in quarantined or (node in listed and not allow_retry):
+                if node in quarantined or (node in listed and not single_replica):
                     continue
                 summary = message + "\n" + "\n".join(line for line in text.splitlines() if line.startswith("E "))
                 if infrastructure.search(summary):
-                    if not allow_retry:
+                    if not single_replica:
                         raise ValueError("Infrastructure failure in test evidence: " + node)
                     infrastructure_nodes.add(node)
                     if len(infrastructure_nodes) > 1:
                         raise ValueError("Infrastructure failure in multiple test nodes: "
                                          + ", ".join(sorted(infrastructure_nodes)))
-                    if error is not None and node not in listed and raw_node not in recovered_raw:
+                    if error is not None and node not in listed:
                         result.add(node)
                     continue
-                if error is None or node in listed or raw_node in recovered_raw:
+                if error is None or node in listed:
                     continue
                 kinds = re.findall(r"(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:Error|Exception)\b", message or text)
                 kind = kinds[0].rsplit(".", 1)[-1] if kinds else "UNKNOWN"
@@ -521,10 +549,11 @@ def report_outside(current, runs, output, exceptions=frozenset(), recovered=None
 
     groups = classes(current) if current else {}
     known = set().union(*groups.values())
-    rows = outside_observations(current, runs, exceptions)
-    rows.extend({"node": node, "test_file": node.split("::", 1)[0], "observations": [recovered[node], "passed"],
-                 "red_count": 1} for node in set(recovered) - known - set(exceptions))
-    rows.sort(key=lambda row: row["node"])
+    rows = {row["node"]: row for row in outside_observations(current, runs, exceptions)}
+    rows.update({node: {"node": node, "test_file": node.split("::", 1)[0],
+                        "observations": [recovered[node], "passed"], "red_count": 1}
+                 for node in set(recovered) - known - exceptions})
+    rows = [rows[node] for node in sorted(rows)]
     proposed = [{**row, "class": "unstable", "status": "PROPOSED"} for row in rows
                 if len(row["observations"]) == 2 and row["red_count"] == 1 and "passed" in row["observations"]]
     unstable = groups.get("unstable", set())
@@ -644,13 +673,12 @@ def evaluate(current, base, runs, *, bootstrap_candidate=None, bootstrap_add_onl
     else:
         require_class_ratchet(current, base)
         moved = {row["node"] for row in base["fails"]} & groups["unstable"]
-        if moved:
-            if merge_group and not moved <= set(recovered):
-                raise ValueError("Moving failures to unstable requires verified recovery on retry")
-            if not merge_group and (len(runs) != 2 or not moved <= differing(runs)):
-                raise ValueError("Moving failures to unstable requires two full runs with different results")
-    if group and base is not None:
-        expected_replicas = 1
+        if moved and (merge_group or len(runs) != 2 or not moved <= differing(runs)):
+            raise ValueError("Moving failures to unstable requires two full runs with different results")
+    if group:
+        recovered = ()
+        if base is not None:
+            expected_replicas = 1
     observed = set(runs[0])
     mixed_listed = mixed_listed_nodes(current, runs, recovered)
     problems = []
@@ -784,7 +812,7 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                       if "selection" in plan else None)
     quarantined = (quarantine or {}).keys()
     listed = listed_nodes(ctx["current"]) | quarantined
-    retry = retry_run(plan)
+    first_attempt = first_attempt_gate(plan)
     try:
         if plan["smoke"]:
             if any(state != "passed" for run in runs for state in run.values()):
@@ -797,9 +825,10 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                 print("::warning::Applying " + str(len(exceptions)) + " explicit hosted environment exceptions; evidence and review references are committed")
             if product_errors is None:
                 product_errors = set() if args.capture_root else product_error_nodes(
-                    args.reports, listed=listed, allow_retry=retry, quarantined=() if release else quarantined)
+                    args.reports, listed=listed, single_replica=first_attempt, quarantined=() if release else quarantined,
+                    receipts=evidence.first_receipts.values() or None)
             recovered = evidence.recovered
-            groups = classified_results(runs, baseline, exceptions, recovered)
+            groups = classified_results(runs, baseline, exceptions, () if first_attempt else recovered)
             counts = {kind: len(nodes) for kind, nodes in groups.items()}
             (args.output / "cleanup-failures.json").write_text(json.dumps(sorted(groups["cleanup"]), indent=2) + "\n", encoding="utf-8")
             comparison = {"baseline_sha256": baseline_sha, "env_exceptions_sha256": exception_sha, "counts": counts}
@@ -821,6 +850,8 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
             report_outside(comparison_list, runs, args.output, exceptions, recovered,
                            reruns=evidence.reruns, unobserved=evidence.unobserved,
                            quarantined=() if release else quarantined)
+            if first_attempt and any(row["attempt"] == 1 for row in evidence.unobserved):
+                raise ValueError("Missing first-attempt shard evidence. Push or update the branch to start a new first attempt.")
             candidate = (candidate_list(runs, baseline, tree, args.unstable_issue, args.unstable_expires_on,
                                         args.unstable_limit, cleanup_cap=root_evidence["counts"]["cleanup"],
                                         root_evidence_sha256=root_sha, root_runs=root_evidence["runs"], cleanup_issue=args.cleanup_issue,
@@ -834,7 +865,7 @@ def main(*, runs=None, evidence=None, product_errors=None, stale_lookup=None, ni
                 observe_stale = partial(write_stale_report, args.output, plan["sha"])
             evaluate(ctx["current"], ctx["base"], runs, bootstrap_candidate=candidate,
                      bootstrap_add_only=add_only, limit=args.unstable_limit, exceptions=exceptions,
-                     group=retry, merge_group=os.getenv("GITHUB_EVENT_NAME") == "merge_group",
+                     group=first_attempt, merge_group=os.getenv("GITHUB_EVENT_NAME") == "merge_group",
                      recovered=recovered,
                      product_errors=product_errors, selected_files=selected_files,
                      stale_output=stale_report_dir(args.output), expected_replicas=len(ctx["replicas"]),
