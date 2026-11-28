@@ -15,7 +15,7 @@ from apps.api.errors import integrity_problem, unique_violation
 from apps.api.services import jobs
 from apps.worker import main as worker
 from scripts import manage
-from .conftest import ROLES, TEST_PASSWORD
+from .migration_support import historical_seed
 from .test_data_safety import session_limits_database  # noqa: F401
 
 
@@ -33,7 +33,7 @@ def test_seeded_upgrade_preflights_retained_rows(session_limits_database, duplic
     engine = make_engine(url)
     try:
         with transaction(engine, write=True) as db:
-            seed = manage.demo_data(db, {role: TEST_PASSWORD for role in ROLES})
+            seed = historical_seed(db)  # reads the 0157 schema; current models may have later columns
             if duplicate == 'calendar_feed':
                 table = m.CalendarFeed.__table__
                 values = [{'department_id': seed['department_id'], 'identity_id': seed['identities']['staff'],
