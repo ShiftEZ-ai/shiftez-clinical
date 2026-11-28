@@ -36,11 +36,13 @@ def golden_harness(tmp_path_factory, database_template):
 
 
 def test_golden_compiler_is_idempotent(golden_harness):
+    from functools import partial
     from scripts.golden_scenarios import compile_scenario, command_key
     from apps.worker.main import process_one
 
     def compile(h, spec):
-        return compile_scenario(h.command, spec, read=h.get, committed=h.committed,
+        # A replay's command receipt is immutable. A fresh detail read only describes the current draft.
+        return compile_scenario(partial(h.command, hydrate_validation=False), spec, read=h.get, committed=h.committed,
             work=lambda: process_one(h.app.state.engine, solver_workers=1))
 
     specs = load_pack()
