@@ -171,9 +171,9 @@ def test_stop_when_is_one_line_until_changed_and_a_run_sends_only_a_change(brows
         assert not clock.evaluate('(input) => input.checkValidity()')
         assert h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs'][0]['id'] == job['id']
         clock.fill('')
-        # Continue with fewest breaks warns that every break is a must-fix.
+        # Continue with fewest rules broken warns that every broken rule is a must-fix.
         stops.get_by_label('If rules conflict', exact=True).select_option('continue_flagged')
-        expect(stops.get_by_text('Every break is a must-fix and blocks publishing until fixed.')).to_be_visible()
+        expect(stops.get_by_text('Every broken rule is a must-fix and blocks publishing until fixed.')).to_be_visible()
         expect(line).to_contain_text(GENERATION_CONFLICT_CHOICES['continue_flagged'].lower())
         # The setup's one line says the changed conditions once the fields close.
         panel.locator('.auto-body > .rl-done').get_by_role('button', name='Done', exact=True).click()
@@ -249,7 +249,7 @@ def test_a_run_continued_past_a_conflict_says_its_breaks(browser, cp_server, h, 
     context, page, panel = _open(browser, cp_server, h, w, view, scheme)
     try:
         review = panel.get_by_role('region', name='Review')
-        expect(review.locator('.auto-breaks')).to_have_text('Continued with 2 breaks · each must be fixed before publishing')
+        expect(review.locator('.auto-breaks')).to_have_text('Continued with 2 rules broken · each must be fixed before publishing')
         expect(panel.locator('.solver-receipt')).to_have_count(1)  # the run card's, not again in its review
         expect(panel.locator('.solver-receipt')).to_contain_text('Stop reason: ' + GENERATION_STOP_REASONS['plateau'])
     finally:
@@ -322,7 +322,7 @@ def test_a_rules_conflict_offers_each_cause_its_smallest_fix_and_two_choices(bro
         assert h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs'][0]['id'] == job['id']
         choices = panel.get_by_role('region', name='Rules conflict')
         expect(choices.get_by_role('button', name='Stop and fix rules', exact=True)).to_be_visible()
-        expect(choices).to_contain_text('Every break is a must-fix and blocks publishing until fixed.')
+        expect(choices).to_contain_text('Every broken rule is a must-fix and blocks publishing until fixed.')
         fill = choices.get_by_role('button', name='Fill everything else', exact=True)
         expect(fill).to_have_class(re.compile(r'\bprimary\b'))
         expect(panel.get_by_role('button', name='Fill everything else', exact=True)).to_have_count(1)  # one way on, not two

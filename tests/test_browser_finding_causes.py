@@ -9,6 +9,7 @@ from playwright.sync_api import expect
 from .test_browser import form_submit, route_fetch, browser, live_server, sign_in, navigate, open_rota, open_config, planner_tool  # noqa: F401
 from .test_finding_cause_api import minimum
 from .test_browser_source_parity import person_name
+from .test_browser_schedule_views import IN_SIGHT, PHONE
 
 pytestmark = pytest.mark.browser
 DESKTOP = {'width': 1440, 'height': 1000}
@@ -380,5 +381,24 @@ def test_matching_series_is_extended_to_the_breach_dates_without_cutting_it_shor
         saved = next(s for s in h.get('admin', '/api/catalogues')['recurring_series'] if s['id'] == later['id'])
         assert (saved['starts_on'], saved.get('ends_on')) == ('2026-10-04', None), saved
         expect(chosen_series(page.get_by_role('dialog', name='Add recurring sessions'))).to_have_values([later['id']])  # only the extended one
+    finally:
+        context.close()
+
+
+def test_all_checks_group_action_wraps_inside_a_phone_screen(browser, live_server, h):
+    """Design review (390, dark): a cause group's long title keeps its line and Why and how to fix goes under it,
+    fully inside the screen and not covered."""
+    _, _, w = breach_rota(h)
+    context, page = sign_in(browser, live_server, 'coordinator', viewport=PHONE)
+    try:
+        page.emulate_media(color_scheme='dark')
+        navigate(page, f"schedule/issues?draft={w['id']}&view=checks")
+        expect(page.locator('.issues-counts')).to_have_text(re.compile(r'^2 open · 0 resolved'))
+        why = page.locator('#main button[data-causes]').first
+        expect(why).to_have_text('Why and how to fix')
+        why.scroll_into_view_if_needed()
+        assert why.evaluate(IN_SIGHT), 'Why and how to fix is cut by the screen edge or covered'
+        a, b = why.bounding_box(), why.locator('xpath=..').locator(':scope > .dt-group-toggle').bounding_box()
+        assert a['y'] >= b['y'] + b['height'] - 1 or a['x'] >= b['x'] + b['width'] - 1, 'Why and how to fix overlaps its group title'
     finally:
         context.close()

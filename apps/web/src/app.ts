@@ -7677,7 +7677,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // open while one differs (a changed condition is never out of sight). Only CP-SAT has stop conditions.
   let stopOpen=stopsChanged();
   const stopLine=el('span',{class:'grow'}),stopMore=el('div',{class:'auto-numbers auto-stop-more'},...stops.inputs.map(f=>f.wrap));
-  const stopWarn=el('p',{class:'hint auto-stop-warn'},icon('alert'),'Every break is a must-fix and blocks publishing until fixed.');
+  const stopWarn=el('p',{class:'hint auto-stop-warn'},icon('alert'),'Every broken rule is a must-fix and blocks publishing until fixed.');
   const stopToggle=el('button',{type:'button',class:'link-button','aria-label':'Change stop conditions'},'Change');
   const paintStops=()=>{const changed=stopsChanged();stopOpen||=changed;stopLine.textContent=stopWords(Number(minutes.input.value)||Number(defaults.search_minutes)||AUTO_SCHEDULE_LIMITS.default_minutes,stops.read());
     stopMore.hidden=!stopOpen;stopToggle.hidden=changed;stopToggle.setAttribute('aria-expanded',String(stopOpen));stopToggle.textContent=stopOpen?'Done':'Change';
@@ -8111,12 +8111,12 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
         reasons=shortfallBlock(result,cpSat&&editable?'Fill everything else now; these places stay open for you.':'Nothing was changed.');
         const facts=runFacts(latest),clash=isClash(facts),act=clash&&editable&&cpSat;
         // Nothing more happens until the person chooses (on_conflict 'report', the owner's default). A clash: two choices.
-        // Stop and fix the rules (this rota's rules beside the schedule), or Fill everything else (each break a must-fix
-        // that blocks publishing). Without a clash the footer offers Fill everything else (shortfall).
+        // Stop and fix the rules (this rota's rules beside the schedule), or Fill everything else (each broken rule a
+        // must-fix that blocks publishing). Without a clash the footer offers Fill everything else (shortfall).
         if(act)shortfall=null;
         const choices=act?el('section',{class:'auto-choices','aria-label':'Rules conflict'},el('div',{class:'actions'},
             button('Stop and fix rules',()=>openRotaRules(),'secondary'),button('Fill everything else',()=>fillRest(latest),'primary',{disabled:!runnable(),why:runReason()})),
-          el('p',{class:'hint'},icon('alert'),'Every break is a must-fix and blocks publishing until fixed.')):'';
+          el('p',{class:'hint'},icon('alert'),'Every broken rule is a must-fix and blocks publishing until fixed.')):'';
         feedback.append(reasons,clash?clashCard(facts.conflict!,{...clashHooks(data,()=>{}),...(act?{leaveOpen:()=>fillRest(latest)}:{})}):'',choices,
           el('div',{class:'actions'},first?button('Show on schedule',()=>showOnSchedule(first),'secondary small'):'',
             allowed('people')?button('Open People',()=>navigate('people'),'secondary small'):''),
@@ -8820,8 +8820,10 @@ async function inboxPulse(unread:number){
     const options={body:String(latest.message||''),tag:'rota-'+latest.id,icon:'/api/pwa/apple-touch-icon.png'};
     const worker=await navigator.serviceWorker?.getRegistration().catch(()=>undefined);
     if(worker)await worker.showNotification(String(latest.title),options);else new Notification(String(latest.title),options);
-  }else if(view!=='inbox')notify(String(latest.title),'info',{label:'Open inbox',run:()=>navigate('inbox')});
+  }else if(view!=='inbox'&&!runShown(latest))notify(String(latest.title),'info',{label:'Open inbox',run:()=>navigate('inbox')});
 }
+/** A finished run's message while that rota's Auto-schedule panel is open: the panel already shows the result. */
+const runShown=(n:Row)=>n.kind==='generation_finished'&&document.getElementById('auto-panel')?.hidden===false&&n.link?.workspace_id===schedulingSettings.workspace;
 /** Someone is typing, or has changes not yet saved (a rule's draft lines): a live update is not drawn over them. */
 // A field that cannot be edited (readonly, disabled) is not editing: focus merely left on it never holds live updates.
 const editingNow=()=>!!document.activeElement?.matches('input:not([readonly]):not([disabled]),textarea:not([readonly]):not([disabled]),select:not([disabled]),[contenteditable="true"]')||!!leaveCheck?.()||dockDirty();
