@@ -7,7 +7,7 @@ from playwright.sync_api import expect
 
 from apps.api import models as m
 from apps.api.db import transaction
-from .governance_support import identity
+from .governance_support import identity, retire_rule
 from .test_browser import browser, live_server, sign_in, navigate, open_rule  # noqa: F401
 from .test_rule_templates import propose, activate
 from .rules_support import rule_status
@@ -207,7 +207,7 @@ def test_rules_effective_date_empty_states_preserve_attention_and_history_recove
         expect(attention.locator('.rule-item')).to_contain_text(rule['name'])
 
         rule = activate(h, rule)
-        h.command('approver', 'policy.retire', {'reason': 'Synthetic historical date boundary'}, rule['id'], rule['revision'])
+        retire_rule(h, rule, 'Synthetic historical date boundary')
         propose(h, {'kind': 'max_hours', 'hours': 40, 'window': 'week'}, name='Fictional current hours')
         page.reload()
         navigate(page, 'rules')
@@ -249,7 +249,7 @@ def test_true_zero_rules_keep_quick_start_and_retired_only_rules_keep_lazy_histo
             'definition': {'rule': {'kind': 'min_rest', 'hours': 11}}})['record']
         rule = h.command('zero-approver', 'policy.activate', {'reason': 'Independent synthetic review'},
                          proposal['id'], proposal['revision'])['record']
-        h.command('zero-approver', 'policy.retire', {'reason': 'Synthetic retired-only catalogue'}, rule['id'], rule['revision'])
+        retire_rule(h, rule, 'Synthetic retired-only catalogue', role='zero-approver', department=department_id)
         # 21e096a0d: retired versions left the operational catalogue; the paged history list holds them.
         assert not h.get('zero-coordinator', '/api/catalogues')['policies']
         history = h.get('zero-coordinator', '/api/policies?status=retired')['policies']

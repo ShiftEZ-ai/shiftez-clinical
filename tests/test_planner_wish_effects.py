@@ -221,3 +221,24 @@ def test_planner_wish_contracts_are_generated():
     assert 'export type WishEffect = ' in text and 'export type DraftWishOutcome = ' in text
     assert schemas['WishEffect']['properties']['effect']['enum'] == ['grants', 'against']
     assert set(schemas['DraftWishOutcome']['required']) == {'outcome', 'honoured_days', 'total_days'}
+
+
+def test_window_pages_carry_only_visible_wishes_and_keep_participant_marks(h):
+    person, other = h.seed['people'][:2]
+    saved = wish(h, '2026-10-05', kind='prefer_off', note='Private wish note')['wish']
+    outside = wish(h, '2026-10-06', kind='prefer_off')['wish']
+    w = h.shift(h.workspace(), start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00',
+                people=[person, other])['workspace']
+    detail = h.detail(w)
+    client = h.client('coordinator')
+    compact = client.get(f"/api/workspaces/{w['id']}", params={'view': 'compact'})
+    assert compact.status_code == 200, compact.text
+    assert 'wishes' not in compact.json()
+    assert {row['id'] for row in detail['wishes']} == {saved['id'], outside['id']}
+    page = client.get(f"/api/workspaces/{w['id']}/parts", params={'part': 'shifts', 'start': '2026-10-05', 'end': '2026-10-06'})
+    assert page.status_code == 200, page.text
+    assert [row['id'] for row in page.json()['wishes']] == [saved['id']]
+    assert all(key not in row for row in page.json()['wishes'] for key in ('note', 'outcome_reasons', 'draft_outcome'))
+    marks = {p['person_id']: p['wish_effects'] for p in page.json()['items'][0]['participants']}
+    assert marks == {p['person_id']: p['wish_effects'] for p in detail['shifts'][0]['participants']}
+    assert marks == {person: [{'wish_id': saved['id'], 'effect': 'against'}], other: []}

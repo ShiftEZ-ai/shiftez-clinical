@@ -28,7 +28,8 @@ def test_compact_matches_review_and_stored_summary_and_revalidates_without_valid
     s.WorkspaceCompactDetail.model_validate(value)
     for key in ('review_progress', 'reviewer_involved', 'can_change_fixed', 'can_redo', 'swap_id', 'approvals', 'review_items'):
         assert value[key] == full.json()[key], key
-    assert 'shifts' not in value and 'wishes' not in value and 'change_diff' not in value
+    assert 'shifts' not in value and 'change_diff' not in value and 'wishes' not in value
+    assert value['workspace']['validation_current'] == full.json()['workspace']['validation_current']
     assert 'findings' not in value['workspace']['validation']
     assert 'review_snapshot' not in value['workspace']
     listed = next(row for row in h.get('approver', '/api/workspaces')['workspaces'] if row['id'] == w['id'])

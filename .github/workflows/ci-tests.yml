@@ -6,7 +6,7 @@ jobs:
     name: ${{ inputs.suite }}
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.suite == 'unit' && 20 || 60 }}
     env:
       TRUSTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
@@ -203,6 +203,7 @@ jobs:
         python scripts/compiled_client.py
     - name: Run the exact planned shard once
       env:
+        CI_ALLOWANCE_DATE: ${{ inputs.allowance_date }}
         CI_CHECKS_PLAN: ${{ steps.shard-plan.outcome == 'success' && format('{0}/checks-plan/shard-plan.json', runner.temp) || '' }}
       run: python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run --suite "$SUITE" --shard "$SHARD_INDEX" --replica "$REPLICA" --base-sha "$BASE_SHA" --plan-sha256 "$PLAN_SHA256" --measurement "$MEASUREMENT"
     - name: Retain first-attempt reports and failure evidence
@@ -259,6 +260,9 @@ jobs:
         type: string
         required: true
       plan_sha256:
+        type: string
+        required: true
+      allowance_date:
         type: string
         required: true
       replica:

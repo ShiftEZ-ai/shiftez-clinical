@@ -662,24 +662,75 @@ def tag_data(db, department_ids, *, acquired=None) -> dict:
     return tags
 
 
-def policies_as_of(db, policies, when, *, keep_catalogue_lineage=False):
-    """Active rules at `when`; approved retired catalogue versions may supply reconstruction lineage only."""
-    ids = [p["id"] for p in policies]
-    H = m.DefinitionHistory
-    # Rank metadata before loading JSON: publication reconstruction needs one version per policy,
-    # never every historical definition. The ordering matches the former chronological overwrite.
+def _policy_json_array(db, value, name, *, strings=False):
+    from sqlalchemy import JSON, Text, case, column, literal
+
+    if db.bind.dialect.name == 'sqlite':
+        return func.json_each(value).table_valued(column('value', Text if strings else JSON)).alias(name)
+    array = case((func.json_typeof(value) == 'array', value), else_=literal([], JSON))
+    expand = func.json_array_elements_text if strings else func.json_array_elements
+    return expand(array).table_valued(column('value', Text if strings else JSON)).render_derived(name=name)
+
+
+def _policy_lineage_ids(db, policies, bindings):
+    """Find reachable IDs without materializing unrelated policy content or adding a round trip."""
+    from sqlalchemy import Text, cast, true, union
+
+    child = cast(policies.c.policy_id, Text)
+    replaces = policies.c.definition['replaces_id'].as_string()
+    merged = _policy_json_array(db, policies.c.definition['merged_ids'], 'merged_policy', strings=True)
+    edges = select(child.label('child'), cast(replaces, Text).label('parent')).where(replaces.is_not(None)).union(
+        select(child, cast(merged.c.value, Text)).select_from(policies.join(merged, true()))
+        .where(merged.c.value.is_not(None))).cte('policy_lineage_edges')
+
+    destinations = _policy_json_array(db, bindings.c.data['destinations'], 'bound_policy')
+    descendants = select(cast(destinations.c.value['id'].as_string(), Text).label('id')).select_from(
+        bindings.join(destinations, true())).where(
+            destinations.c.value['kind'].as_string() == 'policy').cte('policy_bound_descendants', recursive=True)
+    descendants = descendants.union(select(edges.c.child).join(descendants, edges.c.parent == descendants.c.id))
+
+    roots = union(select(child.label('id')).where(policies.c.status.in_(('active', 'proposed'))),
+                  select(cast(bindings.c.source_policy_id, Text)), select(descendants.c.id)).subquery()
+    reachable = select(roots.c.id).cte('policy_reachable', recursive=True)
+    reachable = reachable.union(select(edges.c.parent).join(reachable, edges.c.child == reachable.c.id))
+    return select(reachable.c.id)
+
+
+POLICY_ORDER = (m.Policy.seq, m.Policy.id)
+
+
+def policies_as_of(db, policies, when, *, keep_catalogue_lineage=False, department_ids=(), bindings=()):
+    """Resolve this publication's pins even when it receives workspace-less shared inputs."""
+    P, H = m.Policy, m.DefinitionHistory
+    eligible = (select(P.id).where(P.department_id.in_(department_ids)) if policies is None
+                else [policy['id'] for policy in policies])
+    # Rank metadata before loading JSON, and test status only after choosing the version.
     latest = select(H.id, func.row_number().over(partition_by=H.object_id,
         order_by=(H.created_at.desc(), H.object_revision.desc())).label('position')).where(
-            H.kind == 'policy', H.object_id.in_(ids), H.created_at <= when).subquery()
-    then = {ident: snapshot for ident, snapshot in db.execute(select(H.object_id, H.snapshot)
-        .join(latest, H.id == latest.c.id).where(latest.c.position == 1))}
-    out = []
-    for policy in policies:
-        version = then.get(policy["id"], {})
-        if version.get("status") == "active" or (keep_catalogue_lineage and version.get("status") == "retired"
-                and version.get("approved_by") and version.get("definition", {}).get("rule", {}).get("kind") == "catalogue"):
-            out.append(version)
-    return out
+            H.kind == 'policy', H.object_id.in_(eligible), H.created_at <= when).subquery()
+    versions = select(H.object_id.label('policy_id'), H.snapshot, H.snapshot['status'].as_string().label('status'),
+        H.snapshot['definition'].label('definition')).join(
+            latest, H.id == latest.c.id).where(latest.c.position == 1).subquery()
+    active = versions.c.status == 'active'
+    where = active
+    if keep_catalogue_lineage or bindings:
+        lineage = ((versions.c.status == 'retired') & versions.c.snapshot['approved_by'].as_string().is_not(None)
+                   & (versions.c.definition['rule']['kind'].as_string() == 'catalogue'))
+        if bindings:
+            from sqlalchemy import JSON, literal
+
+            bound = _policy_json_array(db, literal(bindings, JSON), 'issued_binding')
+            bound = select(bound.c.value['source_policy_id'].as_string().label('source_policy_id'),
+                           bound.c.value.label('data')).cte('policy_bindings')
+            linked = select(versions.c.policy_id, versions.c.status, versions.c.definition).where(
+                or_(active, lineage)).cte('policy_history_rows')
+            lineage &= versions.c.policy_id.in_(_policy_lineage_ids(db, linked, bound))
+        where = or_(active, lineage)
+    query = select(versions.c.policy_id, versions.c.snapshot).where(where)
+    if policies is None:
+        return [version for _, version in db.execute(query.join(P, P.id == versions.c.policy_id).order_by(*POLICY_ORDER))]
+    then = {ident: version for ident, version in db.execute(query)}
+    return [then[policy['id']] for policy in policies if policy['id'] in then]
 
 
 def exceptions_as_of(db, exceptions, publication):
@@ -985,6 +1036,14 @@ def prepared_snapshot_inputs(db, org):
     return value
 
 
+def _snapshot_policy_where(db, department_ids, binding_where):
+    P, B = m.Policy, m.RuleSourceBinding
+    department = P.department_id.in_(department_ids)
+    policies = select(P.id.label('policy_id'), P.status, P.definition).where(department).cte('snapshot_policy_rows')
+    bindings = select(B.source_policy_id, B.data).where(binding_where).cte('policy_bindings')
+    return department & P.id.in_(_policy_lineage_ids(db, policies, bindings))
+
+
 def _snapshot_inputs(db, org):
     """Shared current records for a read-only batch of snapshots in one transaction."""
     department_ids = snapshot_department_ids(db, org.id)
@@ -996,11 +1055,13 @@ def _snapshot_inputs(db, org):
     sources['people'] = (m.Person, m.Person.organisation_id == org.id)
     sources['departments'] = (m.Department, m.Department.organisation_id == org.id)
     sources.update(scheduling_sources(department_ids))
+    sources['policies'] = (m.Policy, _snapshot_policy_where(db, department_ids, sources['source_bindings'][1]))
     sources.update({name: (cls, cls.department_id.in_(department_ids)) for name, cls, _category, scope, shape, _exclusions
                     in SNAPSHOT_INPUT_SOURCE_SPECS if scope == 'department' and shape in {'date_set', 'tag', 'tag_member'}})
     # A pager number is a contact detail, not a scheduling input: the rota snapshot leaves it out.
     acquired = records_many(db, sources, exclude={'people': ('pager',)},
-        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id)})
+        order_by={**SCHEDULING_ORDER, 'eligibilities': (m.Eligibility.created_at, m.Eligibility.seq, m.Eligibility.id),
+                  'policies': POLICY_ORDER})
     result.update({name: {row['id']: row for row in acquired[name]} for name in [*keyed, 'people']})
     # Department rows carry the captured score/auto/display settings used by
     # draft baselines; keep them in the shared payload as keyed records.
@@ -1258,8 +1319,8 @@ def _snapshot_context(db, workspace, *, operational, policy_overrides, fact_over
                               if 'date_sets' in own_publication.snapshot
                               else date_set_data(db, department_ids, own_publication.created_at))
         result.update(scheduling_inputs(db, department_ids, own_publication.created_at))
-        result["policies"] = policies_as_of(db, result["policies"], own_publication.created_at,
-            keep_catalogue_lineage=bool(result["source_bindings"]))
+        result["policies"] = policies_as_of(db, result["policies"] if baseline is not None else None,
+            own_publication.created_at, department_ids=department_ids, bindings=result["source_bindings"])
         result["exceptions"] = exceptions_as_of(db, result["exceptions"], own_publication)
         if 'leadership' in own_publication.snapshot:
             evidence = own_publication.snapshot['leadership']

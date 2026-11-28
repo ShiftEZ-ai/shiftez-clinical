@@ -106,6 +106,11 @@ def test_switching_views_revalidates_instead_of_resending_the_rota(browser, live
     try:
         navigate(page, "planner")
         expect(page.locator(".wk-grid")).to_be_visible()
+        # A draft opens on its window: its first use (a session's panel, then Escape) reads the whole rota once.
+        page.locator("#schedule-view .wk-grid button.pchip:not(.gap):not(.sd-greychip)").first.click()
+        expect(page.locator(".wk-panel")).to_be_visible()
+        page.keyboard.press("Escape")
+        expect(page.locator(".wk-panel")).to_have_count(0)
         detail = "/api/workspaces/" + w["id"] + "?view=schedule"
         seen = []
         page.on("response", lambda r: r.url.endswith(detail) and seen.append(r.status))

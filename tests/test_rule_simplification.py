@@ -13,6 +13,7 @@ from packages.contracts.schemas import PolicyDefinition
 from packages.domain.conditions import active_rules
 from packages.domain.rule_groups import canonical_model, expanded, plan, same_model
 from packages.domain.validation import evaluate
+from .governance_support import retire_rule
 from .test_rule_templates import activate, propose
 
 ids = (f'00000000-0000-4000-8000-{n:012d}' for n in itertools.count(1))
@@ -301,7 +302,7 @@ def test_grouping_through_governance_checks_the_same_and_undoes(h):
     # Undo: retiring a grouped rule brings back exactly the rules it replaced.
     for record in result['records']:
         live = next(p for p in h.get('approver', '/api/policies?status=active')['policies'] if p['id'] == record['id'])
-        restored = h.command('approver', 'policy.retire', {'reason': 'Undo the grouping'}, live['id'], live['revision'])['restored_ids']
+        restored = retire_rule(h, live, 'Undo the grouping')['restored_ids']
         assert sorted(restored) == sorted(record['definition']['merged_ids'])
     active = {p['id']: p for p in h.get('approver', '/api/policies?status=active')['policies']}
     assert all(active[record['id']]['active'] for record in made)

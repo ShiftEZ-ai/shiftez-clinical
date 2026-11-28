@@ -65,6 +65,11 @@ def test_schedule_redraws_release_old_views_and_their_listeners(browser, live_se
     try:
         show(page, f"schedule/week/2026-10-14?edit={d['id']}")
         page.locator('#schedule-view .wk-grid').hover()  # the map is read on the first hover
+        # A draft opens on its window; its first use (a session's panel, then Escape) draws it whole, Auto-schedule card and all.
+        page.locator('#schedule-view .wk-grid button.pchip:not(.gap):not(.sd-greychip)').first.click()
+        expect(page.locator('.wk-panel')).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(page.locator('.wk-panel')).to_have_count(0)
         # The closed panel is built after its jobs read (a locator: an element handle would itself keep the node alive).
         # D76: the run card's body (its fields open under Change): KEEP holds it, as querySelector does.
         expect(page.locator('#auto-panel .auto-body').first).to_be_attached()
@@ -128,6 +133,11 @@ def test_opening_and_closing_a_session_panel_keeps_the_grid(browser, live_server
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         show(page, f"schedule/week/2026-10-14?edit={d['id']}")
+        # A draft opens on its window: its first use draws it whole once; the panel then opens and closes beside that grid.
+        page.locator('#schedule-view .wk-grid button.pchip:not(.gap):not(.sd-greychip)').first.click()
+        expect(page.locator('.wk-panel')).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(page.locator('.wk-panel')).to_have_count(0)
         page.evaluate("() => {document.querySelector('#schedule-view .wk-grid').__kept = 1; document.querySelector('.topbar .planner-bar').__kept = 1;}")
         same = "() => [document.querySelector('#schedule-view .wk-grid'), document.querySelector('.topbar .planner-bar')].map(n => n && n.__kept === 1)"
         chip = page.locator('#schedule-view .wk-grid button.pchip:not(.gap):not(.sd-greychip)').first

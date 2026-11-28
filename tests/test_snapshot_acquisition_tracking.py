@@ -2,6 +2,8 @@
 import re
 from sqlalchemy import event, Table
 from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import TextClause
+from sqlalchemy.sql.selectable import TableClause
 from apps.api import models as m, snapshots
 from apps.api.db import snapshot_input_listener_classes, transaction
 from tests.test_fix_list_performance import backend
@@ -13,10 +15,10 @@ def test_every_acquired_table_is_revision_tracked_or_workspace_owned(backend, re
     tables = set()
     def read(_connection, _cursor, statement, _parameters, context, _many):
         if statement.lstrip().upper().startswith(("SELECT", "WITH")):
-            if context.compiled is not None:
-                tables.update(node.name for node in visitors.iterate(context.compiled.statement)
-                              if isinstance(node, Table))
-            tables.update(re.findall(r'\b(?:FROM|JOIN)\s+["`]?([a-z_][a-z_0-9]*)', statement, re.I))
+            nodes = tuple(visitors.iterate(context.compiled.statement)) if context.compiled is not None else ()
+            tables.update(node.name for node in nodes if isinstance(node, TableClause))
+            if not nodes or any(isinstance(node, TextClause) for node in nodes):
+                tables.update(re.findall(r'\b(?:FROM|JOIN)\s+["`]?([a-z_][a-z_0-9]*)', statement, re.I))
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Workspace, workspace["id"])
         event.listen(h.app.state.engine, "before_cursor_execute", read)
@@ -42,6 +44,8 @@ def test_every_acquired_table_is_revision_tracked_or_workspace_owned(backend, re
         owned.update(linked)
     workspace_tables = {table.name for table in owned}
     assert tables, "No acquisition SQL was captured"
+    assert {m.Policy.__tablename__, m.RuleSourceBinding.__tablename__,
+            m.CatalogueConversion.__tablename__, m.RecordInsertion.__tablename__} <= tables
     request.node.user_properties.append(("acquired_tables", ",".join(sorted(tables))))
     assert not tables - tracked - workspace_tables, sorted(tables - tracked - workspace_tables)
 

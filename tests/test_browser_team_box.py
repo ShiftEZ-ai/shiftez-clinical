@@ -124,8 +124,9 @@ def assert_states(scope, limited, control=True):
     # No badge: the supervisor's pill comes first in weight 600. Pills are clean names reviewed: no rank prefix
     # unless the Person label adds it; the group's name still says each trainee's rank.
     expect(team.locator('.tm-badge, .wk-tag.sup, .wk-tag.tr')).to_have_count(0)
-    assert int(team.locator('.tm-sup .pchip').evaluate('n=>getComputedStyle(n).fontWeight')) >= 600
-    assert int(team.locator('.tm-tr .pchip').first.evaluate('n=>getComputedStyle(n).fontWeight')) < 600
+    # A redraw can replace the chips while their team remains present. Wait for the current chips' computed styles.
+    expect(team.locator('.tm-sup .pchip')).to_have_css('font-weight', re.compile(r'^(?:[6-9][0-9]{2}|1000)$'))
+    expect(team.locator('.tm-tr .pchip').first).to_have_css('font-weight', re.compile(r'^(?:[1-5][0-9]{2}|[1-9][0-9]?)$'))
     expect(team.locator('.pchip .p-rank')).to_have_count(0)
     if limited:
         expect(team.locator('.tm-tr:not(:has(.tm-more))')).to_have_count(3)

@@ -35,13 +35,14 @@ TABS = {'admin': ['Overview', 'Schedule', W, L, 'Rules', 'Quotas & offers', 'Acc
         'staff': ['Overview', 'Schedule', W, L, 'Quotas & offers', 'Access'], 'unlinked': []}
 # Reads that would expose another person's private records, per role (never made for a role that may not read them).
 # Person-record reads: sign-ins and devices only for administrators and the person; leave for the request roles.
-ACCESS, LEAVE, RECORD = ('/accounts', '/sessions'), ('/availability?',), ('/workload', '/fairness', '/score')
-FORBIDDEN = {'credentialer': ('/api/calendar?', '/api/requests/all', '/api/audit', '/api/access', '/api/wishes', *ACCESS, *LEAVE, *RECORD),
-             'programme_lead': ('/api/audit', '/api/access', *ACCESS, *LEAVE),
-             'auditor': ('/api/requests/all', '/api/access', *ACCESS, *LEAVE), 'approver': ('/api/audit', '/api/access', '/api/wishes', *ACCESS),
-             'coordinator': ('/api/audit', '/api/access', '/api/wishes', *ACCESS), 'admin': ('/api/audit', '/api/wishes', '/api/access'),
+PERSON_ACCESS = re.compile(r'/api/people/[^/]+/(?:accounts|sessions)')
+LEAVE, RECORD = ('/availability?',), ('/workload', '/fairness', '/score')
+FORBIDDEN = {'credentialer': ('/api/calendar?', '/api/requests/all', '/api/audit', '/api/access', '/api/wishes', *LEAVE, *RECORD),
+             'programme_lead': ('/api/audit', '/api/access', *LEAVE),
+             'auditor': ('/api/requests/all', '/api/access', *LEAVE), 'approver': ('/api/audit', '/api/access', '/api/wishes'),
+             'coordinator': ('/api/audit', '/api/access', '/api/wishes'), 'admin': ('/api/audit', '/api/wishes', '/api/access'),
              'staff': ('/api/catalogues', '/api/audit', '/api/access'),
-             'unlinked': ('/api/me/profile', '/api/calendar?', '/api/requests/all', '/api/audit', '/api/access', '/api/catalogues', *ACCESS, *LEAVE, *RECORD)}
+             'unlinked': ('/api/me/profile', '/api/calendar?', '/api/requests/all', '/api/audit', '/api/access', '/api/catalogues', *LEAVE, *RECORD)}
 
 
 def person(h, index=0):
@@ -169,6 +170,8 @@ def test_every_role_reads_only_its_permitted_sources(browser, live_server, h, ro
             assert requests, 'A programme lead can read this trainee’s requests'
             assert all(parse_qs(u.query).get('person_id') == [target['id']] for u in requests), reads
         assert not [u for u in reads if any(f in u for f in FORBIDDEN[role])], reads
+        if 'Access' not in TABS[role]:
+            assert not [u for u in reads if PERSON_ACCESS.fullmatch(urlparse(u).path)], reads
         assert not errors, errors
         shot(page, f'hub-{role}-{width}-{theme}')
     finally:

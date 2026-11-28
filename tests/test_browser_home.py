@@ -16,7 +16,7 @@ from apps.api.db import transaction
 from .clock_support import freeze_clock
 from .governance_support import identity, route
 from .test_review_routes import submitted
-from .test_browser import route_fetch, browser, live_server, sign_in, navigate, expect_loaded  # noqa: F401
+from .test_browser import route_fetch, browser, live_server, sign_in, navigate, expect_loaded, restart_app  # noqa: F401
 from .test_home import agreed_home_swap, big_department
 
 pytestmark = pytest.mark.browser
@@ -33,6 +33,41 @@ def local_today():
 def month_start(day, n=0):
     k = day.year * 12 + day.month - 1 + n
     return date(k // 12, k % 12 + 1, 1)
+
+
+def test_approver_home_uses_one_actionable_review_count(browser, live_server, h):
+    route(h, [{'key': 'clinical', 'label': 'Clinical review', 'approvals_required': 2}])
+    month = month_start(local_today(), 1)
+
+    def submit(name, start):
+        start_at = f'{start.isoformat()}T08:00:00+03:00'
+        end_at = f'{start.isoformat()}T12:00:00+03:00'
+        w = h.workspace(name, start.isoformat(), (start + timedelta(days=7)).isoformat())
+        return h.lifecycle(h.shift(w, start_at, end_at)['workspace'], 'submit')['workspace']
+
+    earlier = h.lifecycle(submit('Reviewed by you', month), 'approve', 'approver')['workspace']
+    later = submit('Ready for your review', month + timedelta(days=8))
+    assert earlier['status'] == later['status'] == 'submitted'
+    progress = h.get('approver', f"/api/workspaces/{earlier['id']}")['review_progress']
+    assert not progress['can_decide'] and not progress['stale_inputs']
+    assert h.get('approver', f"/api/workspaces/{later['id']}")['review_progress']['can_decide']
+
+    context, page = sign_in(browser, live_server, 'approver', viewport=DESKTOP)
+    try:
+        needs = page.locator('.home-needs')
+        review = needs.locator('li[data-need=reviews]')
+        expect(needs.locator('.home-clear')).to_have_count(0)
+        expect(review.locator('.home-count')).to_have_text('1')
+        expect(review).to_contain_text('Ready for your review')
+        cell = page.locator(f'.home-month[data-month="{month:%Y-%m}"]')
+        expect(cell.locator('.badge.warn')).to_have_text('Waiting for approval')
+        expect(cell).not_to_contain_text('draft')
+        expect(page.locator('#department-nav [data-route=schedule]')).to_have_accessible_description(
+            '1 rota waiting for review')
+        cell.get_by_role('button', name='Review Ready for your review', exact=True).click()
+        expect(page).to_have_url(re.compile(rf"approve={later['id']}$"))
+    finally:
+        context.close()
 
 
 def populated(h):
@@ -471,14 +506,14 @@ def test_my_duties_personal_read_is_scoped_and_detached_lookahead_stops(browser,
             route.continue_()
 
     try:
-        # Home is the landing page and already reads its windows: hold reads, then open it afresh. A reload: opened
-        # again within the tab, Home answers from its kept replies (api.ts keptReads) and asks nothing.
+        # Leave the landing page before intercepting, then reload at #home without starting a hash navigation.
+        navigate(page, 'requests')
         page.route('**/api/calendar?**', hold_later)
-        page.evaluate("location.hash='home'")
+        page.evaluate("history.replaceState(null, '', '#home')")
+        last_start = (local_today() + timedelta(days=14 + 2 * 31)).isoformat()
         with page.expect_request(lambda r: (calendar_query(r.url) or {}).get('person_id') == [person] and
-                (datetime.fromisoformat(calendar_query(r.url)['end'][0]) -
-                 datetime.fromisoformat(calendar_query(r.url)['start'][0])).days == 31):
-            page.reload()
+                calendar_query(r.url).get('start') == [last_start]):
+            restart_app(page)
         expect_loaded(page, 'home')
         navigate(page,'requests')
         # The 14 days were empty: the three months after them are read together (H-22), never one after another.
@@ -744,7 +779,8 @@ def test_a_later_failed_month_does_not_hide_the_next_duty(browser, live_server, 
     try:
         navigate(page, 'requests')
         page.route('**/api/calendar?**', lookahead)
-        page.locator('#department-nav [data-route=home]').click()
+        page.evaluate("history.replaceState(null, '', '#home')")
+        restart_app(page)
         duties = page.locator('#main .home-duties')
         expect(duties).to_contain_text('Look-ahead clinic')
         expect(duties.locator('[role=alert], .note.error')).to_have_count(0)
@@ -773,7 +809,8 @@ def test_a_blocking_draft_and_a_wider_gap_count_stay_two_rows(browser, live_serv
     try:
         navigate(page, 'requests')
         page.route('**/api/home', attention)
-        page.locator('#department-nav [data-route=home]').click()
+        page.evaluate("history.replaceState(null, '', '#home')")
+        restart_app(page)
         main = page.locator('#main')
         blocking = main.locator('.home-needs-list li[data-need=blocking]')
         gaps = main.locator('.home-needs-list li[data-need=open_places]')

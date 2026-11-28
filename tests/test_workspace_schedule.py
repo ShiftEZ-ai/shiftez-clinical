@@ -74,8 +74,9 @@ def schedule(h, path):
     return response
 
 
-@pytest.fixture(scope='module', params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
+@pytest.fixture(params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
 def scale_rota(scale_harness, request):
+    # The checked and edited scenarios change the data that determines the draft response size.
     h = scale_harness(request.param)
     w, _, _, _ = scale_department(h)
     return h, '/api/workspaces/' + w['id']
@@ -99,7 +100,7 @@ def test_draft_schedule_byte_budget(scale_rota):
     assert len(reply.json()['shifts']) == 768 and len(reply.content) <= BUDGET['draft']
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def checked_rota(scale_rota):
     h, path = scale_rota
     wid = path.rsplit('/', 1)[-1]
@@ -288,8 +289,8 @@ def test_schedule_edits_sheet_bulk_lock_copy_and_undo_redo_keep_every_stored_col
 
 
 
-def test_published_schedule_projects_frozen_closure_evidence(scale_rota):
-    h, _ = scale_rota
+def test_published_schedule_projects_frozen_closure_evidence(backend):
+    h = backend
     made = h.shift(h.workspace('Historical closure fixture'))
     w = made['workspace']
     with transaction(h.app.state.engine, write=True) as db:
