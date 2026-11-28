@@ -176,8 +176,11 @@ def person_rows(data, name, person_id):
     return index[name].get(person_id, ())
 
 
+TYPE_LABEL_FIELDS = ("name", "short_code")
+
+
 def display_only_change(snapshot, current, *, live_staffing=False):
-    """Ignore colour and, for drafts that enforce them live, hard staffing values."""
+    """Ignore labels, colour and, where enforced live, hard staffing values."""
     if not snapshot:
         return False
     def core(r):
@@ -186,7 +189,8 @@ def display_only_change(snapshot, current, *, live_staffing=False):
             definition["requirements"] = [(row.get("from_minute", 0), row.get("to_minute"), row["target"])
                                           for row in definition.get("requirements") or () if row.get("target") is not None]
             definition.pop("supervision", None)
-        return {**{k: v for k, v in r.items() if k not in ("revision", "draft_safety")}, "definition": definition}
+        return {**{k: v for k, v in r.items() if k not in ("revision", "draft_safety", *TYPE_LABEL_FIELDS)},
+                "definition": definition}
     return core(snapshot) == core(current)
 
 

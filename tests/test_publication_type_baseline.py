@@ -287,6 +287,53 @@ def test_draft_validation_keeps_current_validity_and_frozen_definition(request, 
         ("TYPE_INACTIVE", "error"), ("TYPE_VERSION_CHANGED", "error"), ("CATALOGUE_VALIDITY_CHANGED", "warning")}
 
 
+@BACKENDS
+@pytest.mark.parametrize("label_change", [{"name": "Extended duty"}, {"short_code": "EXT"}])
+def test_draft_type_labels_follow_catalogue_without_staling_the_check(request, backend, label_change):
+    h = request.getfixturevalue(backend)
+    value = {"name": "regular session", "short_code": "D01", "starts_on": "2020-01-01",
+             "definition": {"requirements": [{"minimum": 1}]}}
+    typ = h.configure("assignment_types", value)["record"]
+    earlier = h.workspace("Earlier rota", start="2026-09-27", end="2026-10-04")
+    issued = h.shift(earlier, "2026-10-01T08:00:00+03:00", "2026-10-01T12:00:00+03:00",
+                     typ=typ["id"])["workspace"]
+    pub = h.publish(issued)["publication_id"]
+    issued_evidence = frozen(h, pub)
+    saved = h.shift(h.workspace(), typ=typ["id"])
+    draft = h.lifecycle(saved["workspace"], "validate")["workspace"]
+    before = h.detail(draft)
+    assert before["workspace"]["validation_current"]
+    captured = before["shifts"][0]["type_snapshot"]
+
+    h.configure("assignment_types", {**value, **label_change}, typ["id"], typ["revision"])
+
+    expected = {**captured, **label_change}
+    path = f"/api/workspaces/{draft['id']}"
+    full = h.detail(draft)
+    assert full["shifts"][0]["type_snapshot"] == expected
+    assert full["workspace"]["revision"] == draft["revision"]
+    assert full["workspace"]["validation_current"]
+    assert full["current_fingerprint"] == before["current_fingerprint"]
+    window = h.get("coordinator", path + "/parts?part=shifts&start=2026-10-04&end=2026-10-05")
+    assert window["items"][0]["type_snapshot"] == expected
+    assert not any(c["source"] == "duties" for c in
+                   h.get("coordinator", path + "/baseline/refresh-preview")["changes"])
+
+    snapshot = h.snapshot(draft)
+    raw = next(row for row in snapshot["shifts"] if row["id"] == saved["shift_id"])
+    assert raw["type_snapshot"] == captured
+    assert not any(f["code"] == "TYPE_VERSION_CHANGED" for f in evaluate(snapshot)["findings"])
+    assert frozen(h, pub) == issued_evidence
+    published = h.get("coordinator", f"/api/publications/{pub}")["snapshot"]["shifts"][0]
+    assert published["type_snapshot"] == captured
+
+    locked = h.command("coordinator", "shift.action", {"workspace_id": draft["id"],
+        "shift_ids": [saved["shift_id"]], "action": "lock", "reason": "Keep the reviewed assignment"},
+        revision=draft["revision"])
+    assert locked["shifts"][0]["type_snapshot"] == expected
+    assert locked["delta"]["shifts"][0]["type_snapshot"] == expected
+
+
 @pytest.mark.parametrize("status,shift_workspace,current", [
     ("draft", "own", True), ("published", "own", False), ("superseded", "own", False),
     ("draft", "published-context", False),

@@ -18,7 +18,7 @@ from packages.domain.time import aware, local_midnight
 from packages.domain.recurrence import SERIES_STATE_FIELDS, with_series_state
 from packages.domain.overlap import overlap_dates
 from packages.domain.serialization import json_default
-from packages.domain.validation import ENGINE_VERSION, prepare_draft_type_safety
+from packages.domain.validation import ENGINE_VERSION, TYPE_LABEL_FIELDS, prepare_draft_type_safety
 from .settings import Settings, quota_policy_limit
 
 
@@ -238,6 +238,21 @@ def shift_records(db, rows, *, include_participants=True) -> list[dict]:
         shift.update(service_ids=sorted(services[sid]), participants=people[sid])
         result.append(shift)
     return result
+
+
+def project_draft_type_labels(db, workspace, rows):
+    """Show the current label on an unissued session without changing its captured type."""
+    from .services.schedule import LIVE
+
+    if not rows or workspace.status not in LIVE:
+        return rows
+    typ = m.AssignmentType
+    type_ids = {row['assignment_type_id'] for row in rows}
+    columns = (getattr(typ, field) for field in TYPE_LABEL_FIELDS)
+    labels = {row['id']: {field: row[field] for field in TYPE_LABEL_FIELDS} for row in db.execute(
+        select(typ.id, *columns).where(typ.id.in_(type_ids))).mappings()}
+    return [{**row, 'type_snapshot': {**row['type_snapshot'], **label}}
+            if (label := labels.get(row['assignment_type_id'])) is not None else row for row in rows]
 
 
 def shift_record(db, row) -> dict:

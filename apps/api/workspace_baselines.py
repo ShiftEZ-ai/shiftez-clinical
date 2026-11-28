@@ -14,6 +14,7 @@ from .settings import Settings
 from .snapshots import snapshot_hash, snapshot_inputs, snapshot_input_specs
 from packages.contracts import schemas as s
 from packages.domain.generation_scope import selected_session_ids
+from packages.domain.validation import TYPE_LABEL_FIELDS
 
 
 BASELINE_SCHEMA_VERSION = 1
@@ -627,8 +628,8 @@ def _drift_group(payload, source):
     value = {key: item for key, item in group_payload(payload, source).items() if key not in LIVE_DRIFT_KEYS}
     for key in LIVE_VALIDITY_SOURCES:
         if key in value:
-            value[key] = {ident: {field: item for field, item in row.items()
-                                 if field not in (*LIVE_VALIDITY_FIELDS, "revision")}
+            ignored = (*LIVE_VALIDITY_FIELDS, "revision", *(TYPE_LABEL_FIELDS if key == "types" else ()))
+            value[key] = {ident: {field: item for field, item in row.items() if field not in ignored}
                           for ident, row in (value[key] or {}).items()}
     if source in DEPARTMENT_SETTING_FIELDS:
         value["departments"] = {ident: frozen_department_settings(payload, ident, [source])

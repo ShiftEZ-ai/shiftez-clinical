@@ -2654,7 +2654,7 @@ def create_app(settings: Settings | None = None, engine=None):
             canonical = db.info.get('read_snapshots', {}).get(workspace.id)
             use_canonical = canonical is not None and workspace.status == 'draft'
             wishes = (canonical['wishes'] if use_canonical else snapshot_wishes(db, [workspace.department_id], workspace))
-            from .snapshots import project_series_shifts
+            from .snapshots import project_draft_type_labels, project_series_shifts
             from .services.series_conflicts import session_actions, finding_actions
             external_context = []
             if use_canonical:
@@ -2667,7 +2667,7 @@ def create_app(settings: Settings | None = None, engine=None):
             data.update(review_payload(db, workspace, actor, projected_shifts=None if use_canonical else projected))
             data["wishes"] = ([{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in wishes]
                               if workspace.status == 'draft' else wishes)
-            data["shifts"] = projected
+            data["shifts"] = project_draft_type_labels(db, workspace, projected)
             from .services.people import duty_ranks
             data['shifts'] = duty_ranks(db, actor.department_id, data['shifts'], org.timezone)
             data['shifts'] = session_actions(db, actor, data['shifts'])
