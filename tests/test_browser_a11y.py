@@ -1,7 +1,7 @@
 """Accessibility and front-end resource regressions that are cheap to check in a real browser."""
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, save_dialog  # noqa: F401
+from .test_browser import browser, fonts_ready, live_server, sign_in, navigate, save_dialog  # noqa: F401
 
 pytestmark = pytest.mark.browser
 CONTROLS = {'button', 'link', 'textbox', 'searchbox', 'combobox', 'checkbox', 'radio', 'switch', 'tab', 'menuitem', 'option', 'spinbutton', 'slider', 'listbox'}
@@ -679,6 +679,9 @@ def test_home_tab_order_reads_column_by_column_and_footer_status_is_not_a_tab_st
         navigate(page, 'home')
         expect(page.locator('#main .home-grid .home-side')).to_be_visible()
         expect(page.locator('#main .home-side').get_by_role('link', name='Open link: Home order notice')).to_be_visible()
+        expect(page.locator('#main .home-months')).to_be_visible()
+        expect(page.locator('#main .home-grid .loading')).to_have_count(0)
+        fonts_ready(page)
         page.locator('#main').focus()
         stops = []
         for _ in range(150):  # until Tab has passed the footer

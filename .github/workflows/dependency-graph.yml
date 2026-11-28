@@ -8,7 +8,7 @@ jobs:
   submit:
     name: Submit locked dependencies
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 1
     # The dependency submission API needs contents:write; this job runs only on pushes to dev, never for pull requests.
     permissions:
       contents: write

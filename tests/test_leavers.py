@@ -1,5 +1,6 @@
 """person.anonymise: a leaver's personal details are removed; rotas, publications and the audit log stay intact."""
 import json
+import re
 from datetime import date, timedelta
 import pytest
 from sqlalchemy import select
@@ -18,6 +19,28 @@ CONTACT_VALUES = {
     "work_extension": "1234",
     "pager": "4321",
 }
+UUID_TOKEN = re.compile(r"(?<![0-9a-f-])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![0-9a-f-])")
+
+
+def assert_details_absent(payload, original, *, former_label=None):
+    text = json.dumps(payload)
+    assert all(value not in text for value in original.values())
+    # A short contact number may be digits inside a UUID or the allowed anonymised label.
+    contact_text = UUID_TOKEN.sub("", text)
+    if former_label is not None:
+        contact_text = contact_text.replace(json.dumps(former_label), '""')
+    for field, value in CONTACT_VALUES.items():
+        assert value not in contact_text, field
+
+
+def test_leaver_contact_check_distinguishes_identifier_digits_from_values():
+    pid = "43210000-1234-4000-8000-000000000000"
+    label = f"Former staff member {pid[:8]}"
+    row = {"id": pid, "display_name": label}
+    assert_details_absent(row, {}, former_label=label)
+    for field in ("work_extension", "pager"):
+        with pytest.raises(AssertionError, match=field):
+            assert_details_absent({**row, field: CONTACT_VALUES[field]}, {}, former_label=label)
 
 
 def set_contact(h, person_id, legacy_field, value):
@@ -50,15 +73,15 @@ def test_anonymised_leaver_is_absent_from_other_directory_and_people_reads(reque
     h.command("admin", "person.anonymise", {"reason": "Remove synthetic leaver details"}, person["id"], person["revision"])
 
     directory = h.get(role, "/api/directory")["people"]
-    directory_text = json.dumps(directory)
     assert person["id"] not in {row["id"] for row in directory}
-    assert all(value not in directory_text for value in (*original.values(), *CONTACT_VALUES.values()))
+    assert_details_absent(directory, original)
 
     if role in CATALOGUE_READ_ROLES:
         row = next(row for row in h.get(role, "/api/catalogues?include=people")["people"] if row["id"] == person["id"])
-        assert row["display_name"] == f"Former staff member {person['id'][:8]}"
+        former_label = f"Former staff member {person['id'][:8]}"
+        assert row["display_name"] == former_label
         assert all(row.get(field, "") == "" for field in leavers.ANONYMISED_FIELDS)
-        assert all(value not in json.dumps(row) for value in (*original.values(), *CONTACT_VALUES.values()))
+        assert_details_absent(row, original, former_label=former_label)
 
     admin_row = next(row for row in h.get("admin", "/api/catalogues")["people"] if row["id"] == person["id"])
     assert admin_row["display_name"] == f"Former staff member {person['id'][:8]}"
