@@ -150,9 +150,9 @@ contract in DESIGN.md.
 - A hosted job builds the image and publishes it by digest. Each commit has a separate image concurrency group.
   No workflow connects to a host, no host is a runner and no host holds a credential for the repository.
   Nothing in the repository names or reveals where the product runs.
-- Main publishes the same scanned build to the primary and public packages. The public package digest carries a
-  provenance attestation signed by `image.yml` on `refs/heads/main`. The dev slot verifies it offline and pins the
-  signer workflow and ref.
+- Main and each `v*` tag publish the same scanned build to the primary and public packages; a tag's public image
+  carries the tag name. The public package digest carries a provenance attestation signed by `image.yml` on its ref.
+  The dev slot and the staging gate verify it offline and pin the signer workflow and ref.
 - The operator machine pushes the image to each server over a private network by exact digest; the server verifies
   it by image ID and revision label and reports nothing back. Every deploy is recorded. Deploy definitions and host
   facts live outside this repository.
@@ -180,8 +180,8 @@ contract in DESIGN.md.
 
 ## Deviations
 
-- **Signed provenance for version tags.** Version-tag publication ends after digest verification. Follow the
-  tag-attestation work in issue 1339. Review on 2026-12-23.
+- **One attested artifact across environments.** Version tags build and attest a scanned image separately from
+  main. Promoting the candidate digest at the final tag is tracked in issue 1917. Review on 2026-12-23.
 
 ## Hotfixes
 - A hotfix is its own board item. It is cut from the deployed tag, tested, deployed with the owner's yes like any

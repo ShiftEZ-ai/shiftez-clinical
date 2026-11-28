@@ -230,8 +230,10 @@ class DefaultBranchTests(unittest.TestCase):
         self.assertEqual(push["id"], "push")
         self.assertEqual(push["if"], passed)
         self.assertEqual(push["env"]["IMAGE_ID"], "${{ steps.scan.outputs.image-id }}")
-        main_push = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-        self.assertEqual(public_push["if"], f"{passed} && {main_push}")
+        # Version tags publish and attest their public image too; the push step's ref check gates both.
+        self.assertEqual(public_push["if"], passed)
+        self.assertEqual(scan["env"]["REF_TYPE"], "${{ github.ref_type }}")
+        self.assertEqual(scan["env"]["REF_NAME"], "${{ github.ref_name }}")
         self.assertEqual(public_push["env"], {
             "IMAGE": "${{ steps.scan.outputs.public-image }}", "TAG": "${{ steps.scan.outputs.public-tag }}",
             "IMAGE_ID": "${{ steps.scan.outputs.image-id }}",
@@ -315,6 +317,7 @@ jq() { printf '%s\n' "$REMOTE_CONFIG"; }
         ("push", "tag", "v1.2.3-rc.2", primary, ["v1.2.3-rc.2"]),
         ("push", "tag", "v1.2.3", primary, ["v1.2.3"]),
         ("public_push", "branch", "main", public, ["dev-000000000000"]),
+        ("public_push", "tag", "v1.2.3-rc.2", public, ["v1.2.3-rc.2"]),
     ):
         for remote in ("wrong", "matching"):
             trace.write_text("")
@@ -380,7 +383,8 @@ docker() {
                            "rootfs": {"type": "layers", "diff_ids": [image_digest(layer) for layer in layers]}}).encode()
 
     base_config.write_bytes(config([base]))
-    for expected in (0, 1, 2):
+    for expected, ref_type, ref_name in ((0, "branch", "main"), (0, "tag", "v1.2.3-rc.2"), (1, "branch", "main"),
+                                         (2, "branch", "main")):
         first = image_tar({"removed.txt": marker + b"\n" + address if expected == 1 else b"clean"})
         later = image_tar({".wh.removed.txt": b""})
         content = config([base, first, later])
@@ -392,6 +396,7 @@ docker() {
         image_id = image_digest(b"wrong config" if expected == 2 else content)
         env = {**os.environ, "GITHUB_OUTPUT": output.as_posix(), "RUNNER_TEMP": tmp_path.as_posix(),
                "GITHUB_REPOSITORY": "owner/repo", "GITHUB_SERVER_URL": "", "COMMIT": "0" * 40,
+               "REF_TYPE": ref_type, "REF_NAME": ref_name,
                "TEST_PYTHON": Path(sys.executable).as_posix(), "FIXTURE_BASE": base_config.as_posix(),
                "FIXTURE_ARCHIVE": fixture.as_posix(), "FIXTURE_ID": image_id, "TRACE": trace.as_posix()}
         result = subprocess.run([SHELL, "-c", stubs + scan], env=env, cwd=repo, capture_output=True, timeout=30)
@@ -405,8 +410,9 @@ docker() {
                 assert b"Image privacy scan could not verify or read its inputs." in result.stderr
         else:
             assert b"Image privacy scan: 0 hits" in result.stdout
+            public_tag = "dev-000000000000" if ref_type == "branch" else ref_name
             assert output.read_text().splitlines() == [
-                f"image-id={image_id}", "public-image=ghcr.io/owner/repo-public", "public-tag=dev-000000000000",
+                f"image-id={image_id}", "public-image=ghcr.io/owner/repo-public", f"public-tag={public_tag}",
             ]
             assert trace.read_text().splitlines() == ["loaded"]
 
