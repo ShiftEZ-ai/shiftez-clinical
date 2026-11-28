@@ -161,7 +161,8 @@ def test_empty_quarantine_verdict_matches_pre_quarantine_dev(monkeypatch, tmp_pa
         monkeypatch.setattr(sys, "argv", ["verifier", "--plan", "plan.json", "--reports", str(path),
                                          "--output", str(path), "--base-sha", PRE_QUARANTINE_DEV])
         monkeypatch.setattr(verifier, "git", lambda *args: git(*args).decode().strip())
-        monkeypatch.setattr(verifier, "datetime", PolicyClock)
+        if verifier is old:
+            monkeypatch.setattr(verifier, "datetime", PolicyClock)
         monkeypatch.setattr(verifier, "collect_reports", collect_reports)
         monkeypatch.setattr(verifier, "product_error_nodes", lambda *_, **__: set())
         verifier.main(**options)
