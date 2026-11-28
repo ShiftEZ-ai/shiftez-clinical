@@ -137,8 +137,11 @@ def test_retiring_spread_evenly_requires_independence_for_mandatory_only(h, monk
         assert 'weakens a safety rule' in refusal['error']['message']
         active = h.get('approver', '/api/policies?status=active')['policies']
         assert any(p['id'] == current['id'] for p in active)
-        who = 'approver'
-    retired = h.command(who, 'policy.retire', decision, current['id'], current['revision'])['record']
+        from .governance_support import retire_rule
+
+        retired = retire_rule(h, current, decision['reason'])['record']
+    else:
+        retired = h.command(who, 'policy.retire', decision, current['id'], current['revision'])['record']
     assert retired['status'] == 'retired'
 
 

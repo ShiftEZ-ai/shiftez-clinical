@@ -6,6 +6,7 @@ from apps.api import models as m
 from apps.api.auth import Actor
 from apps.api.db import transaction
 from apps.api.services import tags
+from .governance_support import retire_rule
 from .test_bulk import preview
 from .test_bulk_single_commands import undo as undo_command
 from .test_rule_catalogue_api import approve, line, propose
@@ -113,7 +114,7 @@ def test_tag_creation_undo_keeps_initial_members_when_independent_rule_names_tag
     if status in {"active", "retired"}:
         policy = approve(h, policy)
     if status == "retired":
-        policy = h.command("approver", "policy.retire", {"reason": REASON}, policy["id"], policy["revision"])["record"]
+        policy = retire_rule(h, policy, REASON)["record"]
     if bulk:
         check = preview(h, "coordinator", undo["payload"])
         assert check["items"][0]["issues"][0]["code"] == "INTEGRITY_CONFLICT"

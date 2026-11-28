@@ -2,6 +2,7 @@
 rule kept checks the same), a rule activation is undone by retiring it and restoring what it replaced, and the lists the
 app keeps in memory are re-sent only when they changed."""
 from packages.domain.rule_groups import duplicates, expanded
+from .governance_support import retire_rule
 from .test_rule_simplification import PERSON, SERVICE, WEEK_START, quota, rule
 from .test_rule_templates import activate, propose
 
@@ -50,7 +51,7 @@ def test_group_preview_offers_copies_to_retire_and_keeps_them_out_of_groups(h):
     # Proposing it is refused (an approver retires it); retiring and restoring are the usual audited decisions.
     refused = h.command('coordinator', 'policy.group', {'groups': [], 'changes': [[copy['id']]], 'reason': 'Tidy up'}, status=422)
     assert 'retired by an approver' in refused['error']['message']
-    retired = h.command('approver', 'policy.retire', {'reason': f"Duplicate of {first['name']}: tidy up"}, copy['id'], copy['revision'])
+    retired = retire_rule(h, copy, f"Duplicate of {first['name']}: tidy up")
     assert retired['record']['status'] == 'retired' and retired['restored_ids'] == []
     assert not [c for c in h.get('coordinator', '/api/policies/groups')['changes'] if c['shape'] == 'duplicate']
     h.command('approver', 'policy.restore', {'reason': 'Undo'}, copy['id'], retired['record']['revision'])
@@ -62,7 +63,7 @@ def test_activation_reports_the_versions_it_replaced_so_undo_can_restore_them(h)
     done = h.command('approver', 'policy.activate', {'reason': 'Independent synthetic review'}, new['id'], new['revision'])
     assert [r['id'] for r in done['replaced']] == [old['id']] and done['replaced'][0]['status'] == 'retired'
     # The Undo the app runs (api.ts UNDO 'policy.activate'): retire the new rule, then restore what it replaced.
-    retired = h.command('approver', 'policy.retire', {'reason': 'Undo activation'}, new['id'], done['record']['revision'])
+    retired = retire_rule(h, done['record'], 'Undo activation')
     h.command('approver', 'policy.restore', {'reason': 'Undo activation'}, old['id'], done['replaced'][0]['revision'])
     status = {p['id']: p['status'] for p in [p for state in ('active', 'proposed', 'retired')
         for p in h.get('coordinator', '/api/policies?status=' + state)['policies']]}
