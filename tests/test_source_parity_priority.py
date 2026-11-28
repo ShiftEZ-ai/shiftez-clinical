@@ -20,7 +20,10 @@ def test_configured_fill_stage_precedes_candidate_preference_and_keeps_safety(h,
     workspace = h.shift(h.workspace(), people=[], typ=duty['id'])['workspace']
     data = h.snapshot(workspace)
     data['people'] = {pid: data['people'][pid] for pid in (earlier, preferred)}
-    assert engine(data)['additions'][0]['participant']['person_id'] == preferred
+    personal_only = {**data, 'policies': [p for p in data['policies']
+                     if not p['definition']['rule'].get('session_priority')]}
+    assert engine(personal_only)['additions'][0]['participant']['person_id'] == preferred
+    assert [r['participant']['person_id'] for r in engine(data)['additions']] == [earlier]
     data['generation_options'] = {'allocation_order': 'tiered'}
     staged = engine(data)
     assert staged['status'] == 'candidate_feasible', staged
