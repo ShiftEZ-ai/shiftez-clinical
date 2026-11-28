@@ -892,9 +892,12 @@ export function popover(anchor: HTMLElement, build: (panel: HTMLElement, close: 
   }
   // D-057 (a redraw never loses what the person has open): its button redrawn away, the panel moves to the one `keep`
   // finds for the same record, named open (aria-expanded) and placed against it. False: nothing took its place.
+  // A button in the page being built (alive()) still counts: that page swaps in later, and its frames pass meanwhile.
   const rehome = () => {
     if (state.anchor.isConnected) return true;
-    const next = options.keep?.(); if (!next?.isConnected) return false;
+    if (!options.keep) return false;
+    if (alive(state.anchor)) return true;
+    const next = options.keep(); if (!next || !alive(next)) return false;
     state.anchor = next; next.setAttribute('aria-expanded','true'); placer?.place(); return true;
   };
   const state = {node: panel, anchor, close, tryClose: g.tryClose, key: options.key, place: () => {}, rehome};
@@ -1032,7 +1035,7 @@ export function menuSource(host:Element,source:(anchor:HTMLElement)=>MenuEntry[]
  *  hand-over: the hand-over happens now and the same item of the menu as it is now runs, or the menu closes. True when
  *  the press was handled so (the caller then runs nothing of its own, built from an earlier draw). */
 export function handOver(item:HTMLElement):boolean{
-  const open=openPopover;if(!open?.node.contains(item)||open.anchor.isConnected)return false;
+  const open=openPopover;if(!open?.node.contains(item)||alive(open.anchor))return false;
   const again=open.rehome()?[...open.node.querySelectorAll<HTMLElement>('[role^=menuitem]')].find(b=>b.textContent===item.textContent):null;
   if(again&&again!==item)again.click();else open.close();return true;
 }
@@ -1054,7 +1057,7 @@ export function menu(anchor:HTMLElement,label:string,items:MenuEntry[]|(()=>Menu
   const atEnd=openAtEnd;openAtEnd=false;
   let box:HTMLElement|null=null,shut=()=>{};
   const keep=o.keep?()=>{
-    const next=document.querySelector<HTMLElement>(o.keep!);let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
+    const next=document.querySelector<HTMLElement>(o.keep!)||pageBuilding?.querySelector<HTMLElement>(o.keep!)||null;let source:((anchor:HTMLElement)=>MenuEntry[])|undefined;
     for(let n:Element|null=next;n&&!source;n=n.parentElement)source=menuSources.get(n);
     const entries=next&&source?source(next):[];if(!box||!entries.length)return null;
     const at=box.contains(document.activeElement)?document.activeElement!.textContent:null,was=box.querySelector<HTMLElement>('.armed')?.dataset.armedFrom;
@@ -1232,6 +1235,17 @@ export function dropHoverCard(){
 }
 /** Data the open card was waiting for has arrived (e.g. the planner's rule map): build its content again in place. */
 export function refreshHoverCard(){if(hoverNode?.isConnected)hoverRedraw?.();}
+/** Where a mouse rests: a redraw under it (a live refresh, a save, a check landing) brings back the card it dropped (SI-49),
+ *  only on the replacement for the same thing (its rule target or name); something else now under the pointer stays bare. */
+let pointer:{x:number;y:number}|null=null;
+const hoverKey=(n:HTMLElement)=>n.dataset.rk||n.getAttribute('aria-label')||'';
+/** Called before a redraw replaces the hovered element; the function it returns runs once the new one is drawn. */
+export function keepHover(){
+  const key=hoverTarget&&!helpFromFocus?hoverKey(hoverTarget):'';
+  return ()=>{if(!key||!pointer||hoverNode)return;
+    const at=document.elementFromPoint(pointer.x,pointer.y),now=hoverContent(at);
+    if(now&&now.target!==hoverTarget&&hoverKey(now.target)===key)at!.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:pointer.x,clientY:pointer.y}));};
+}
 /** Hover/focus card for dense grids. Content is built lazily; never steals focus. */
 export function hoverCard(target:HTMLElement,build:()=>Node[],delay=280){
   hoverCards.set(target,{build,delay});
@@ -1322,6 +1336,7 @@ let tooltipsInstalled=false;
 /** One hover/focus lifecycle for labels, compact controls and lazy cards, including elements added by later pages. */
 export function enhanceTooltips(){
   if(tooltipsInstalled)return;tooltipsInstalled=true;
+  document.addEventListener('pointermove',e=>{pointer=e.pointerType==='mouse'?{x:e.clientX,y:e.clientY}:null;},{passive:true});
   // Focus keeps help only when focus is what shows it: keyboard focus, or an explanation-only button. A control focused by
   // its own click keeps hover help only under the pointer, so help never opens or stays after the pointer has left.
   const focusHolds=()=>{const a=document.activeElement;return !!hoverTarget&&!!a&&hoverTarget.contains(a)&&(a.matches(':focus-visible')||hoverTarget.matches('button[data-help]'));};

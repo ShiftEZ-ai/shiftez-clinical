@@ -75,7 +75,7 @@ RATCHET = {
     # approval-review and footer-health-click, which change those lines (Published versions and Discarded drafts are now docked lists, C26). planner_week.ts
     # 1497/1556 and score.ts wait for wave-1 legend-gaps, names-c19b, words-badges and audit-words. schedule_export.ts:
     # lane LABEL.
-    ('menu', 'app.ts'): 6, ('menu', 'planner_week.ts'): 4, ('menu', 'schedule_export.ts'): 2, ('menu', 'score.ts'): 2,
+    ('menu', 'app.ts'): 6, ('menu', 'planner_week.ts'): 2, ('menu', 'schedule_export.ts'): 2, ('menu', 'score.ts'): 2,
     # Popup ARIA still written by hand (use popup()/opens()): the rest sit on lines unmerged wave-1 branches change
     # (app.ts: names-c19b, approval-review, fixlist-live-fixes, footer-health-click, inbox-names; score_check.ts,
     # bulk_change.ts, fairness.ts: audit-words; table_view.ts: safety-focus; planner_week.ts: legend-gaps, names-c19b;
@@ -154,4 +154,5 @@ def test_footer_links_and_legend_overflow_draw_their_focus_ring_inside_the_clipp
     rule = re.search(r':is\(([^{]*)\):focus-visible\{outline-offset:-2px\}', css)
     assert rule, 'the one inside-ring focus rule is missing'
     selectors = {s.strip() for s in rule.group(1).split(',')}
-    assert {'.app-footer .link-button', '.view-legend .pill-more'} <= selectors, sorted(selectors)
+    # The Week's sticky row head sits at the scroller's left edge, which would cut an outside ring (issue 1795).
+    assert {'.app-footer .link-button', '.view-legend .pill-more', '.wk-rowhead'} <= selectors, sorted(selectors)

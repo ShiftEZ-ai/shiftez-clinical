@@ -5,7 +5,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, pick_view, open_rota, planner_tool, press_escape  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, pick_view, open_rota, planner_tool, press_escape, reconnect, wait_held  # noqa: F401
 from .test_rule_templates import propose, activate
 from .rules_support import rule_action, rule_row
 
@@ -536,6 +536,7 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
     from datetime import date
     from apps.api import models as m
     from apps.api.db import transaction
+    from .test_browser import reconnect, wait_held
     a, b, _ = h.seed['people']
     review = h.seed['services'][1]
     with transaction(h.app.state.engine, write=True) as db:
@@ -578,6 +579,35 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
             expect(page.locator('.hovercard')).to_have_count(0)
             return count
         review_session = chip(lambda s: review in s['service_ids'])
+        # The rota is checked again under a resting pointer: the planner redraws its chips once it has read the checked
+        # rota, and the card comes back on the new chip for the same person and session, reading the rule map again,
+        # without the mouse moving.
+        review_session.hover()
+        expect(page.locator('.hovercard .rk-hc-head strong')).to_have_text(re.compile(r'^(\d+|No) rules? appl'))
+        drafts, maps = [], []
+        draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+        rule_map = re.compile(rf".*/api/workspaces/{w['id']}/rule-map$")
+        page.route(draft, lambda route: drafts.append(route))
+        page.route(rule_map, lambda route: maps.append(route))
+        now = h.detail(w)['workspace']
+        checked = now['validation']['evaluated_at']
+        h.lifecycle(now, 'validate')
+        assert h.detail(w)['workspace']['validation']['evaluated_at'] != checked
+        reconnect(page)
+        wait_held(page, drafts)
+        review_session.evaluate("b => { b.dataset.drawnBefore = '' }")
+        for route in drafts:
+            route.continue_()
+        page.unroute(draft)
+        wait_held(page, maps)
+        expect(page.locator('[data-drawn-before]')).to_have_count(0)
+        expect(review_session).to_have_attribute('aria-describedby', re.compile(r'hover-help-'))
+        for route in maps:
+            route.continue_()
+        page.unroute(rule_map)
+        expect(page.locator('.hovercard .rk-hc-head strong')).to_have_text(re.compile(r'^(\d+|No) rules? appl'))
+        page.mouse.move(0, 0)
+        expect(page.locator('.hovercard')).to_have_count(0)
         assert rules_on(review_session) == rules_on(chip(lambda s: review not in s['service_ids'] and s['start'][:10] == '2026-10-05')) + 1
         pick_view(page, 'Week')
         # The leave buffer: only Staff 01's Tuesday place (the day before the leave), not Monday's, not Staff 02's.
@@ -640,7 +670,41 @@ def test_a_rules_panel_shows_the_value_a_revised_mandatory_rule_now_binds(browse
         expect(unchanged).not_to_contain_text('now binds')
         expect(unchanged).not_to_contain_text('Captured')
         if status == 'draft':
-            rule_action(revised, 'Adjust for this rota')
+            # The rota is checked again while a refresh is reading it, and More opens before that read answers: the
+            # redrawn panel reads the rule map again before it has rows, and the open menu waits for the row's new
+            # button instead of closing; its item then opens the same numeric form.
+            expect(page.locator('.app-footer').get_by_text(re.compile(r'^Checking the rota'))).to_have_count(0, timeout=20000)
+            head = revised.locator('.rk-row-head')
+            if head.get_attribute('aria-expanded') != 'true':
+                head.click()
+            drafts, maps = [], []
+            draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+            rule_map = re.compile(rf".*/api/workspaces/{w['id']}/rule-map$")
+            page.route(draft, lambda route: drafts.append(route))
+            page.route(rule_map, lambda route: maps.append(route))
+            now = h.detail(w)['workspace']
+            checked = now['validation']['evaluated_at']
+            h.lifecycle(now, 'validate')
+            assert h.detail(w)['workspace']['validation']['evaluated_at'] != checked
+            reconnect(page)
+            wait_held(page, drafts)
+            more = revised.locator('.rk-more')
+            more.evaluate("b => { b.dataset.drawnBefore = '' }")
+            more.click()
+            item = page.get_by_role('menu', name='More actions').get_by_role('menuitem', name=re.compile('^Adjust for this rota'))
+            expect(item).to_be_visible()
+            for route in drafts:
+                route.continue_()
+            page.unroute(draft)
+            wait_held(page, maps)
+            expect(panel.get_by_text('Working out which rules apply', exact=False)).to_be_visible()
+            expect(item).to_be_visible()
+            for route in maps:
+                route.continue_()
+            page.unroute(rule_map)
+            expect(panel.locator('[data-drawn-before]')).to_have_count(0)
+            expect(more).to_have_attribute('aria-expanded', 'true')
+            item.click()
             field = revised.get_by_label(re.compile(r'^New number for .Weekly duty limit. in this rota, captured 5, now binds 2'))
             expect(field).to_have_value('5')
             expect(field.locator('..')).to_contain_text('now binds 2')  # the field's own row: the number, its unit and the binding value
@@ -691,6 +755,37 @@ def test_rule_tag_sweep_stays_within_budget_at_department_scale(browser, live_se
         page.wait_for_function("() => window.rkSweeps.length > 0")
         worst = page.evaluate("() => Math.max(...window.rkSweeps)")
         assert worst < 100, f'rk-decorate took {worst:.0f} ms for 2,000 nodes'  # 16 ms locally; CI hosts are slower
+    finally:
+        context.close()
+
+
+def test_a_list_row_keeps_one_exception_mark_across_sweeps(browser, live_server, h):
+    """A planner list row draws its exception mark in its first cell; a sweep that walks the row again, without the row
+    being redrawn, replaces that mark rather than adding another beside it."""
+    w, _ = rota(h)
+    shift_ids = [s['id'] for s in h.detail(w)['shifts']]
+    marker = {'kind': 'exception', 'rule_id': 'r0', 'rule_name': 'Synthetic rule 000', 'text': 'Differs for this session', 'by': 'Approver', 'at': None,
+              'people': [], 'services': [], 'locations': [], 'types': [], 'days': None, 'sessions': [0], 'global': False}
+    payload = json.dumps({'days': [f'2026-10-{d:02}' for d in range(4, 11)], 'shifts': shift_ids, 'checked': True, 'fresh': True,
+                          'rules': synthetic_rules(1, h.seed['people'], shift_ids), 'markers': [marker]})
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        page.route(re.compile(r'.*/rule-map$'), lambda route: route.fulfill(status=200, content_type='application/json', body=payload))
+        page.reload()
+        expect(page.get_by_role('button', name=re.compile(r'^Account menu, '))).to_be_visible()
+        open_planner(page, w)
+        page.locator('.wk-day[data-rk]').first.hover()  # the rule map loads on first use
+        page.wait_for_function("() => document.querySelector('.planner-main')?.dataset.rkRules === '1'", timeout=60000)
+        pick_view(page, 'List')
+        row = page.locator(f'tr[data-rk][data-session="{shift_ids[0]}"]')
+        expect(row.locator('.rk-mark-slot > .rk-mark')).to_have_count(1)
+        # Each node added to the view wakes one more sweep over every tagged place, the unchanged row included.
+        page.evaluate("""() => {window.rkSweeps=0;const measure=performance.measure.bind(performance);
+          performance.measure=(name,o)=>{if(name==='rk-decorate')window.rkSweeps++;return measure(name,o);};}""")
+        for sweeps in (1, 2):
+            page.evaluate("() => document.querySelector('.planner-main').append(document.createElement('span'))")
+            page.wait_for_function(f"() => window.rkSweeps >= {sweeps}")
+        expect(row.locator('.rk-mark')).to_have_count(1)
     finally:
         context.close()
 
