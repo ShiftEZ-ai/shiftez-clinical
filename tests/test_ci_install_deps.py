@@ -33,6 +33,8 @@ def test_checks_prepares_one_image_bound_apt_bundle():
     assert "mirror+file:" in script and script.count("https://") >= 3
     assert "arch=amd64" in script and 'Acquire::Languages "none"' in script
     assert 'Dir::Etc::sourcelist "$apt_work/ubuntu.list"' in script and 'Dir::Etc::sourceparts "-"' in script
+    assert 'Acquire::Retries "0"' in script
+    assert 'Acquire::http::Timeout "5"' in script and 'Acquire::https::Timeout "5"' in script
     # 3 x 120 s fits the Checks job's 10-min limit; a failed fetch leaves the shards their logged fallback.
     assert 'timeout --kill-after=15 120 sudo apt-get -c "$APT_CONFIG"' in script
     assert "for attempt in 1 2 3; do" in script
@@ -49,7 +51,7 @@ def run_script(tmp_path, stand_ins, script):
     return run.stdout.splitlines()
 
 
-def run_checks_download(tmp_path, plan, status, failing=""):
+def run_checks_download(tmp_path, plan, status, failing="", *, stall_first_update=False):
     (tmp_path / "playwright-plan").write_text(plan, encoding="utf-8", newline="\n")
     stand_ins = f"""
     RUNNER_TEMP=$PWD
@@ -64,6 +66,15 @@ def run_checks_download(tmp_path, plan, status, failing=""):
       test "$1 $2 $3 $4 $5" = '--kill-after=15 120 sudo apt-get -c' && test "$6" = "$APT_CONFIG" || return 2
       shift 6
       test "$1" = '{failing}' && return 1
+      if [ '{int(stall_first_update)}' = 1 ]; then
+        read -r _ _ _ mirror_uri _ < "$apt_work/ubuntu.list"
+        [[ "$mirror_uri" == mirror+file:* ]] || return 2
+        mapfile -t mirrors < "${{mirror_uri#mirror+file:}}"
+        test "${{#mirrors[@]}}" = 1 || return 2
+        priority=${{mirrors[0]##*$'\\t'}}
+        printf 'apt %s %s\\n' "$1" "$priority"
+        if [ "$1 $priority" = 'update priority:1' ]; then return 124; fi
+      fi
       case "$1" in
         update) touch "$RUNNER_TEMP/indexes"; echo 'apt update';;
         install) test "$2 $3 $4 $5" = '--download-only -y --no-install-recommends -o' || return 2
@@ -88,6 +99,21 @@ def test_checks_downloads_each_package_in_the_playwright_plan(tmp_path):
     mirror_list, = tmp_path.glob("ci-apt.*/mirrors.list")
     rows = mirror_list.read_text(encoding="utf-8").splitlines()
     assert [row.partition("\t")[2] for row in rows] == ["priority:1", "priority:2", "priority:3"]
+
+
+def test_checks_uses_the_next_single_mirror_after_a_stalled_update(tmp_path):
+    output, debs = run_checks_download(
+        tmp_path, "Missing system dependencies (1):\n  browser-fonts\n", 1, stall_first_update=True,
+    )
+    assert output == [
+        "apt update priority:1",
+        "::warning::Browser APT update attempt 1 failed or stalled; retrying",
+        "apt update priority:2",
+        "apt update",
+        "apt install priority:2",
+        "download browser-fonts",
+    ]
+    assert debs == ["browser-fonts.deb"]
 
 
 def test_checks_keeps_only_the_image_when_every_package_is_installed(tmp_path):

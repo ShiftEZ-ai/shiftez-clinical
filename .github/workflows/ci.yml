@@ -277,7 +277,7 @@ jobs:
           'https://archive.ubuntu.com/ubuntu/' 3 > "$apt_work/mirrors.list"
         for suite in noble noble-updates noble-backports noble-security; do
           printf 'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] mirror+file:%s %s main universe restricted multiverse\n' \
-            "$apt_work/mirrors.list" "$suite"
+            "$apt_work/active-mirror.list" "$suite"
         done > "$apt_work/ubuntu.list"
         export APT_CONFIG="$apt_work/apt.conf"
         cat > "$APT_CONFIG" <<EOF
@@ -285,15 +285,19 @@ jobs:
         Dir::Etc::sourceparts "-";
         Dir::State::lists "$apt_work/lists";
         Acquire::Languages "none";
-        Acquire::Retries "1";
-        Acquire::http::Timeout "15";
-        Acquire::https::Timeout "15";
+        Acquire::Retries "0";
+        Acquire::http::Timeout "5";
+        Acquire::https::Timeout "5";
         APT::Update::Error-Mode "any";
         EOF
 
+        mirror_priority=1
         apt_retry() {
           local attempt
           for attempt in 1 2 3; do
+            # APT falls back per file. Use one mirror per attempt with a stable URI for the package indexes.
+            sed -n "${mirror_priority}p" "$apt_work/mirrors.list" > "$apt_work/active-mirror.list" || return 1
+            printf 'Browser APT %s attempt %s using mirror priority %s\n' "$1" "$attempt" "$mirror_priority" >&2
             # Checks has a 10-min job limit; a fetch that cannot finish leaves the shards their logged fallback.
             if timeout --kill-after=15 120 sudo apt-get -c "$APT_CONFIG" "$@"; then return 0; fi
             if [ "$attempt" = 3 ]; then
@@ -301,6 +305,7 @@ jobs:
               return 1
             fi
             echo "::warning::Browser APT $1 attempt $attempt failed or stalled; retrying"
+            mirror_priority=$((mirror_priority % 3 + 1))
           done
         }
 
