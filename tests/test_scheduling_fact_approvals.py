@@ -134,6 +134,63 @@ def test_each_fact_kind_has_plain_metadata_and_opens_for_a_pure_approver(h, kind
     assert decide(h, detail["fact"])["fact"]["status"] == "active"
 
 
+@pytest.mark.parametrize("source", ["person", "calendar"])
+@pytest.mark.parametrize("change", ["off", "shorter"])
+def test_a_self_approver_can_add_but_cannot_reduce_protected_time(h, source, change):
+    from packages.domain.conditions import active_rules
+
+    person = h.seed["people"][0]
+    username = "protection_author"
+    author = identity(h, username, ["coordinator", "approver"], person=person)
+    h.command("admin", "self_approval.grant", {"identity_id": author, "actions": ["rule.activate"],
+        "starts_on": "2020-01-01", "no_end_date": True, "reason": "Synthetic review cover"})
+    subject = {"person_id": person} if source == "person" else {"calendar_entry_id": calendar_entry(h)["id"]}
+    line = {"id": str(uuid.uuid4()), "weekdays": [1], "start_time": "09:00", "end_time": "11:00",
+            "starts_on": "2026-10-04", "ends_on": "2026-10-11",
+            "numbers": {"apply": {"value": None, "level": "mandatory"}}}
+    payload = {"kind": "protected_time", "catalogue_id": "protected_time", **subject, "line": line,
+               "reason": "Protect teaching time"}
+    proposed = h.command(username, "calendar.protection.propose", payload)["fact"]
+    current = decide(h, proposed, role=username)["fact"]
+    assert current["status"] == "active"
+    rota = h.workspace()
+    [restriction] = [p for p in active_rules(h.snapshot(rota)) if p["id"] == current["id"]]
+    assert restriction["definition"]["rule"]["kind"] == "restriction"
+    assert restriction["definition"]["severity"] == "mandatory"
+
+    for action in ("retire", "undo"):
+        same_rule = decide(h, current, action, role=username, status=403)["error"]
+        assert same_rule["code"] == "SELF_APPROVAL"
+
+    weaker = h.command(username, "calendar.protection.propose", {**payload,
+        "on": change != "off", "line": {**line, "end_time": "10:00" if change == "shorter" else "11:00"},
+        "replaces_id": current["id"], "expected_revision": current["revision"]})["fact"]
+    refusal = decide(h, weaker, role=username, status=403)["error"]
+    assert refusal["code"] == "SELF_APPROVAL"
+    assert "Another authorised person must approve a change that weakens a safety rule" in refusal["message"]
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.SchedulingFact, current["id"]).status == "active"
+        assert db.get(m.SchedulingFact, weaker["id"]).status == "proposed"
+
+    independent = decide(h, weaker)["fact"]
+    assert independent["status"] == "active" and independent["on"] is (change != "off")
+
+
+def test_ordinary_personal_workload_changes_keep_audited_self_approval(h):
+    person = h.seed["people"][0]
+    username = "workload_author"
+    author = identity(h, username, ["coordinator", "approver"], person=person)
+    permission = h.command("admin", "self_approval.grant", {"identity_id": author,
+        "actions": ["rule.activate"], "starts_on": "2020-01-01", "no_end_date": True,
+        "reason": "Synthetic review cover"})["permission"]
+    current = decide(h, h.command("coordinator", "person.workload.propose", workload(h, 2))["fact"])["fact"]
+    pending = replace(h, current, maximum=4)
+    revised = decide(h, pending, role=username)["fact"]
+    assert revised["status"] == "active"
+    [entry] = h.get("auditor", f"/api/audit?target_id={pending['id']}&self_approved=true")["events"]
+    assert entry["detail"]["self_approved"] == [{"action": "rule.activate", "permission_id": permission["id"]}]
+
+
 def test_null_personal_target_is_a_readable_pending_removal(h):
     fact = propose(h, "target", target_value=None)
     item = next(row for row in read(h)["items"] if row["id"] == fact["id"])

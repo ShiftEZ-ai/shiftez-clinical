@@ -88,7 +88,7 @@ def profile_worker(job_id):
 @pytest.mark.postgres
 def test_generation_profile_at_department_scale(pg, request, tmp_path):
     harness = pg
-    data = seed_department_preparation(harness)
+    data, rule_versions = seed_department_preparation(harness)
     for client in harness.clients.values():
         client.close()
     harness.clients.clear()
@@ -117,7 +117,8 @@ def test_generation_profile_at_department_scale(pg, request, tmp_path):
     subprocess.run([sys.executable, '-m', 'tests.test_generation_profile', job['id'], str(worker_report)],
                    check=True, env=env)
     measurement = {'people': len(data['people']), 'sessions': len(data['shifts']),
-                   'rule_versions': len(data['policies']), 'queue': timings, 'worker': json.loads(worker_report.read_text(encoding='utf-8'))}
+                   'rule_versions': rule_versions, 'snapshot_rule_versions': len(data['policies']),
+                   'queue': timings, 'worker': json.loads(worker_report.read_text(encoding='utf-8'))}
     request.node.user_properties.append(('generation_profile', json.dumps(measurement)))
 
 

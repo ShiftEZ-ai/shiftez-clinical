@@ -174,7 +174,8 @@ def test_a_late_planner_load_does_not_replace_the_next_pages_footer(browser, liv
     held = []
     try:
         navigate(page, 'people')
-        detail = '/api/workspaces/' + w['id'] + '?view=schedule'  # the draft: every Schedule load with it reads it (the sidebar counts never do)
+        # The draft: every Schedule load with it reads its compact detail first (a window; the sidebar counts never do).
+        detail = '/api/workspaces/' + w['id'] + '?view=compact'
         page.route('**' + detail, lambda route: held.append(route))
         with page.expect_request(lambda request: request.url.endswith(detail)):
             page.evaluate("location.hash='planner'")

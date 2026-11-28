@@ -69,7 +69,7 @@ def test_icons_sit_centred_in_square_controls(browser, live_server, role, width)
 
 # Phone touch targets (WCAG 2.2 SC 2.5.5; DESIGN.md › Visual contract): every visible interactive element on the phone
 # pages is at least 44 × 44 CSS px. A pill or footer control may keep its look and take its target from a centred
-# absolute ::after (app.css › Touch targets), which counts. Not measured, each for a reason:
+# absolute ::after (app.css › Touch targets), a switch from its ::before (its ::after is the knob); both count. Not measured, each for a reason:
 # - a person's name (.person-link) and display:inline links: targets in running text (SC 2.5.8 Inline exception);
 # - checkboxes and radios: their label or row is the target;
 # - the search input: its field (.dt-search-wrap) is the target and is measured instead;
@@ -83,8 +83,8 @@ TARGETS = r"""() => {
     const r=c.getBoundingClientRect();
     if(r.width<=1||r.height<=1||getComputedStyle(c).visibility==='hidden')continue;
     // Layout size, not the drawn box: a popover still in its opening scale (0.98) must not read 43 px.
-    let w=c.offsetWidth||r.width,h=c.offsetHeight||r.height;const a=getComputedStyle(c,'::after');
-    if(a.content!=='none'&&a.position==='absolute'){
+    let w=c.offsetWidth||r.width,h=c.offsetHeight||r.height;
+    for(const a of [getComputedStyle(c,'::after'),getComputedStyle(c,'::before')])if(a.content!=='none'&&a.position==='absolute'){
       w=Math.max(w,w-parseFloat(a.left)-parseFloat(a.right));h=Math.max(h,h-parseFloat(a.top)-parseFloat(a.bottom));}
     const name=(c.getAttribute('aria-label')||c.textContent||c.className||c.tagName).trim().slice(0,40);
     const key=name+'@'+Math.round(r.left)+','+Math.round(r.top);if(seen.has(key))continue;seen.add(key);

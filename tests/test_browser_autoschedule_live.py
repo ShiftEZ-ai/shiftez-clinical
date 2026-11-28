@@ -201,21 +201,39 @@ def test_a_run_plays_on_the_people_grid_from_the_solvers_events(browser, cp_serv
 
 def test_a_real_run_ends_on_its_result(browser, cp_server, h):
     """The real API and worker (no written-in progress): the grid ends on the result's own additions, ringed."""
-    w, ids = rota(h, [(4, 8, []), (5, 8, []), (6, 8, [])])
-    h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation'}, revision=w['revision'])
+    w, _ = rota(h, [(4, 8, []), (5, 8, []), (6, 8, [])])
+    job_id = h.command('coordinator', 'job.create', {'workspace_id': w['id'], 'kind': 'generation'},
+                       revision=w['revision'])['job']['id']
     context, page = sign_in(browser, cp_server, 'coordinator', viewport={'width': 1440, 'height': 900})
     try:
+        page.clock.install()
         open_rota(page, w['id'])
         pick_view(page, 'People')
         page.get_by_role('button', name='Auto-schedule', exact=True).click()
         expect(page.locator('#auto-panel')).to_be_hidden()
         expect(page.locator('.asl-strip ' + STEP)).to_have_text(re.compile(r'^1/5 '))
+        # Capture the brief Done state even if the stream delivers it while the worker is being joined.
+        page.evaluate(f"""() => {{
+          const read = {DONE_READ};
+          const observe = new MutationObserver(() => {{
+            const done = read();
+            if (done) {{
+              window.__realRunDone = done;
+              observe.disconnect();
+            }}
+          }});
+          observe.observe(document.body, {{subtree: true, childList: true, characterData: true}});
+        }}""")
         worker = threading.Thread(target=process_one, args=(h.app.state.engine,))
         worker.start()
         worker.join(60)
-        assert seen_done(page)['step'] == '5/5 Done'
-        job = h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs'][0]
-        added = h.get('coordinator', '/api/jobs/' + job['id'])['job']['result']['additions']
+        assert not worker.is_alive(), 'the real worker finished'
+        job = h.get('coordinator', '/api/jobs/' + job_id)['job']
+        assert job['status'] == 'succeeded', job['status']
+        # SQLite does not push this worker's changes across processes. Exercise the closed panel's fallback poll.
+        page.clock.fast_forward(30_000)
+        assert page.wait_for_function('() => window.__realRunDone', timeout=20000).json_value()['step'] == '5/5 Done'
+        added = job['result']['additions']
         assert added
         for a in added:
             expect(chip(page, a['shift_id'], a['participant']['person_id'])).to_have_count(1)

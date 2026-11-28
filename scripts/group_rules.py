@@ -242,19 +242,26 @@ def opened_permissions(db, department_id, only_reason=None):
     return out
 
 
+def retirement_pending(result):
+    return bool(result.get("approval") and not result["approval"]["complete"])
+
+
 def undo_all(db, department_id, only_reason, retire):
     """Retire the rules that replaced others until none is left (retiring one can bring back a rule it replaced that
-    itself replaced others, from the same round). Returns (retired, active rules afterwards)."""
+    itself replaced others, from the same round)."""
     retired = 0
+    pending = set()
     for _ in range(10):
-        grouped = made_rules(db, department_id, only_reason)
+        grouped = [p for p in made_rules(db, department_id, only_reason) if p.id not in pending]
         if not grouped:
             break
         for p in grouped:
-            retire(p)
-            retired += 1
+            if retirement_pending(retire(p)):
+                pending.add(p.id)
+            else:
+                retired += 1
         db.flush()
-    return retired, active_count(db, department_id)
+    return retired, active_count(db, department_id), len(pending)
 
 
 def active_count(db, department_id):
@@ -274,10 +281,12 @@ def undo(db, actor, args, policy_transition):
     for p in ended_rules(db, actor.department_id, args.only_reason):
         policy_transition(db, actor, SimpleNamespace(kind="policy.restore", target_id=p.id, expected_revision=p.revision, payload={"reason": args.reason}))
         restored += 1
-    retired, active = undo_all(db, actor.department_id, args.only_reason, lambda p: policy_transition(
+    retired, active, pending = undo_all(db, actor.department_id, args.only_reason, lambda p: policy_transition(
         db, actor, SimpleNamespace(kind="policy.retire", target_id=p.id, expected_revision=p.revision, payload={"reason": args.reason})))
     print(f"Retired {retired} rules that replaced others (the rules they replaced apply again) and restored {restored} ended rules. "
           f"Active rules now {active}.")
+    if pending:
+        print(f"{pending} retirement approvals need another authorised person.")
 
 
 def open_eligibility(db, actor, args):
@@ -335,11 +344,17 @@ def activate(engine, args, create_job, activate_policies, policy_transition, Set
         with transaction(engine, write=True) as db:
             actor = actor_for(db, args.who, args.department)
             ended = [c for c in duplicate_groups(db, actor)["changes"] if c.get("retire")]
+            retired = []
             for c in ended:
                 p = db.get(m.Policy, c["rule_ids"][0])
-                policy_transition(db, actor, SimpleNamespace(kind="policy.retire", target_id=p.id, expected_revision=p.revision,
-                                                             payload={"reason": (f"Duplicate of {c['kept_name']}" if c["shape"] == "duplicate" else ENDED_REASON)[:300] + f": {args.reason}"}))
-            print(f"Retired {len(ended)} rules that have ended or copy another rule ({', '.join(c['name'] for c in ended) or 'none'}); --undo restores them.")
+                reason = (f"Duplicate of {c['kept_name']}" if c["shape"] == "duplicate" else ENDED_REASON)
+                result = policy_transition(db, actor, SimpleNamespace(kind="policy.retire",
+                    target_id=p.id, expected_revision=p.revision, payload={"reason": reason[:300] + f": {args.reason}"}))
+                if not retirement_pending(result):
+                    retired.append(c["name"])
+            print(f"Retired {len(retired)} rules that have ended or copy another rule ({', '.join(retired) or 'none'}); --undo restores them.")
+            if pending := len(ended) - len(retired):
+                print(f"{pending} retirement approvals need another authorised person.")
 
 
 # Baseline: an empty department (no rotas, nobody who can sign in) -------------------------------------------------------
@@ -371,6 +386,7 @@ def run_as(db, role, department, command, correlation_id, settings):
     """One product command as a baseline system identity, with its command receipt and audit event (as the HTTP bus)."""
     from apps.api.commands import dispatch
     from apps.api.serialization import json_value
+    from apps.api.services.audit_log import event_action
     from apps.api.snapshots import snapshot_hash
     from packages.contracts import schemas as s
     identity = system_identity(db, role)
@@ -383,9 +399,12 @@ def run_as(db, role, department, command, correlation_id, settings):
     receipt_id = m.uid()
     db.add(m.CommandReceipt(id=receipt_id, department_id=department.id, actor_id=identity.id, command_kind=command.kind,
                             required_roles=BASELINE[role][2], key="baseline-" + uuid.uuid4().hex, payload_hash=snapshot_hash(canonical), result=result))
-    db.add(m.AuditEvent(department_id=department.id, actor_id=identity.id, action=command.kind, target_id=command.target_id,
+    db.add(m.AuditEvent(department_id=department.id, actor_id=identity.id,
+                        action=event_action(command.kind, result), target_id=command.target_id,
                         reason=str(command.payload.get("reason", command.kind))[:500],
-                        detail={"receipt_id": receipt_id, "payload_fields": sorted(command.payload), "baseline": True}, correlation_id=correlation_id))
+                        detail={"receipt_id": receipt_id, "payload_fields": sorted(command.payload), "baseline": True,
+                                **({"approval": result["approval"]} if result.get("approval") else {})},
+                        correlation_id=correlation_id))
     db.flush()
     return result
 
@@ -414,12 +433,14 @@ def baseline(engine, args):
             if args.undo:
                 return baseline_undo(db, department, args, run)
             before, rename, made_total, ended_total = active_count(db, department.id), names_from(args), 0, 0
+            pending = set()
             for round_no in range(1, 7):
                 proposer = system_identity(db, "proposer")
                 actor = Actor(proposer.id, department.id, department.organisation_id, proposer.display_name, frozenset(["coordinator"]), None, "baseline")
                 preview = duplicate_groups(db, actor)
                 chosen = [g for g in preview["groups"] if "payload" in g]
-                changes = [c for c in preview["changes"] if not c.get("keeps")] if args.changes else []
+                changes = [c for c in preview["changes"] if not c.get("keeps")
+                           and c["rule_ids"][0] not in pending] if args.changes else []
                 if not chosen and not changes:
                     break
                 proof = grouping_proof(db, actor, preview["groups"], model=args.model)
@@ -439,21 +460,26 @@ def baseline(engine, args):
                 for c in changes:
                     if c.get("retire"):
                         p = db.get(m.Policy, c["rule_ids"][0])
-                        run("approver", {"kind": "policy.retire", "target_id": p.id, "expected_revision": p.revision,
-                                         "payload": {"reason": f"{ENDED_REASON}: {reason}"}})
-                        ended_total += 1
+                        result = run("approver", {"kind": "policy.retire", "target_id": p.id,
+                            "expected_revision": p.revision, "payload": {"reason": f"{ENDED_REASON}: {reason}"}})
+                        if retirement_pending(result):
+                            pending.add(p.id)
+                        else:
+                            ended_total += 1
                 db.flush()
             gaps = eligibility_gaps(db, department.id)
             print(gap_lines(db, gaps))
             for g in gaps:
                 run("credentialer", {"kind": "eligibility.extend", "target_id": g["id"], "expected_revision": g["revision"],
                                      "payload": {"ends_on": None, "reason": f"{OPENED_REASON.format(g['ends_on'])} {reason}"}})
-            if made_total or ended_total or gaps:
+            if made_total or ended_total or gaps or pending:
                 live.signal(db, department.id)
             after = active_count(db, department.id)
             print(f"Baseline ({correlation}{'' if args.propose else ', dry run'}): active rules {before} -> {after}; {made_total} rules proposed by "
                   f"'{BASELINE['proposer'][1]}' and activated by '{BASELINE['approver'][1]}', {ended_total} ended rules retired, "
                   f"{len(gaps)} clinic permissions opened until changed by '{BASELINE['credentialer'][1]}'.")
+            if pending:
+                print(f"{len(pending)} retirement approvals need another authorised person.")
             if not args.propose:
                 raise DryRun()
             print(f"Undo: --baseline --undo --reason \"...\" --only-reason \"{reason}\"")
@@ -471,12 +497,14 @@ def baseline_undo(db, department, args, run):
     ended = ended_rules(db, department.id, args.only_reason)
     for p in ended:
         run("approver", {"kind": "policy.restore", "target_id": p.id, "expected_revision": p.revision, "payload": {"reason": args.reason}})
-    retired, active = undo_all(db, department.id, args.only_reason, lambda p: run(
+    retired, active, pending = undo_all(db, department.id, args.only_reason, lambda p: run(
         "approver", {"kind": "policy.retire", "target_id": p.id, "expected_revision": p.revision, "payload": {"reason": args.reason}}))
     from apps.api import live
     live.signal(db, department.id)
     print(f"Baseline undo: {len(opened)} clinic permissions ended on their earlier dates, {len(ended)} ended rules restored, "
           f"{retired} rules retired (the rules they replaced apply again). Active rules now {active}.")
+    if pending:
+        print(f"{pending} retirement approvals need another authorised person.")
 
 
 if __name__ == "__main__":
