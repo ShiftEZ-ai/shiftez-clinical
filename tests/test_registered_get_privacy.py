@@ -416,6 +416,7 @@ def test_saved_views_and_inbox_respect_account_and_tenant_scope(tenants):
             assert value['defaults'] == {
                 'personal_set': True, 'personal_view_id': personal,
                 'department_set': True, 'department_view_id': shared,
+                'phone_set': True, 'phone_view_id': personal,
             }, label
 
             inbox = client.get(inbox_path)

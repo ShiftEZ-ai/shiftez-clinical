@@ -335,10 +335,12 @@ export const fetchViews=<D>(key:string):Promise<SavedView<D>[]>=>{
   // An app-wide read (not the page's): leaving the page must not abort it, or the next visit asks again.
   const turn=defaultsSet,views=background<{views:SavedView<D>[];defaults?:TableViewDefaults}>('/api/table-views?table='+encodeURIComponent(key)).then(r=>{if(turn===defaultsSet)viewDefaults.set(key,r.defaults||{});return r.views;});
   viewCache.set(key,{session:sessionKey(),views});views.catch(()=>viewCache.delete(key));return views;};
-/** The view a list opens with: the personal default, else the department's; `null` is the built-in view and
- *  `undefined` no default chosen (the list keeps what this browser remembers). Read once views are fetched. */
+/** The viewer's own default for the screen size in use: a person keeps one for a desktop and one for a phone. */
+export const ownDefault=(d:TableViewDefaults)=>phoneQuery.matches?{screen:'phone' as const,set:d.phone_set,id:d.phone_view_id}:{screen:'desktop' as const,set:d.personal_set,id:d.personal_view_id};
+/** The view a list opens with: the personal default for this screen size, else the department's; `null` is the
+ *  built-in view and `undefined` no default chosen (the list keeps what this browser remembers). Read once views are fetched. */
 export function defaultView<D>(key:string,saved:SavedView<D>[]):SavedView<D>|null|undefined{
-  const d=viewDefaults.get(key)||{},id=d.personal_set?d.personal_view_id:d.department_set?d.department_view_id:undefined;
+  const d=viewDefaults.get(key)||{},own=ownDefault(d),id=own.set?own.id:d.department_set?d.department_view_id:undefined;
   return id===undefined?undefined:id===null?null:saved.find(x=>x.id===id);}
 const openedLists=new Set<string>();
 /** A list's first read this session opens its default view (if one is chosen); later visits keep what was shown. */
@@ -374,15 +376,17 @@ export function viewActions<D>(o:Omit<SavedViewMenu<D>,'close'|'apply'>){
   // A saved view shown before the saved views have loaded is named by its id: the defaults name it too (never the first
   // built-in in its place), and once loaded its own scope decides which defaults it offers.
   const loading=!found&&!!o.activeId;
-  const d=viewDefaults.get(o.key)||{},target=found?.id??(loading?o.activeId:null);
-  // Defaults name the view shown (a saved one, or the built-in when none is): the server keeps one choice per scope, and
+  const d=viewDefaults.get(o.key)||{},own=ownDefault(d),target=found?.id??(loading?o.activeId:null);
+  // Defaults name the view shown (a saved one, or the built-in when none is): the server keeps one choice per scope (a person's per screen size), and
   // its `null` is the first built-in. Another built-in has no id there: saving it as a view first makes it a default.
   const settable=!!found||loading||!o.builtins?.length||o.builtins[0].on;
+  // A personal choice is for the screen size in use (the desktop one is the server's default size).
+  const phone=own.screen==='phone',on=phone?' on a phone':' on a desktop';
   const setDefault=(scope:'personal'|'department',clear=false)=>async()=>{
-    const r=await command<{defaults:TableViewDefaults}>('table_view.set_default',{table_key:o.key,scope,...(clear?{clear:true}:{view_id:target})});
+    const r=await command<{defaults:TableViewDefaults}>('table_view.set_default',{table_key:o.key,scope,...(scope==='personal'&&phone?{screen:'phone'}:{}),...(clear?{clear:true}:{view_id:target})});
     putDefaults(o.key,r.defaults);
-    notify(clear?'This list now opens with the department default.':scope==='personal'?'This list now opens with this view for you.':'This list now opens with this view for the department.');};
-  const mine=d.personal_set&&d.personal_view_id===target,theirs=d.department_set&&d.department_view_id===target;
+    notify(clear?`This list now opens with the department default${on}.`:scope==='personal'?`This list now opens with this view for you${on}.`:'This list now opens with this view for the department.');};
+  const mine=own.set&&own.id===target,theirs=d.department_set&&d.department_view_id===target;
   const named=(title:string,text:string,value:string,submit:string,save:(name:string,shared:boolean)=>Promise<void>,share=false)=>formDialog(title,text,form=>{
     const name=field(`${T} name`,'text',value,{required:true,maxLength:160});form.append(name.wrap);
     const shared=share?check('Share with the department',false):null;if(shared)form.append(shared.wrap);
@@ -391,9 +395,9 @@ export function viewActions<D>(o:Omit<SavedViewMenu<D>,'close'|'apply'>){
   return {active,found,
     saveAs:()=>named(`New ${t}`,o.thing?'':`Keeps how ${o.noun} are shown, filtered and grouped.`,'',`Save ${t}`,async (name,shared)=>{await create(name,shared);notify(shared?`${T} saved and shared with the department.`:`${T} saved.`);},o.shareable??leads()),
     defaults:d,
-    makeMine:!settable||mine||(!d.personal_set&&theirs)?null:setDefault('personal'),
+    makeMine:!settable||mine||(!own.set&&theirs)?null:setDefault('personal'),
     makeDepartment:!settable||!leads()||theirs||found&&found.scope!=='department'?null:setDefault('department'),
-    followDepartment:d.personal_set?setDefault('personal',true):null,
+    followDepartment:own.set?setDefault('personal',true):null,
     // A copy of what is on screen now (unsaved changes included), opened at once.
     duplicate:found?()=>named(`Duplicate ${t}`,`A new ${t} with the same settings; the original stays as it was.`,`${found.name} copy`,'Duplicate',async name=>{await create(name);notify(`${T} duplicated.`);}):null,
     rename:active?(name?:string)=>name!==undefined?renameTo(active,name):named(`Rename ${t}`,'Only the name changes; the settings stay as saved.',active.name,'Rename',name=>renameTo(active,name)):null,
@@ -410,8 +414,9 @@ export function viewActions<D>(o:Omit<SavedViewMenu<D>,'close'|'apply'>){
 const viewChoice=(close:()=>void,name:string,on:boolean,run:()=>void,hint='',warn='',glyph:IconName='layers',key='builtin:'+name,mark='')=>{
   const b=menuItem(name,warn?'alert':glyph,()=>{close();run();},{role:'menuitemradio','aria-checked':String(on),'data-view-key':key,...(warn?{class:'warn','aria-label':`${name}${hint?', '+hint:''}, ${warn}`}:{})},hint);
   if(mark)b.append(badge(mark,'info','view-default'));if(on)b.append(icon('check'));return b;};
-/** The badge on the view a list opens with: the viewer's own default, else the department's. */
-const defaultMark=(d:TableViewDefaults,id:string|null)=>d.personal_set?(d.personal_view_id===id?'Default':''):d.department_set&&d.department_view_id===id?'Department default':'';
+/** The badge on the view a list opens with: the viewer's own default for this screen size (named), else the department's. */
+const defaultMark=(d:TableViewDefaults,id:string|null)=>{const own=ownDefault(d);
+  return own.set?(own.id===id?(own.screen==='phone'?'Phone default':'Desktop default'):''):d.department_set&&d.department_view_id===id?'Department default':'';};
 const section=(label:string,items:HTMLElement[])=>items.length?[el('div',{role:'group','aria-label':label,class:'menu-group'},el('div',{class:'menu-heading','aria-hidden':'true'},label),...items)]:[];
 /** Built-in views alone (a panel's status views, not saved on the server): the same rows as in savedViewItems. */
 export const builtinViewItems=(builtins:BuiltinView[],close:()=>void,saved=false,mark='')=>

@@ -672,6 +672,7 @@ and a desktop window narrowed below it gets the same rule at once.
   → actions. On a phone (≤ 720 px) the same toolbar is: row 1 the saved view (its name truncates, never
   wraps) and the tools as named icons (Filter, Group, Sort, View settings; a tool in use shows its count or a dot);
   row 2 the period navigation where present (a compound control, never squeezed); then Search alone, full width.
+  A person keeps one default view per list for a desktop and one for a phone: Set as my default sets the one for the screen in use, and the menu marks it Desktop default or Phone default; the department default is the same on every screen.
   Same outline popovers; a control is accent (with a
   count) only when it differs from the collection's defaults — a default sort or grouping is
   neither highlighted nor announced as a change. A free-text search is never stored (a reload starts empty); when a

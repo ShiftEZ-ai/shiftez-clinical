@@ -2066,6 +2066,11 @@ class TableViewDefault(Record, DepartmentRecord, Base):
     view_id: Mapped[str | None] = mapped_column(ForeignKey("table_views.id", ondelete="SET NULL"))
     # SET NULL after deletion must follow the next default, rather than select the built-in view.
     built_in: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    # A personal row keeps a second choice for a phone. Until `phone_split`, the phone follows the one choice above
+    # (rows from before the split); no foreign key, so a deleted view reads as not set, like SET NULL above.
+    phone_view_id: Mapped[str | None] = mapped_column(String(36))
+    phone_built_in: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    phone_split: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
     __table_args__ = (
         Index("uq_table_view_defaults_personal", "department_id", "owner_id", "table_key", unique=True,

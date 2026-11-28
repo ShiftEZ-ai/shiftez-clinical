@@ -24,9 +24,9 @@ def listing(h, table='people', role='staff'):
     return h.get(role, '/api/table-views?table=' + table)
 
 
-def choose(h, view_id=None, *, table='people', scope='personal', clear=False, role='staff', **extra):
-    return h.command(role, 'table_view.set_default',
-        {'table_key': table, 'scope': scope, 'view_id': view_id, 'clear': clear}, **extra)
+def choose(h, view_id=None, *, table='people', scope='personal', clear=False, role='staff', screen=None, **extra):
+    return h.command(role, 'table_view.set_default', {'table_key': table, 'scope': scope, 'view_id': view_id,
+        'clear': clear, **({'screen': screen} if screen else {})}, **extra)
 
 
 @pytest.fixture(params=['h', pytest.param('pg', marks=pytest.mark.postgres)])
@@ -107,7 +107,7 @@ def test_default_tri_state_precedence_and_revision_checked_undo(database):
     choose(h, shared['id'], scope='department', role='coordinator')
     inherited = listing(h)['defaults']
     assert inherited == {'department_view_id': shared['id'], 'department_set': True,
-                         'personal_view_id': None, 'personal_set': False}
+                         'personal_view_id': None, 'personal_set': False, 'phone_view_id': None, 'phone_set': False}
     selected = choose(h, personal['id'])
     assert selected['defaults']['personal_set'] and selected['defaults']['personal_view_id'] == personal['id']
     flags = {row['id']: (row['is_department_default'], row['is_personal_default']) for row in listing(h)['views']}
@@ -146,7 +146,8 @@ def test_deleting_default_view_falls_through_even_with_direct_foreign_key_action
         choice = db.scalar(select(m.TableViewDefault).where(m.TableViewDefault.owner_id == h.seed['identities']['staff']))
         assert choice.view_id is None and choice.built_in is False
     assert listing(h)['defaults'] == {'department_view_id': shared['id'], 'department_set': True,
-                                     'personal_view_id': None, 'personal_set': False}
+                                     'personal_view_id': None, 'personal_set': False,
+                                     'phone_view_id': None, 'phone_set': False}
     choose(h, shared['id'])
     h.command('coordinator', 'table_view.delete', {}, shared['id'], shared['revision'])
     assert listing(h)['defaults'] == s.TableViewDefaults().model_dump()
@@ -260,8 +261,44 @@ def test_defaults_migration_is_additive_and_preserves_existing_views(h):
         # Reapply only this migration; the fixture already contains every later migration.
         with Operations.context(MigrationContext.configure(db)):
             importlib.import_module('migrations.versions.0120_table_view_defaults').upgrade()
+            importlib.import_module('migrations.versions.0159_phone_view_default').upgrade()
     assert listing(h, 'planner', 'coordinator')['views'] == [original]
     assert listing(h, 'planner')['defaults'] == s.TableViewDefaults().model_dump()
-    path = safety.VERSIONS / '0120_table_view_defaults.py'
-    assert safety.classification(path) == 'additive'
-    assert safety.declaration_errors(path) == [] and not safety.needs_confirmation(path)
+    for name in ('0120_table_view_defaults', '0159_phone_view_default'):
+        path = safety.VERSIONS / (name + '.py')
+        assert safety.classification(path) == 'additive'
+        assert safety.declaration_errors(path) == [] and not safety.needs_confirmation(path)
+
+
+def test_a_person_keeps_one_default_per_screen_size_with_undo(database):
+    h = database
+    shared = create(h, scope='department')['view']
+    desktop, phone, other = (create(h, role='staff')['view'] for _ in range(3))
+    choose(h, shared['id'], scope='department', role='coordinator')
+    staff = h.seed['identities']['staff']
+    with transaction(h.app.state.engine, write=True) as db:
+        # A choice made before the split: the phone follows it until a choice is made for one size.
+        db.add(m.TableViewDefault(department_id=h.seed['department_id'], owner_id=staff, table_key='people',
+                                  view_id=desktop['id']))
+    legacy = listing(h)['defaults']
+    assert (legacy['personal_view_id'], legacy['phone_view_id'], legacy['phone_set']) == (desktop['id'], desktop['id'], True)
+    on_phone = choose(h, phone['id'], screen='phone')
+    assert on_phone['previous_default'] == {'table_key': 'people', 'scope': 'personal', 'screen': 'phone',
+                                            'view_id': desktop['id'], 'clear': False}
+    assert (on_phone['defaults']['personal_view_id'], on_phone['defaults']['phone_view_id']) == (desktop['id'], phone['id'])
+    on_desktop = choose(h, other['id'])
+    assert (on_desktop['defaults']['personal_view_id'], on_desktop['defaults']['phone_view_id']) == (other['id'], phone['id'])
+    undone = h.command('staff', 'table_view.set_default', on_phone['previous_default'],
+                       on_desktop['default']['id'], on_desktop['default']['revision'])
+    assert (undone['defaults']['personal_view_id'], undone['defaults']['phone_view_id']) == (other['id'], desktop['id'])
+    built_in = choose(h, screen='phone')['defaults']
+    assert built_in['phone_set'] and built_in['phone_view_id'] is None and built_in['personal_view_id'] == other['id']
+    cleared = choose(h, clear=True, screen='phone')['defaults']
+    assert not cleared['phone_set'] and cleared['personal_set']  # the phone now opens with the department default
+    choose(h, phone['id'], screen='phone')
+    h.command('staff', 'table_view.delete', {}, phone['id'], phone['revision'])
+    assert listing(h)['defaults'] == {'department_view_id': shared['id'], 'department_set': True,
+                                      'personal_view_id': other['id'], 'personal_set': True,
+                                      'phone_view_id': None, 'phone_set': False}
+    assert listing(h, role='admin')['defaults']['phone_set'] is False
+    choose(h, shared['id'], scope='department', screen='phone', role='coordinator', status=422)

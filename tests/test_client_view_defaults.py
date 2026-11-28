@@ -51,3 +51,29 @@ def test_a_saved_view_shown_before_the_saved_views_load_is_the_one_set_as_defaul
     out = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == [['table_view.set_default', {'table_key': 'k', 'scope': 'personal', 'view_id': 'v1'}]]
+
+
+@pytest.mark.parametrize('phone', [False, True])
+def test_a_person_s_own_default_is_the_one_for_the_screen_size_in_use(client_modules, phone):
+    """A person keeps one default per list for a desktop and one for a phone (the one phone breakpoint, dom.ts
+    phoneQuery): the list opens with the one for the size in use (defaultView reads ownDefault), and Set as my default
+    sets that one only."""
+    script = (f"globalThis.matchMedia=()=>({{matches:{json.dumps(phone)},addEventListener(){{}},removeEventListener(){{}}}});"
+              f"const b=await import({json.dumps((client_modules / 'bulk.js').as_uri())});"
+              "b.setBulkContext({conditionFields:()=>[],choices:()=>undefined,permits:()=>true,labelOf:(_,id)=>id});"
+              f"const t=await import({json.dumps((client_modules / 'table_view.js').as_uri())});"
+              "globalThis.document={cookie:'rota_csrf=fictional'};globalThis.window=Object.assign(new EventTarget(),{setTimeout,clearTimeout});"
+              "const kept=new Map();globalThis.sessionStorage={getItem:k=>kept.get(k)??null,setItem:(k,v)=>kept.set(k,String(v)),removeItem:k=>kept.delete(k)};"
+              "const sent=[];globalThis.fetch=async(_,o)=>{sent.push(JSON.parse(o.body));"
+              "return new Response(JSON.stringify({defaults:{}}),{status:200,headers:{'Content-Type':'application/json'}});};"
+              "const d={personal_set:true,personal_view_id:'desk',phone_set:true,phone_view_id:'hand',department_set:true,department_view_id:'dept'};"
+              "const own=t.ownDefault(d);"
+              "const views=['desk','hand','dept'].map(id=>({id,revision:1,name:id,definition:{},scope:'personal'}));"
+              "const a=t.viewActions({key:'k',noun:'rows',saved:views,activeId:'dept',current:()=>({}),dirty:()=>false,done:()=>{},builtins:[]});"
+              "await a.makeMine().catch(()=>{});"
+              "console.log(JSON.stringify([own,sent.map(c=>c.payload)]));process.exit(0);")
+    out = subprocess.run(['node', '--input-type=module', '-e', script], capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    own, sent = json.loads(out.stdout)
+    assert own == ({'screen': 'phone', 'set': True, 'id': 'hand'} if phone else {'screen': 'desktop', 'set': True, 'id': 'desk'})
+    assert sent == [{'table_key': 'k', 'scope': 'personal', **({'screen': 'phone'} if phone else {}), 'view_id': 'dept'}]

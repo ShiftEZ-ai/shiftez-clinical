@@ -709,5 +709,10 @@
     "class": "additive",
     "sha256": "a3e70259840574baba7c0b7ee498e1a1aeac2e299feb06927434c44267c172cc",
     "review": "Adds partial unique indexes for active calendar feeds and live validation and generation jobs. Read-only preflight checks retained duplicates and the migration preserves existing rows."
+  },
+  "0159_phone_view_default": {
+    "class": "additive",
+    "sha256": "be31b7fa77a17d2cec777f052aee57330dd157fca342fc013447e9e6cc5ad5c1",
+    "review": "Adds the phone default choice columns to saved-view defaults, nullable or server-defaulted, without updating any existing records."
   }
 }
