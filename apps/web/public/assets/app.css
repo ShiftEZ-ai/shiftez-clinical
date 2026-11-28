@@ -157,9 +157,9 @@ button:disabled,button.is-disabled,button[aria-disabled=true],:is(select,input)[
 /* The page's main area takes focus after a route change (so screen readers start there); it is a landmark, not a control: no ring. */
 #main[tabindex="-1"]:focus{outline:none}
 .popover[tabindex="-1"]:focus{outline:none}  /* a panel holding the focus only so Escape returns it (dom.ts popover) */
-/* Controls that fill a strip which clips or scrolls (tabs/panels, section lists, the sidebar, table headers, calendar days, the
+/* Controls that fill a strip which clips or scrolls (tabs/panels, section lists, the sidebar, table headers, calendar days and row heads, the
    footer): the ring is drawn inside, so the strip never cuts it (tests/test_browser_overflow.py measures every ring). */
-:is(.rule-tabs [role=tab],.rule-detail-panels>[role=tabpanel],.config-nav .button,.nav button,th .dt-sort,.wk-day,.wk-corner,.pg-head>.pg-name,.wk-scroller,.week-scroller,.app-footer .health-pill,.app-footer .footer-key,.app-footer .link-button,.view-legend .pill-more,.auto-progress .auto-stage,.auto-outcome):focus-visible{outline-offset:-2px}
+:is(.rule-tabs [role=tab],.rule-detail-panels>[role=tabpanel],.config-nav .button,.nav button,th .dt-sort,.wk-day,.wk-corner,.wk-rowhead,.pg-head>.pg-name,.wk-scroller,.week-scroller,.app-footer .health-pill,.app-footer .footer-key,.app-footer .link-button,.view-legend .pill-more,.auto-progress .auto-stage,.auto-outcome):focus-visible{outline-offset:-2px}
 /* The one control look (.field's) for every field, also those built outside field() (search boxes, inline editors,
    steppers): zero specificity, so a component's own class still sets its size; nothing is left in the browser's look. */
 :where(input:not([type=checkbox],[type=radio],[type=range],[type=file],[type=color],[type=hidden],[type=submit],[type=button],[type=reset]),select,textarea){padding:5px 10px;border:1px solid var(--control-line);border-radius:var(--r);background:var(--surface);color:var(--ink)}
