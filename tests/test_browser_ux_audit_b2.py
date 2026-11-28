@@ -10,7 +10,7 @@ from playwright.sync_api import expect
 from apps.api import models as m
 from apps.api.db import transaction
 
-from .test_browser import browser, live_server, navigate, open_rota, open_config, sign_in, reconnect, wait_held, wait_until  # noqa: F401
+from .test_browser import browser, live_server, navigate, open_rota, open_config, sign_in, holding, reconnect, wait_held, wait_until  # noqa: F401
 from .test_browser_rule_catalogue import flag
 from .test_leave_types import selected
 
@@ -72,22 +72,35 @@ def test_locking_is_one_click_with_undo_and_shows_where_it_is(browser, live_serv
         page.locator('.wk-check').first.check()
         expect(bar).not_to_contain_text('open')
         # A refresh already in flight when More opens replaces its bar. The same selected session stays actionable.
-        held = []
         draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
-        page.route(draft, lambda route: held.append(route))
         more = bar.get_by_role('button', name=re.compile('More'))
         # The focus has moved from the tick to More, as a keyboard user's does: a pulse waits while a field has focus
         # (app.ts readerBusy), so the refresh starts only now.
         more.focus()
-        reconnect(page)
-        wait_held(page, held)
-        before_menu = bar.get_attribute('data-bar')
-        more.click()
-        item = page.get_by_role('menuitem', name='Lock', exact=True)
-        expect(item).to_be_visible()
-        for route in held:
-            route.continue_()
-        page.unroute(draft)
+        expect(more).to_be_focused()
+        # Pause the fallback poll so it cannot supply the pulse that the online event owes.
+        page.clock.pause_at(page.evaluate("new Date(Date.now()+1000).toISOString()"))
+        with holding(page) as held:
+            held.hold(draft)
+            reconnect(page)
+            wait_held(page, held[draft])
+            # Reconnect again while the first pulse still owns the refresh. Its draft read started before this outage.
+            pulse = '**/api/pulse'
+            held.hold(pulse)
+            reconnect(page)
+            held.release(draft)
+            wait_held(page, held[pulse])
+            page.clock.resume()
+            held.hold(draft)
+            more.focus()
+            expect(more).to_be_focused()
+            held.release(pulse)
+            wait_held(page, held[draft])
+            before_menu = bar.get_attribute('data-bar')
+            more.click()
+            item = page.get_by_role('menuitem', name='Lock', exact=True)
+            expect(item).to_be_visible()
+            held.release(draft)
         expect(bar).not_to_have_attribute('data-bar', before_menu)
         expect(more).to_have_attribute('aria-expanded', 'true')
         # The open menu sits above messages: a message left by the steps above never takes the click meant for Lock.

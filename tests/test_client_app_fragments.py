@@ -69,8 +69,9 @@ def test_a_live_update_waits_while_your_command_is_on_its_way_then_the_owed_redr
     tick = cut(source, r'\n(window\.setInterval\(\(\) => \{\n\s*if \(!me \|\| document\.visibilityState.*?\}, 10_000\);)\n')
     got = node(f"const {{withoutOwnCheck}}=await import({json.dumps((client_modules / 'edit_delta.js').as_uri())});" + r"""
 let me={identity_id:'i',roles:['coordinator'],organisation:{input_revision:1,availability_revision:1}};
-let polling=false,deferredPulse=null,seenActivity=5,catalogues={},inboxPulseKey='',inboxPending=null,burst=null,burstTimer=0,lastPoll=0,ownSaves={activity:NaN,n:0},plannerMemo=null;
-const view='people',routeParts=[],opsBusy=false,connected=true,redrawOwed=false,refreshSkipped=false,workspaceId='',
+let polling=false,reconnectQueued=false,connectionInterrupted=false,redrawOwed=false,
+  deferredPulse=null,seenActivity=5,catalogues={},inboxPulseKey='',inboxPending=null,burst=null,burstTimer=0,lastPoll=0,ownSaves={activity:NaN,n:0},plannerMemo=null;
+const view='people',routeParts=[],opsBusy=false,connected=true,refreshSkipped=false,workspaceId='',
   autoChecking=false,checkJob=null,autoCheckKey='',renderSerial=0,stream={},streamResume=0,streamSeen=Date.now(),
   checkSettled=new Map(),BADGE_SOURCES={},paths={people:{live:['people']},home:{live:[]},schedule:{live:['workspace']}};
 let saving=true;const savingNow=()=>saving,editingNow=()=>false;  // your command is on its way; nothing else is open

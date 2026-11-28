@@ -8837,7 +8837,7 @@ function selfApprovedPanel(){
     void load();}});
 }
 
-let polling=false;
+let polling=false,reconnectQueued=false,connectionInterrupted=false;
 window.addEventListener('session-expired',e=>{const code=(e as CustomEvent).detail?.code;
   // Revoked access starts over; an ended session keeps the page for the same account (maintenance).
   if(me&&!signingOutNow())void showLogin(SIGNED_OUT[code]||'Your session ended. Sign in to continue where you left off.',code==='ACCESS_REVOKED'?'':accountKey(me));});
@@ -8878,9 +8878,9 @@ function newVersion(later=()=>{}){
   const bar=el('div',{class:'update-bar',role:'status'},icon('sparkle'),el('span',{},el('strong',{},`A new version of ${brand().short_name} is ready.`),unsaved?' Reloading loses the entries not yet saved.':''),reload,dismiss);
   document.body.append(bar);
 }
-window.addEventListener('online',()=>{if(me)void onPulse();});
+window.addEventListener('online',()=>{if(me){reconnectQueued=true;void onPulse();}});
 // Offline: the live stream stops too (a late message must not say Connected); the 10-second check reopens it.
-window.addEventListener('offline',()=>{stream?.close();stream=null;showConnection(false);});
+window.addEventListener('offline',()=>{connectionInterrupted=true;reconnectQueued=false;stream?.close();stream=null;showConnection(false);});
 // Draft edits save straight away; their toast offers Undo (see the undo registry in api.ts). "Undo last edit" does the same.
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
 const NO_UNDO='Nothing left to undo';
@@ -9015,8 +9015,12 @@ function liveNeeds(c:LiveChange){
 }
 async function onPulse(given?:Row){
   if(!me||polling)return;polling=true;
+  const reconnecting=reconnectQueued&&connectionInterrupted;reconnectQueued=false;
+  if(reconnecting)connectionInterrupted=false;
   if(given&&given===deferredPulse)deferredPulse=null;  // replayed now; a branch below keeps it again if it must wait
   try{const pulse:Row=given||await background<Row>('/api/pulse');if(!given)noteDriftInputs(pulse.changes,pulse.input_revision);
+    // An older refresh may have marked the connection healthy again. The reconnect still owes a fresh draw.
+    if(reconnecting)redrawOwed=true;
     if(seenActivity!==null&&pulse.activity<seenActivity)return;
     noticeNewVersion(pulse.build);if(typeof pulse.unread==='number')void inboxPulse(pulse.unread);const key=JSON.stringify([pulse.input_revision,pulse.availability_revision,pulse.roles]);
     // Someone else moved a rota, swap or request: refresh once (the first poll only records the starting point).
@@ -9106,7 +9110,7 @@ async function onPulse(given?:Row){
     // Do not consume a changed pulse while a form is open: refresh after it closes.
     showConnection(true);
   }catch(e){if(sessionChanged(e))return;showConnection(false,e);}
-  finally{polling=false;if(burst&&!burstTimer)flushPulse();}
+  finally{polling=false;if(reconnectQueued)void onPulse();else if(burst&&!burstTimer)flushPulse();}
 }
 // Installable app: the worker keeps only the app's own files for starting offline and shows push alerts. An alert's tap
 // hands its address here: an in-app address goes through the same unsaved-changes guard as any link.
