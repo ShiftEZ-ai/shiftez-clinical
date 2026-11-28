@@ -1,6 +1,11 @@
 """Configured fill stages over existing staffing and quota opportunities."""
 from collections import defaultdict
+from datetime import datetime, timedelta
 from math import gcd
+from typing import NamedTuple
+from zoneinfo import ZoneInfo
+
+from .time import aware
 
 
 STAGE_ORDER = ('mandatory_cover', 'mandatory_quota', 'desired')
@@ -43,8 +48,6 @@ def allocation_order_rules(policies):
 def allocation_tier(data, shift, person_id, supervisor_id=None, *, rules=None):
     """A matching place contributes its position once. The first matching place wins."""
     from .generation import allocation_policy_matches, allocation_supervisor_present, preferred_supervisors
-    from .time import aware
-
     ranks = []
     present = None
     for policy in allocation_order_rules(data['policies']) if rules is None else rules:
@@ -61,6 +64,70 @@ def allocation_tier(data, shift, person_id, supervisor_id=None, *, rules=None):
                 continue
         ranks.append(rule['session_priority'])
     return max(ranks, default=0)
+
+
+class OrderedPlaces(NamedTuple):
+    shift_id: str
+    start: datetime
+    end: datetime
+    policy: dict
+    people: frozenset[str]
+    required: int
+
+
+def mandatory_order_groups(data, shifts, focus):
+    """Requested places by rule, local week, location and descending rank."""
+    from .generation import allocation_policy_matches
+    from .validation import effective_type_definition, person_active_for_interval, session_matches
+
+    policies = [p for p in allocation_order_rules(data['policies']) if p['definition']['severity'] == 'mandatory']
+    if not policies:
+        return ()
+    check = data.get('_check_budget', lambda: None)
+    zone = ZoneInfo(data['organisation']['timezone'])
+    week_start = data['organisation']['week_start']
+
+    def bucket(shift):
+        day = aware(shift['start']).astimezone(zone).date()
+        return day - timedelta(days=(day.weekday() - week_start) % 7), shift['location_id']
+
+    active_buckets = {bucket(s) for s in shifts if s['id'] in focus}
+    groups = defaultdict(lambda: defaultdict(list))
+    for shift in sorted(shifts, key=lambda s: (s['start'], s['id'])):
+        check()
+        where = bucket(shift)
+        if where not in active_buckets:
+            continue
+        start, end = aware(shift['start']), aware(shift['end'])
+        definition = effective_type_definition(data, shift)
+        places = [r for r in definition.get('requirements', ()) if r['minimum'] or r.get('target')]
+        matching = [p for p in policies if session_matches(data, p['definition']['scope'], shift)]
+        if not places or not matching:
+            continue
+        winners = {}
+        active_people = [pid for pid in sorted(data['people']) if person_active_for_interval(data, pid, start, end)]
+        for policy in matching:
+            rank = policy['definition']['rule']['session_priority']
+            for pid in active_people:
+                check()
+                key = policy['id'], pid
+                earlier = winners.get(key)
+                if (earlier is None or rank > earlier[0]) and allocation_policy_matches(data, policy, shift, pid):
+                    winners[key] = rank, policy
+        people = defaultdict(set)
+        sources = {}
+        for (rule_id, pid), (rank, policy) in winners.items():
+            people[rule_id, rank].add(pid)
+            sources[rule_id, rank] = policy
+        for (rule_id, rank), members in people.items():
+            for requirement in places:
+                a = start + timedelta(minutes=requirement.get('from_minute', 0))
+                b = end if requirement.get('to_minute') is None else start + timedelta(minutes=requirement['to_minute'])
+                requested = max(requirement['minimum'], requirement.get('target') or 0)
+                groups[rule_id, where][rank].append(
+                    OrderedPlaces(shift['id'], a, b, sources[rule_id, rank], frozenset(members), min(requested, len(members))))
+    return [tuple(group[rank] for rank in sorted(group, reverse=True)) for group in groups.values()
+            if len(group) > 1 and any(row.shift_id in focus for rows in group.values() for row in rows)]
 
 
 class FillPriority:

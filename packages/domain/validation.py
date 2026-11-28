@@ -2024,6 +2024,28 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
         add("TIME_OVERLAP", f"{' and '.join(names)} overlap; cancel one occurrence",
             conflict['shift_id'], conflict['person_id'], aware(conflict['start']), aware(conflict['end']),
             extra=detail)
+    from .fill_priority import mandatory_order_groups
+    ordered_groups = trial_cache.get('mandatory_order_groups') if trial_cache is not None else None
+    if ordered_groups is None:
+        ordered_groups = mandatory_order_groups(data, shifts, focus)
+        if trial_cache is not None:
+            trial_cache['mandatory_order_groups'] = ordered_groups
+    for tiers in ordered_groups:
+        earlier_gap = None
+        for rows in tiers:
+            tier_gap = None
+            for row in rows:
+                members = {p['person_id'] for p in shifts_by_id[row.shift_id]['participants']} & row.people
+                filled = sum(any(a <= row.start and row.end <= b for a, b in presence[row.shift_id, pid])
+                             for pid in members)
+                if filled and earlier_gap and (row.shift_id in focus or earlier_gap.shift_id in focus):
+                    anchor = row if row.shift_id in focus else earlier_gap
+                    add('ALLOCATION_ORDER', 'Fill the earlier allocation place before using this later place.',
+                        anchor.shift_id, a=anchor.start, b=anchor.end, rule=row.policy,
+                        extra={'earlier_shift_id': earlier_gap.shift_id, 'later_shift_id': row.shift_id})
+                if filled < row.required and (tier_gap is None or row.shift_id in focus):
+                    tier_gap = row
+            earlier_gap = earlier_gap or tier_gap
     non_session_found = len(findings)
 
     def coverage_people(shift, a, b):

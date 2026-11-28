@@ -1,0 +1,69 @@
+{
+  "id": "A-MANDATORY-ORDER-01",
+  "revision": 1,
+  "title": "Mandatory order resets by week and place",
+  "intent": "A later ranked duty cannot take its requested place while an earlier one is empty in the same week and room.",
+  "pressure": "The only eligible person is away for the earlier duty and can otherwise fill each later duty.",
+  "covers": {
+    "kind.allocation_preference.session_priority": ["validator", "counterfactual", "seed_robustness"]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Weekly order witness rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "Weekly order witness service", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "Weekly order witness room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "Weekly order witness room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 2}, "reason": "Synthetic scenario"}},
+    {"key": "peer_room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "Weekly order witness peer room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 2}, "reason": "Synthetic scenario"}},
+    {"key": "person", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Weekly order witness participant", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "member", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$person", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "eligible", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$person", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "Weekly order witness rota", "starts_on": "2027-01-04", "ends_on": "2027-01-13"}},
+    {"key": "early_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "Weekly order early duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 0, "target": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
+    {"key": "late_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "Weekly order late duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 0, "target": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
+    {"key": "early", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$early_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
+    {"key": "late", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$late_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}},
+    {"key": "other_room", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$late_type", "location_id": "$peer_room", "service_ids": ["$service"], "start": "2027-01-06T08:00:00+03:00", "end": "2027-01-06T12:00:00+03:00", "participants": []}},
+    {"key": "other_week", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$late_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-12T08:00:00+03:00", "end": "2027-01-12T12:00:00+03:00", "participants": []}},
+    {"key": "leave", "role": "coordinator", "kind": "availability.record",
+     "payload": {"person_id": "$person", "kind": "recorded_leave", "start": "2027-01-04T00:00:00+03:00", "end": "2027-01-05T00:00:00+03:00", "private_reason": "Synthetic leave"}},
+    {"key": "order", "role": "coordinator", "kind": "rule.propose",
+     "payload": {"catalogue_id": "allocation_order", "catalogue_version": 2, "reason": "Synthetic scenario",
+      "lines": [
+        {"id": "00000000-0000-4000-8000-000000009281", "starts_on": "2027-01-01",
+         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$early_type"]}]},
+         "numbers": {"session_priority": {"value": 20, "level": "mandatory"}}},
+        {"id": "00000000-0000-4000-8000-000000009282", "starts_on": "2027-01-01",
+         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$late_type"]}]},
+         "numbers": {"session_priority": {"value": 10, "level": "mandatory"}}},
+        {"id": "00000000-0000-4000-8000-000000009283", "starts_on": "2027-01-01",
+         "who": {"conditions": [{"field": "person_ids", "values": ["$person"]}]},
+         "where": {"conditions": [{"field": "assignment_type_ids", "values": ["$late_type"]}]},
+         "numbers": {"session_priority": {"value": 10, "level": "medium"}}}
+      ]}},
+    {"key": "order_active", "role": "approver", "kind": "policy.activate", "target": "$order", "revision": "$order.revision",
+     "payload": {"reason": "Independent synthetic approval", "acknowledge_unresolved": true}}
+  ],
+  "inputs": {
+    "generation_options": {"mode": "rebalance", "shortlist_width": 0}
+  },
+  "expect": {
+    "binding_rules": ["order"],
+    "validator": {"earlier": "early", "later": "late", "code": "ALLOCATION_ORDER"},
+    "counterfactual": {"strict": ["other_room", "other_week"], "with_exception": ["late", "other_room", "other_week"]},
+    "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
+  }
+}

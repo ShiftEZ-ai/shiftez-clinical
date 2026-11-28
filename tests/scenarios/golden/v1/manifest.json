@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "revision": 10,
+  "revision": 11,
   "timezone": "Asia/Riyadh",
   "seeds": [
     11,
@@ -23,6 +23,7 @@
     "atlas/A-FAIR-01.json",
     "atlas/A-SPREAD-01.json",
     "atlas/A-CAPACITY-01.json",
-    "atlas/A-ALLOCATION-ORDER-01.json"
+    "atlas/A-ALLOCATION-ORDER-01.json",
+    "atlas/A-MANDATORY-ORDER-01.json"
   ]
 }

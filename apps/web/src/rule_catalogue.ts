@@ -1283,7 +1283,8 @@ function strength(level:string|null|undefined):string{
 /** Each number keeps its own strength. A target whose slots are advisory can never become mandatory. */
 const mandatoryNumber=(e:RuleCatalogueEntry,k:string)=>e.levels.includes('mandatory')&&!(e.numbers[k]||[]).every(s=>s.advisory);
 /** A blank strength with no broader line to take it from: what the server applies (rule_lines._levels' fallback). */
-const fallbackLevel=(e:RuleCatalogueEntry,k:string)=>mandatoryNumber(e,k)?'mandatory':'medium';
+const fallbackLevel=(e:RuleCatalogueEntry,k:string)=>e.id==='allocation_order'?
+  e.default_line.numbers?.[k]?.level??'medium':mandatoryNumber(e,k)?'mandatory':'medium';
 /** A number's strength as it applies: its own, else the broader line's, else the fallback (null: the broader line's is blank too). */
 function strengthOf(e:RuleCatalogueEntry,k:string,line:RuleLine,inh?:Inherited):string|null{
   return displayedStrength(line,k,line.numbers?.[k]?.level??(inh?.[k]?inh[k].level:fallbackLevel(e,k))).level;

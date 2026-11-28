@@ -515,7 +515,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                  or keep_assignment(data, s, p)]} for s in data['shifts']]}
     keep_all = all(s['participants'] == kept['participants'] for s, kept in zip(data['shifts'], protected['shifts']))
     fillable = {'COVERAGE_GAP', 'CAPABILITY_GAP', 'DISTINCT_PERSON_GAP', 'SCOPED_COVERAGE_GAP', 'QUOTA_BELOW_MINIMUM',
-                'SUPERVISION_PAIRING', 'SUPERVISION_GAP', 'LEAD_GAP'}
+                'SUPERVISION_PAIRING', 'SUPERVISION_GAP', 'LEAD_GAP', 'ALLOCATION_ORDER'}
     tolerated, gap_before = set(), {}
     in_scope, issues_where, kept_finding = _proposal_checks(data, selected, tolerated, gap_before, editable=editable)
     validation_started = time.monotonic()
@@ -936,6 +936,27 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
         return counts
 
     strict_constraints = set()
+    from .fill_priority import mandatory_order_groups
+    for tiers in mandatory_order_groups({**data, '_check_budget': control.check}, shifts, focus):
+        complete = None
+        for index, rows in enumerate(tiers):
+            tier_complete = [] if complete is None else [complete]
+            for row in rows:
+                choices_at_place = [choices[row.shift_id, pid] for pid in present_at(
+                    shift_lookup[row.shift_id], row.start, row.end) if pid in row.people]
+                total = sum(choices_at_place)
+                if complete is not None and choices_at_place:
+                    name = policy_name(row.policy, data=data, session_ids=[row.shift_id], start=row.start, end=row.end)
+                    constraint = model.add(total == 0).only_enforce_if(complete.Not()).with_name(name)
+                    strict_constraints.add(constraint.index)
+                if index + 1 < len(tiers):
+                    filled = model.new_bool_var('ordered_place_filled')
+                    model.add(total >= row.required).only_enforce_if(filled)
+                    model.add(total < row.required).only_enforce_if(filled.Not())
+                    tier_complete.append(filled)
+            if index + 1 < len(tiers):
+                complete = model.new_bool_var('earlier_places_filled')
+                model.add_min_equality(complete, tier_complete)
 
     def limit(expression, bound, policy, capacity, minutes, kept_gap=False, editable_cover=False, subject=None,
               people=(), sessions=(), start=None, end=None, record_objective=True):

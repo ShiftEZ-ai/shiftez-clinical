@@ -303,6 +303,38 @@ def check_allocation_order(data, ids, spec):
     return {'assertions': {'invariance', 'counterfactual', 'seed_robustness'}, 'bindings': {'first': bindings}}
 
 
+def check_mandatory_order(data, ids, spec):
+    expected = spec['expect']
+    witness = expected['validator']
+    strict = copy.deepcopy(data)
+    order = next(p for p in strict['policies'] if p['id'] == ids['order'])
+    order['definition']['rule']['lines'] = order['definition']['rule']['lines'][:2]
+
+    def order_findings(rota):
+        return [f for f in finding_observations(evaluate(rota)) if f['code'] == witness['code']]
+
+    assigned_later = copy.deepcopy(strict)
+    late = ids[witness['later']]
+    place(assigned_later, late, [ids['person']])
+    [breach] = order_findings(assigned_later)
+    assert (breach['severity'], breach['rule_id'], breach['shift_id']) == ('error', ids['order'], late)
+    assert breach['detail']['earlier_shift_id'] == ids[witness['earlier']]
+    place(assigned_later, ids[witness['earlier']], [ids['person']])
+    assert not order_findings(assigned_later)
+
+    bound = 0
+    for seed in expected['seed_robustness']['seeds']:
+        results = {}
+        for key, rota in (('strict', strict), ('with_exception', data)):
+            result = solve(rota, seed)
+            feasible(rota, result)
+            assigned = {row['shift_id'] for row in result['additions'] if row['participant']['person_id'] == ids['person']}
+            assert assigned == {ids[key] for key in expected['counterfactual'][key]}, (key, result)
+            results[key] = assigned
+        bound += len(results['with_exception'] - results['strict'])
+    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'order': bound}}
+
+
 def check_weekly_limit(data, ids, spec):
     expected = spec['expect']
     sid, first, second, rid = ids['s2'], ids['p0'], ids['p1'], ids['workload']
@@ -353,5 +385,6 @@ def check_scenario(data, ids, spec):
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
             'A-ALLOCATION-ORDER-01': check_allocation_order,
+            'A-MANDATORY-ORDER-01': check_mandatory_order,
             'A-WEEKLY-LIMIT-01': check_weekly_limit,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

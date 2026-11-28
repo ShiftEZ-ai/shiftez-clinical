@@ -1134,7 +1134,8 @@ def outranking_by_number(policy):
             if tiers[n] > tiers[w]:
                 n, w = w, n
             level, higher = levels[n], levels[w]
-            if level is None or higher is None or (level == 'mandatory') == (higher == 'mandatory'):
+            order_place = entry['id'] == 'allocation_order' and k == 'session_priority'
+            if order_place or level is None or higher is None or (level == 'mandatory') == (higher == 'mandatory'):
                 out.setdefault((n, k), []).append(w)
     return {key: sorted(winners) for key, winners in sorted(out.items())}
 
@@ -1370,6 +1371,8 @@ def _levels(lines, n, k, broader, entry, slot, sources, keys, groups):
     if number.get('level', 'mandatory') is not None:
         return [(number.get('level', 'mandatory'), None)]
     fallback = 'medium' if slot['advisory'] or 'mandatory' not in entry['levels'] else 'mandatory'
+    if entry['id'] == 'allocation_order' and k == 'session_priority':
+        fallback = entry['default_line']['numbers'][k]['level']
     mine = sources[keys[n]]
     group_key = (id(broader.get((n, k))), mine['starts_on'], mine['ends_on'])
     if group_key not in groups:
