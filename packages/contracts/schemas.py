@@ -3047,6 +3047,10 @@ def quota_target_amount(metric, amount):
     return amount
 
 
+QUOTA_AMOUNT_MAX = 100_000
+OvertimeDutyCap = Annotated[int, Field(ge=0, le=QUOTA_AMOUNT_MAX, strict=True)]
+
+
 class BlockQuota(Schema):
     """A department-owned block commitment or recurring calendar limit, never a payroll entitlement."""
     kind: Literal["block_quota"]
@@ -3056,7 +3060,7 @@ class BlockQuota(Schema):
     metric: Literal["duties", "session_units", "scheduled_hours", "reserved_hours", "workload_credit", "training_credit", "lead_turns"]
     # range: at least `amount` and at most `maximum_amount` (one rule; checked as a minimum and a maximum).
     comparison: Literal["maximum", "minimum", "target", "range"]
-    amount: float = Field(ge=0, le=100000)
+    amount: float = Field(ge=0, le=QUOTA_AMOUNT_MAX)
     maximum_amount: float | None = Field(default=None, ge=0, le=100000)
     # An optional advisory aim within the limits ("at least 6, at most 8, aim for 7"): scored, never a constraint.
     target_amount: float | None = Field(default=None, ge=0, le=100000)
@@ -5959,6 +5963,7 @@ class SchedulingFactInput(Decision):
     catalogue_id: Annotated[str, StringConstraints(pattern=r'^[a-z_]{1,40}$')]
     catalogue_version: Literal[1, 2] = 2
     line: RuleLine = Field(json_schema_extra={"bulk": True})
+    overtime_duty_cap: OvertimeDutyCap | None = None
     goal_ref: RuleSourceReference | None = None
     on: bool = Field(default=True, json_schema_extra={"bulk": True})
     replaces_id: ID | None = None
@@ -5984,6 +5989,20 @@ class SchedulingFactInput(Decision):
         validate_catalogue_settings(catalogue_entry(self.catalogue_id, version), self.line.settings)
         if self.catalogue_id == 'fair_share' and self.goal_ref is None:
             raise ValueError('A Fair-share personal target needs its exact source goal')
+        if self.overtime_duty_cap is not None:
+            if self.kind != 'overtime_offer' or 'apply' not in self.line.numbers:
+                raise ValueError('An overtime duty cap belongs to an overtime offer')
+            if self.line.starts_on is None or self.line.ends_on is None:
+                raise ValueError('An overtime duty cap needs a start date and a last day')
+            BlockQuota(kind='block_quota', starts_on=self.line.starts_on, ends_on=self.line.ends_on,
+                       metric='duties', comparison='maximum', amount=self.overtime_duty_cap, overtime='only')
+            nodes = [tree for tree in (self.line.who, self.line.where) if tree is not None]
+            while nodes:
+                node = nodes.pop()
+                if node.count == 'each':
+                    raise ValueError('An overtime duty cap counts all matching duties together')
+                if isinstance(node, Conditions):
+                    nodes.extend(node.conditions)
         if self.kind == 'overtime_offer' and any(n.level == 'mandatory' for n in self.line.numbers.values()):
             raise ValueError('Overtime offers are advisory and grant no safety exemption')
         if self.kind == 'protected_time' and set(self.line.numbers) != {'apply'}:
@@ -6026,6 +6045,7 @@ class SchedulingFactApproval(Schema):
     end_time: Clock | None = Field(description='Fact end time; RuleLine defaults to 24:00.')
     weekdays: list[int] = Field(description='Fact weekdays using Monday=0 through Sunday=6.')
     numbers: dict[str, LineNumber] = Field(description='Fact line numbers keyed by catalogue number.')
+    overtime_duty_cap: OvertimeDutyCap | None = None
     measure: WorkloadMeasure | None = Field(default=None, description='Resolved workload measure from the RuleLine.')
     period: WorkloadPeriod | None = Field(default=None, description='Resolved workload counting period from the RuleLine.')
     goal_measure: BalanceGoalMeasure | None = Field(default=None,

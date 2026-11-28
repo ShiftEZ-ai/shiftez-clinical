@@ -14,7 +14,7 @@ import {dockPanel,rowMark,type Dock,type PanelPosition} from './side_panel.js';
 import {editRoles,type BulkAction} from './bulk.js';
 import {runBulk,openChange} from './bulk_change.js';
 import {availabilityFields,availabilityEditForm,calendarProtectionPanel,peopleChoices,catalogueEntryOf,REQUEST_FORM_KINDS,type Context} from './forms.js';
-import {daysText,numbersText,numberLabel,noNumberText,amountWords} from './rule_catalogue.js';
+import {daysText,overtimeCapWords,numbersText,numberLabel,noNumberText,amountWords} from './rule_catalogue.js';
 import {wishData,wishFields,wishesPanel,periodName,oneOffWish,wishKindLabel,wishWhenParts} from './wishes.js';
 import {swapActions,swapNext,swapOptions,offerFields} from './governance.js';
 import {addDays} from './planner_logic.js';
@@ -91,7 +91,10 @@ function factNumbers(r:Row):string{
 }
 /** A person fact's details from its structured fields: an offer's or protection's days and times (the department's week
  *  order), a quota's or target's numbers; its dates are the Dates column's, its calendar entry the Person column's. */
-export const factWords=(r:Row)=>(['overtime_offer','protected_time'].includes(r.kind)?[daysText({weekdays:r.weekdays,start_time:r.start_time,end_time:r.end_time})]:[factNumbers(r)]).filter(Boolean);
+export const factWords=(r:Row)=>(['overtime_offer','protected_time'].includes(r.kind)
+  ?[daysText({weekdays:r.weekdays,start_time:r.start_time,end_time:r.end_time}),
+    r.kind==='overtime_offer'?overtimeCapWords(r.overtime_duty_cap)||'No offer cap':'']
+  :[factNumbers(r)]).filter(Boolean);
 /** A person fact's requested days: ends_on is exclusive, so the last day shown is the day before it. */
 function factWhenParts(r:Row):string[]{
   const last=r.ends_on?addDays(r.ends_on,-1):'';

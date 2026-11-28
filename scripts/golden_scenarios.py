@@ -160,7 +160,8 @@ def compile_scenario(command, spec, *, read, committed, work=None):
         if 'workspace' in reply:
             workspace = reply['workspace']
             records['workspace'] = workspace
-        record = (reply.get('record') or
+        decided_record = reply.get('record') or reply.get('fact')
+        record = (decided_record or
                   ({'id': reply['shift_id']} if 'shift_id' in reply else None) or
                   reply.get('workspace'))
         if record:
@@ -176,8 +177,8 @@ def compile_scenario(command, spec, *, read, committed, work=None):
                 saved = item['results'][0]['record']
                 records[name] = saved
                 ids[name] = saved['id']
-        if row.get('target') and 'record' in reply:
-            records[row['target'][1:]] = reply['record']
+        if row.get('target') and decided_record:
+            records[row['target'][1:]] = decided_record
     digest = hashlib.sha256(json.dumps(spec, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     return {'workspace': workspace, 'ids': ids, 'records': records, 'input_sha256': digest,
             'scenario_id': spec['id'], 'revision': spec['revision'],

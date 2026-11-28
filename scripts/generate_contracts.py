@@ -309,6 +309,7 @@ def render():
     content += "export const ANY_LINE_SETTINGS: readonly string[] = " + json.dumps(sorted(s.ANY_LINE_SETTINGS)) + ";\n"
     # The one number each rule kind has: [field, unit, which way is stricter] (packages/domain/rule_map.py NUMBERS).
     from packages.domain.rule_map import NUMBERS
+    content += "export const QUOTA_AMOUNT_MAX = " + str(s.QUOTA_AMOUNT_MAX) + " as const;\n"
     content += ("export const RULE_NUMBERS: Readonly<Record<string, readonly [string, string | null, string | null]>> = "
                 + json.dumps(NUMBERS, sort_keys=True) + ";\n")
     # The rule catalogue: one entry per idea, its numbers' slots and settings.

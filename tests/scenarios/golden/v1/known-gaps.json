@@ -102,7 +102,6 @@
     "kind.block_quota.ends_on",
     "kind.block_quota.maximum_amount",
     "kind.block_quota.metric",
-    "kind.block_quota.overtime",
     "kind.block_quota.participation",
     "kind.block_quota.prorate_department_days",
     "kind.block_quota.prorate_partial_windows",

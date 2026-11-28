@@ -101,6 +101,18 @@ def fact_policy(row):
                            'exception_allowed': bool(data.get('exception_allowed', False))}}
 
 
+def overtime_offer_quota(fact, cap):
+    """One mandatory overtime-only count over the offer's scope, independent of its permission strength."""
+    policy = fact_policy(fact)
+    [line] = policy['definition']['rule']['lines']
+    body = {'kind': 'block_quota', 'metric': 'duties', 'comparison': 'maximum', 'amount': cap,
+            'overtime': 'only', 'starts_on': policy['starts_on'], 'ends_on': policy['ends_on']}
+    definition = _edited_copy({'scope': scope_of(line), 'severity': 'mandatory', 'exception_allowed': False}, body)
+    return {**policy, 'id': str(uuid.uuid5(uuid.NAMESPACE_URL, f"overtime-offer-cap:{fact['id']}")),
+            'kind': 'block_quota', 'name': 'Overtime offer cap', 'definition': definition,
+            '_overtime_cap_fact_id': fact['id'], 'template_line': {'id': line['id'], 'line': 0, 'slot': 'max'}}
+
+
 def _line_identity(line, *, person=None):
     """Canonical identity for one obligation line; values and scope, never provenance, decide equality."""
     who = line.get('who')
@@ -412,6 +424,17 @@ def _complete_fair_share_goals(policies, read_quality, context=None):
 def bound_policies(policies, context=None, *, read_quality=None):
     read_quality = read_quality if read_quality is not None else read_quality_for(context)
     result = _bound_policies(policies, context)
+    if context and not context.get('_catalogue_v2_materialized'):
+        present = {p['id'] for p in result}
+        for fact in context.get('scheduling_facts') or ():
+            cap = (fact.get('data') or {}).get('overtime_duty_cap')
+            if (cap is None or fact['kind'] != 'overtime_offer' or fact.get('request_id')
+                    or fact.get('status') != 'active' or not fact.get('on', True)):
+                continue
+            quota = overtime_offer_quota(fact, cap)
+            if quota['id'] not in present:
+                result.append(quota)
+                present.add(quota['id'])
     from .fairness import legacy_semantics
     if context is None:
         return _complete_fair_share_goals(result, read_quality)
