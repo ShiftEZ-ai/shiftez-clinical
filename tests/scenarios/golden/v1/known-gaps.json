@@ -68,7 +68,6 @@
     "kind.allocation_preference.balance_window",
     "kind.allocation_preference.balance_window_days",
     "kind.allocation_preference.overtime_priority",
-    "kind.allocation_preference.session_priority",
     "kind.allocation_preference.supervisor_ids",
     "kind.allocation_preference.supervisor_relationship",
     "kind.balance_goal",

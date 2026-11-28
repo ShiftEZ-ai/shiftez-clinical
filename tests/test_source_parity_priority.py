@@ -68,13 +68,11 @@ def test_fill_stage_uses_quota_demand_and_never_creates_unrequested_work(h, engi
 
 
 @pytest.mark.parametrize('extra', [0, 1])
-def test_fill_stage_objective_never_improves_by_adding_surplus(monkeypatch, extra):
-    from packages.domain import fill_priority
-    monkeypatch.setattr(fill_priority, 'allocation_tier', lambda data, shift, pid: int(pid == 'first'))
+def test_fill_stage_objective_never_improves_by_adding_surplus(extra):
     model = cp_model.CpModel()
     first, kept = model.new_bool_var('first'), model.new_constant(1)
     choices = {('duty', 'first'): first, ('duty', 'kept'): kept}
-    priorities = FillPriority(model, {}, choices, {'duty': {'id': 'duty'}}, True)
+    priorities = FillPriority(model, {('duty', 'first'): 1, ('duty', 'kept'): 0}, include_unranked=True)
     priorities.target([(1, value, [(key, value)]) for key, value in choices.items()], 1)
     _, objective, _ = priorities.objectives()[0]
     model.add(first == extra)
@@ -102,14 +100,11 @@ def test_tiered_fill_leaves_satisfied_unbounded_staffing_alone(h, engine):
 
 @pytest.fixture(scope='module')
 def department_fill_credit():
-    from packages.domain import fill_priority
     model = cp_model.CpModel()
     shifts = {str(sid): {'id': str(sid)} for sid in range(500)}
     choices = {(sid, str(pid)): model.new_bool_var(f'{sid}:{pid}') for sid in shifts for pid in range(150)}
     started = time.process_time()
-    with pytest.MonkeyPatch.context() as monkeypatch:
-        monkeypatch.setattr(fill_priority, 'allocation_tier', lambda data, shift, pid: int(pid) % 3)
-        priorities = FillPriority(model, {}, choices, shifts, True)
+    priorities = FillPriority(model, {key: int(key[1]) % 3 for key in choices}, include_unranked=True)
     for sid in shifts:
         priorities.target([(1, choices[sid, str(pid)], [((sid, str(pid)), choices[sid, str(pid)])])
             for pid in range(150)], 3)

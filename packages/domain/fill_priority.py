@@ -35,26 +35,49 @@ def stage_progress(before, after, strict_first=True):
     return target is not None and all(candidate <= current for current, candidate in zip(before[:target], after[:target]))
 
 
-def allocation_tier(data, shift, person_id):
-    from .generation import allocation_settings
-    return allocation_settings(data, shift, person_id, priority_field='session_priority')[0]
+def allocation_order_rules(policies):
+    return [p for p in policies if (rule := p['definition']['rule'])['kind'] == 'allocation_preference'
+            and rule.get('session_priority')]
+
+
+def allocation_tier(data, shift, person_id, supervisor_id=None, *, rules=None):
+    """A matching place contributes its position once. The first matching place wins."""
+    from .generation import allocation_policy_matches, allocation_supervisor_present, preferred_supervisors
+    from .time import aware
+
+    ranks = []
+    present = None
+    for policy in allocation_order_rules(data['policies']) if rules is None else rules:
+        if not allocation_policy_matches(data, policy, shift, person_id):
+            continue
+        rule = policy['definition']['rule']
+        if rule.get('supervisor_ids') or rule.get('supervisor_relationship') == 'mentor':
+            if present is None:
+                a, b = aware(shift['start']), aware(shift['end'])
+                present = {p['person_id'] for p in shift['participants']
+                           if (not supervisor_id or p['person_id'] == supervisor_id)
+                           and allocation_supervisor_present(data, shift, p, a, b)}
+            if not preferred_supervisors(data, rule, shift, person_id, present):
+                continue
+        ranks.append(rule['session_priority'])
+    return max(ranks, default=0)
 
 
 class FillPriority:
-    def __init__(self, model, data, choices, shifts, enabled):
+    def __init__(self, model, tiers, *, include_unranked=False):
         self.model = model
         self.costs = defaultdict(list)
-        self.tiers = ({key: allocation_tier(data, shifts[key[0]], key[1]) for key in sorted(choices)}
-                      if enabled else {})
+        self.tiers = tiers
         self.enabled = any(self.tiers.values())
+        # Zero must keep its position ahead of every explicitly deferred place.
+        self.include_unranked = include_unranked or min(tiers.values(), default=0) < 0
 
     def target(self, terms, amount, active=1, *, stage='desired'):
         """Each term is (integer quantity, choice, [(assignment key, contributing choice)])."""
         if not self.enabled or amount <= 0 or isinstance(active, int) and not active:
             return
         terms = [(quantity, chosen, sources) for quantity, chosen, sources in terms if quantity > 0]
-        tiers = {self.tiers[key] for _, _, sources in terms for key, _ in sources}
-        if not terms or not tiers:
+        if not any(self.include_unranked or self.tiers[key] for _, _, sources in terms for key, _ in sources):
             return
         unit = gcd(amount, *(quantity for quantity, _, _ in terms))
         amount //= unit
@@ -65,7 +88,9 @@ class FillPriority:
         for quantity, chosen, sources in terms:
             by_tier = defaultdict(list)
             for key, source in sources:
-                by_tier[self.tiers[key]].append(source)
+                tier = self.tiers[key]
+                if tier or self.include_unranked:
+                    by_tier[tier].append(source)
             credits = []
             for tier, eligible in sorted(by_tier.items()):
                 present = eligible[0]

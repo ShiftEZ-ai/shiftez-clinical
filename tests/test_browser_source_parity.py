@@ -342,7 +342,7 @@ def test_fill_priorities_and_pair_budget_save_reload_and_validate(browser, live_
         navigate(page, 'configuration/auto_schedule')
         fill = page.get_by_label('Fill priorities', exact=True)
         expect(fill).to_have_value('weighted')  # today's behaviour by default
-        fill.select_option(label='Higher priorities filled first')
+        fill.select_option(label='Ranked and unranked places')
         page.get_by_role('tab', name='Advanced', exact=True).click()
         budget = page.get_by_label('Most pairs a pair limit may weigh', exact=True)
         expect(budget).to_have_value('50000')
