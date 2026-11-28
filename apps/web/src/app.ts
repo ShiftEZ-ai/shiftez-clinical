@@ -4,7 +4,7 @@ import {checkingWords,waitingWord,footerCheck,checkUnfinished,checkEndedStopped,
 import type {CheckWorker} from './rule_check_api.js';
 import {recordError} from './feedback_context.js';
 import {homePage,seeNotices,dutyButtons,reportedDuty,reviewAttention,type HomeData} from './home.js';
-import {quotaPanel, quotaUnits} from './quotas.js';
+import {quotaPanel, quotaUnits, type QuotaRow} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
 import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
@@ -63,7 +63,7 @@ import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
 import {dataTable,conditionFilter,joinFilter,mentions as conditionsMention,holdsForSomeone,tableFilters,tableAsOf,tableSearch,tableSearchOptions,tableServerConditions,openFiltered,clearTableViews,restoreTableViews,holdTableState,tableColumns,sameColumns,setTableColumns,type TableColumns,captureTableScroll,restoreTableScroll,setTableAccount,fetchViews,savedViewItems,viewActions,collectionToolbar,optionMenu,openingView,type SortValue,type ToolbarSpec,type SavedView,type EditSpec,type RowAction,type Column,type SortKey} from './table_view.js';
-import {peopleView,refreshPeople,findsPerson,PEOPLE_GROUPS,PEOPLE_SORTS} from './planner_people.js';
+import {peopleView,refreshPeople,PEOPLE_GROUPS,PEOPLE_SORTS} from './planner_people.js';
 import {RULE_KINDS,RULE_NUMBER_FIELD,RULE_TOPICS,ruleTopic,LINE_KINDS,lineField,lineLabel,lineWho,isOrder,perPersonEditor,SETTING_LABELS,MODE_LABELS,lineSetting,lineHasNumber,protectTimeForm,protectedTimeRule,calendarProtectionPanel,catalogueEntryOf,ruleConditionFields,activeOn,peopleChoices,colourSwatches,catalogueForm,workspaceForm,shiftForm,sessionsHeld,relationshipForm,programmeEligibilityForm,availabilityForm,availabilityFields,leaveTypePicker,LEAVE_RECORD_KINDS,policyForm,quotaLimits,quotaNumberLabel,exceptionForm,safetyRule,allowsException,staffNeeded,type Context} from './forms.js';
 import {recurringSessions,seriesGroups} from './recurring_sessions.js';
 import type {Me,Row,PersonRow,Catalogues,WorkspaceData,Evaluation,Finding,PublicData,PlannerSession} from './types.js';
@@ -71,7 +71,8 @@ import {fillOptions} from './candidates.js';
 import {applyEditDelta,applyCheckDelta,withoutOwnCheck,remoteEdit} from './edit_delta.js';
 import {baselineDriftKey,noteDriftInputs,applyDriftInputs} from './baseline_drift.js';
 import {drawnBase} from './settings_base.js';
-import {timesOfDayPage} from './times_of_day.js';
+import {timesOfDayPage,timesOfDay} from './times_of_day.js';
+import {totalsOf,totalName,totalChoices,quotaMeasure} from './planner_totals.js';
 import {mayDecide} from './independence.js';
 import {routingPage,reviewPanel,approvalDialog,decidesStep,notDecider,SWAP_KIND_WORDS} from './governance.js';
 import {requestsPage} from './requests.js';
@@ -99,7 +100,7 @@ import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
 import {conditionBuilder,conditionsText,conditionsSummary,lineMatches,treeMatches,scopeAsConditions,isTyped,typedFields,literalValues,negativeOp,forgetResolved,RULE_FIELDS} from './conditions.js';
 import {dateSetColumns,dateSetDates,entrySummary,importDateSet,copyDateSet,loadUpcoming} from './date_sets.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
-import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
+import type {ViewProperty,PlannerTotal,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
 import {personLabel,personLink,labelPart,useLabel,useNames,onPersonOpen,personName,nameText,shortCode,labelFacts,displayName,forgetNames,fullNameOf} from './person_label.js';
 import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
@@ -2076,10 +2077,11 @@ const plannerPart=(p:Partial<PlannerSettings>|undefined)=>{const mode=p?.mode===
     person_display:p?.person_display&&p.person_display!==PLANNER_PERSON_DISPLAY_DEFAULT&&pickedPeople(p.search_options||undefined,p.filters).length?p.person_display:null,
     group_sort:p?.group_sort?.length?p.group_sort.filter(([,d])=>d==='desc'):null,
     team_rows:p?.team_rows&&p.team_rows!==PLANNER_TEAM_ROWS_DEFAULT?p.team_rows:null,staffing:p?.staffing===false?false:null,
+    totals:p?.totals?.length&&JSON.stringify(totalsOf(p.totals))!==JSON.stringify(totalsOf(null))?totalsOf(p.totals):null,
     widths:p?.widths&&Object.keys(p.widths).length?Object.fromEntries(PLANNER_WIDTH_KEYS.filter(k=>Number(p.widths![k])>0).map(k=>[k,Math.round(p.widths![k])])):null} as PlannerSettings;};
 const plannerDefinition=():PlannerSaved=>({...(schedConditions?{conditions:schedConditions}:{}),...tableColumns('planner-list'),planner:distinctAxes(plannerPart({mode:schedView==='year'?'year':(({people:'person',coverage:'coverage',list:'list',timeline:'timeline'} as Record<string,PlannerSettings['mode']>)[schedView]||'week'),range:schedView==='year'?null:rangeNow() as PlannerSettings['range'],
   search:searchText,search_options:schedSearch,filters:schedFilters,
-  group_by:schedView==='people'?peopleView.group:weekView.groupBy,people_sort:schedView==='people'?peopleView.sort.replace('-','_') as PlannerSettings['people_sort']:null,sort_by:weekView.sortBy,colour_by:weekView.colourBy,colour_tags:weekView.colourTags,density:weekView.compact?'compact':'comfortable',team_rows:weekView.teamRows,staffing:weekView.staffing?null:false,only_open:weekView.onlyOpen,only_issues:weekView.onlyIssues,label:viewNames,properties:weekView.props,
+  group_by:schedView==='people'?peopleView.group:weekView.groupBy,people_sort:schedView==='people'?peopleView.sort.replace('-','_') as PlannerSettings['people_sort']:null,sort_by:weekView.sortBy,colour_by:weekView.colourBy,colour_tags:weekView.colourTags,density:weekView.compact?'compact':'comfortable',team_rows:weekView.teamRows,staffing:weekView.staffing?null:false,only_open:weekView.onlyOpen,only_issues:weekView.onlyIssues,label:viewNames,properties:weekView.props,totals:weekView.totals,
   weekdays:viewDays.weekdays,week_start:viewDays.week_start,time_window:viewDays.time_window,days:rangeNow()==='custom'?viewDays.days:null,
   columns:gridColumns==='day'?null:gridColumns,cells:cellsNow()==='counts'?'counts':null,rows:schedView==='timeline'?gridRows:null,coverage:{rows:coverRows,columns:coverColumns},subgroup:useGrid()||schedView==='week'&&isSessionGroup(gridSubgroup)?gridSubgroup:null,collapsed:[...collapsed],
   layers:{draft:draftsShown,leave:peopleView.leave,mine:mineOnly,mode:layerMode},person_display:personDisplay,group_sort:weekView.groupSort.filter((x):x is [Dim,'asc'|'desc']=>isDim(x[0])),widths:weekView.widths}))});
@@ -2109,7 +2111,7 @@ function applyPlannerView(p:Partial<PlannerSettings>|undefined,conditions?:Condi
   if(v.mode==='person'){peopleView.group=v.group_by as typeof peopleView.group;peopleView.sort=(v.people_sort||'hours_desc').replace('_','-') as typeof peopleView.sort;}
   // Collapsed groups are part of the view (SI-35).
   collapsed.clear();for(const g of v.collapsed||[])collapsed.add(g);
-  Object.assign(weekView,{props:v.properties||null,groupBy:schedView!=='timeline'&&personDim(v.group_by||'')||v.mode==='person'?'service':v.group_by,sortBy:v.sort_by,colourBy:v.colour_by,colourTags:[...(v.colour_tags||[])],compact:v.density==='compact',teamRows:v.team_rows??PLANNER_TEAM_ROWS_DEFAULT,staffing:v.staffing!==false,onlyOpen:v.only_open,onlyIssues:v.only_issues,
+  Object.assign(weekView,{props:v.properties||null,totals:v.totals||null,groupBy:schedView!=='timeline'&&personDim(v.group_by||'')||v.mode==='person'?'service':v.group_by,sortBy:v.sort_by,colourBy:v.colour_by,colourTags:[...(v.colour_tags||[])],compact:v.density==='compact',teamRows:v.team_rows??PLANNER_TEAM_ROWS_DEFAULT,staffing:v.staffing!==false,onlyOpen:v.only_open,onlyIssues:v.only_issues,
     groupSort:[...(v.group_sort||[])],widths:{...(v.widths||{})}});
   personDisplay=v.person_display||PLANNER_PERSON_DISPLAY_DEFAULT;
   selected.clear();
@@ -2956,7 +2958,6 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   const activeView=plannerSaved.find(x=>x.id===plannerViewId);
   // Print › Range › This rota: the draft in view, else the published rota on the day in view.
   exportRota=(w||work.find(r=>r.status==='published'&&r.starts_on<=planDay&&planDay<r.ends_on)||null) as typeof exportRota;
-  schedulePeople=()=>sctx().catalogues.people;  // the People view's people (a published layer adds its own)
   scheduleExport=()=>({title:activeView?.name||SCHED_VIEWS.find(v=>v.key===schedView)!.label,period:periodLabel(rangeNow(),period),department:me!.department.name,
     status:w?`${w.name} · ${stageName(w.status)}`:source?`Published version ${source.publication.sequence}${source.publication.current?'':' · superseded'}`:'Published',draft:!!w,by:me!.display_name,
     filters:filter?.active?.().map(f=>f.name?`${f.name}: ${f.value}`:f.value)||[],view:document.getElementById('schedule-view')!});
@@ -3244,6 +3245,10 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     teamRows:cardGrid?{value:()=>weekView.teamRows,set:n=>{weekView.teamRows=n;void redraw();}}:undefined,
     // Planners' grids that draw staffing numbers (Week and Month day heads and group totals, the grid's Staffed / needed row).
     staffing:planner&&(cardGrid||schedView==='timeline')?{value:()=>weekView.staffing,set:on=>{weekView.staffing=on;void redraw();}}:undefined,
+    // People's totals after the days; one that a person quota in the rota's rules measures says so.
+    totals:schedView==='people'?(()=>{const src={times:timesOfDay(me!.department),types:catalogues.assignment_types||[]},quotas:readonly QuotaRow[]=w?.validation?.quota_report?.rows||[];
+      return {value:()=>totalsOf(weekView.totals),set:(t:PlannerTotal[])=>{weekView.totals=t;void redraw();},choices:()=>totalChoices(src),name:(k:string)=>totalName(k,src),
+        example:(k:string)=>quotas.some(r=>quotaMeasure(r)===k)?"Target from the rota's rules":k.startsWith('time:')?'Time of day':k.startsWith('type:')?'Duty type':''};})():undefined,
     // A layout offers what its items draw (ITEM_DRAWS, the one item renderer): People only where an item is a session,
     // Leave and wishes on a grid's person days (People × Days keeps its Layers switch), tags on a person's duty.
     properties:{value:()=>propertiesOf(weekView.props,surface||'card'),set:p=>{weekView.props=p;void redraw();},
@@ -3362,8 +3367,7 @@ function filtersOf(p:Partial<PlannerSettings>|undefined):Record<string,string[]>
 /** The Schedule's filters on its sessions: each field keeps any of its values (a place includes the places inside it;
  *  person facts (rank, programme, tag) are someone on the session's, on that day). */
 function filterSessions(list:PlannerSession[]){
-  if(exportFound&&!exportFound.values.length)return [];  // a People search that finds nobody lists no session
-  const own=joinFilter(schedFilters,schedConditions),tree=exportFound?{match:'all' as const,conditions:[...(own?[own]:[]),exportFound]}:own;if(!tree)return list;
+  const tree=joinFilter(schedFilters,schedConditions);if(!tree)return list;
   // A place holds its own id and every place it is inside ("Clinic A" keeps the rooms in it).
   const parents=new Map(rows('locations').map(l=>[l.id,l.parent_id as string|undefined]));
   const within=(id:string)=>{const out:string[]=[];for(let at:string|undefined=id;at&&!out.includes(at);at=parents.get(at))out.push(at);return out;};
@@ -3435,9 +3439,6 @@ function loadLiveCoverage(layer:ScheduleWindow){
     if(view==='schedule'&&!workspaceId)void redraw();
   }).catch(()=>{/* the stored check stays on screen */});
 }
-/** Print or export › CSV of a People view: the people its search finds, as one Person line under the Schedule's own
- *  filters (export only, never in the toolbar). */
-let exportFound:Condition|null=null,schedulePeople:()=>Row[]=()=>rows('people');
 /** Print or export: the view on screen, or another saved view or range drawn behind the dialog (one draw per week or
  *  month when pages break so) and copied; closing the dialog puts the Schedule back as it was. */
 function exportView(){
@@ -3445,7 +3446,7 @@ function exportView(){
   const before={definition:plannerDefinition(),id:plannerViewId,day:planDay,days:viewDays.days,draft:{workspaceId,draftNone,compareId}},ws=me!.organisation.week_start;
   // `open` ends when the dialog closes: a draw still running then stops changing the Schedule it put back.
   let moved=false,open=true;
-  const back=()=>{exportFound=null;applyPlannerView(before.definition.planner,before.definition.conditions);plannerViewId=before.id;planDay=before.day;viewDays.days=before.days;({workspaceId,draftNone,compareId}=before.draft);};
+  const back=()=>{applyPlannerView(before.definition.planner,before.definition.conditions);plannerViewId=before.id;planDay=before.day;viewDays.days=before.days;({workspaceId,draftNone,compareId}=before.draft);};
   // The List's own columns (shown, order, wrap, widths) as they are: Adjust › Columns changes them for this export alone.
   const list=holdTableState('planner-list');
   const copy=():ExportSource=>({...scheduleExport!(),view:document.getElementById('schedule-view')!.cloneNode(true) as HTMLElement});
@@ -3462,7 +3463,7 @@ function exportView(){
   const axesNow=():Axes=>{const p=plannerDefinition().planner;return {mode:p.mode,rows:p.rows,columns:p.columns,cells:p.cells};};
   // Back to the chosen view's own settings (Reset, or another view chosen in What); People stays: it is about the picked person.
   const forget=()=>{over={...(over.people?{people:over.people}:{})};list();};
-  const looks=()=>({props:weekView.props,colourBy:weekView.colourBy,colourTags:[...weekView.colourTags],compact:weekView.compact,teamRows:weekView.teamRows,staffing:weekView.staffing});
+  const looks=()=>({props:weekView.props,totals:weekView.totals,colourBy:weekView.colourBy,colourTags:[...weekView.colourTags],compact:weekView.compact,teamRows:weekView.teamRows,staffing:weekView.staffing});
   exportDialog({views:(plannerMemo?.views||[]).map(v=>({id:v.id,name:v.name})),rota:!!exportRota,canShare:permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN),
     publishedSheet:printSheet,
     adjust:scheduleSettings?(panel,close,changed)=>{
@@ -3476,6 +3477,7 @@ function exportView(){
         density:base.density&&{...base.density,set:k=>keep({compact:k==='compact'})},
         teamRows:base.teamRows&&{...base.teamRows,set:n=>keep({teamRows:n})},
         staffing:base.staffing&&{...base.staffing,set:on=>keep({staffing:on})},
+        totals:base.totals&&{...base.totals,set:t=>keep({totals:t})},
         properties:{...base.properties,set:p=>keep({props:p})},
         label:{...base.label,set:l=>{viewNames=l;over.names=l;}}},panel,close);
     }:undefined,
@@ -3491,13 +3493,9 @@ function exportView(){
       // Another view chosen in What starts from its own settings (People stays: it is about the picked person).
       if(o.view_id!==drawnView){drawnView=o.view_id;forget();}
       lay();
-      // CSV is data: a view without a table (Calendar, Day, People, Timeline, Year) is drawn as the List of the same days and filters.
-      if(o.table&&schedView!=='list'&&schedView!=='coverage'){
-        // People searches people, not sessions (its session search is not in use there): the List keeps the sessions of the
-        // people that search finds, the People view's own rows.
-        if(schedView==='people'){const q=peopleView.find.trim().toLowerCase();searchText='';schedSearch=undefined;
-          if(q)exportFound={field:'person_ids',op:'any',values:schedulePeople().filter(p=>findsPerson(p,q,shortCode)).map(p=>p.id as string)};}
-        setLayoutRange('list',rangeNow());}
+      // CSV is data: a view without a table (Calendar, Day, Timeline, Year) is drawn as the List of the same days and filters;
+      // People is its own grid (a line per person, the days, its totals: schedule_export.ts csvOf).
+      if(o.table&&schedView!=='list'&&schedView!=='coverage'&&schedView!=='people')setLayoutRange('list',rangeNow());
       const shown=schedView,layout=shown==='year'?'calendar':rendererOf(shown),rota=exportRota;
       if(o.range==='rota'&&rota){planDay=String(rota.starts_on);setLayoutRange(layout,'custom');viewDays.days=Math.round((Date.parse(rota.ends_on)-Date.parse(weekOf(planDay,viewDays.week_start??ws)))/864e5);}
       else if(o.range!=='view'&&o.range!=='rota')setLayoutRange(layout,o.range);

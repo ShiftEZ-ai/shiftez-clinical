@@ -991,7 +991,9 @@ and a desktop window narrowed below it gets the same rule at once.
   phone agenda; print copies them): what an item says is the view's Properties in order and form, the duty code
   (the duty type's configured short code) included, never hidden by a column's width; each kind of item starts from the
   contract's `VIEW_ITEM_SHOWN_BY_DEFAULT`. Staffing numbers is one switch per view (`PlannerViewSettings.staffing`),
-  also in the export. The List's columns are saved with the view, and the export's key repeats on every page. A
+  also in the export. People's Totals (`PlannerViewSettings.totals`) are kept as Properties are (order, show or hide, add from
+  measures, times of day and duty types); a person quota over the view's days shows n / target with a 4px bar, over
+  target in the warning colour with an alert ("Over target" in the key), and the CSV carries the same columns. The List's columns are saved with the view, and the export's key repeats on every page. A
   setting is offered only where it is drawn.
 - Person names: one renderer (`person_label.ts`) and one parser (`nameWords` in
   `dom.ts`, under the department's title and family-name particle lists) name every person; no screen formats a name,

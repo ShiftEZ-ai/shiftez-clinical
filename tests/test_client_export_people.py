@@ -1,7 +1,7 @@
-"""Print or export › CSV of a People view, from the real compiled client in Node (logic only): the People search finds
-people by name, code or tag (planner_people.findsPerson, the People view's own matcher), and the List drawn for the CSV
-keeps the sessions of the people found as one Person line under the Schedule's filters, read by the shared session
-evaluator (table_view.holdsForSomeone). The browser journey (People search → CSV rows) is still owed."""
+"""The People search, from the real compiled client in Node (logic only): it finds people by name, code or tag
+(planner_people.findsPerson, the People view's own matcher), and the people found meet the Schedule's filters as one
+Person line, read by the shared session evaluator (table_view.holdsForSomeone). The People CSV is the People grid
+itself (tests/test_browser_export_display.py)."""
 import json
 import subprocess
 

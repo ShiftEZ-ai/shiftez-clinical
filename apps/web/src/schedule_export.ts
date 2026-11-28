@@ -318,13 +318,20 @@ export function csvCell(v:string):string{
 export const csvText=(rows:string[][])=>rows.map(r=>r.map(csvCell).join(',')).join('\r\n')+'\r\n';
 /** CSV of the view's table (List, Coverage): headers, then each row, as shown. */
 export function csvOf(view:HTMLElement):string|null{
-  const table=cleanCopy(view,normalise({include:[]})).querySelector('table');if(!table)return null;
+  const copy=cleanCopy(view,normalise({include:[]})),table=copy.querySelector('table');
   // A cell's words as read: hidden labels left out, parts apart, people in a list separated by "; ".
   // A team's rows are people too: one per "; ", without the "Sup" word.
   const text=(n:Element)=>{const c=n.cloneNode(true) as Element;c.querySelectorAll('.sr-only,.tm-sup-word').forEach(x=>x.remove());
     c.querySelectorAll('.tm-row+.tm-row').forEach(x=>x.before('; '));
     c.querySelectorAll('*').forEach(x=>x.after(x.classList.contains('pill-item')&&x.nextElementSibling?.classList.contains('pill-item')?'; ':' '));
     return (c.textContent||'').replace(/\s+/g,' ').replace(/ ;/g,';').trim();};
+  if(!table){
+    // People × Days: a line per person drawn (its name, each day's duties), then the view's totals in its order and names.
+    const grid=copy.querySelector('.people-grid'),head=grid?.querySelector(':scope>.pg-head'),people=[...grid?.querySelectorAll(':scope>.pg-row.person-group')||[]];
+    if(!head||!people.length)return null;
+    return csvText([['Person',...[...head.children].slice(1).map(c=>c.classList.contains('pg-day')?c.getAttribute('aria-label')||text(c):text(c))],
+      ...people.map(r=>[...r.children].map((c,i)=>text(i?c:c.querySelector('strong')||c)))]);
+  }
   // Columns without a visible heading (row actions) are not data.
   const named=[...table.rows[0]?.cells||[]].map(c=>!!text(c));
   return csvText([...table.rows].map(r=>[...r.cells].filter((_,i)=>named[i]!==false).map(text)));
@@ -450,7 +457,7 @@ export function exportDialog(host:ExportHost){
           const csv=csvOf(sources[0].view);ready=!!csv;able();
           const lines=csv?csv.split('\r\n').slice(0,-1):[];pages=0;
           stage.replaceChildren(csv?el('pre',{class:'export-csv'},lines.slice(0,40).join('\n')+(lines.length>40?`\n… ${lines.length-40} more rows`:'')):el('p',{class:'muted export-wait'},'Nothing to list for these days and filters.'));
-          summary.textContent=csv?`${lines.length-1} rows · columns as in the List`:'';return;
+          summary.textContent=csv?`${lines.length-1} ${lines.length===2?'row':'rows'} · columns as in the ${sources[0].view.querySelector('table')?'List':'view'}`:'';return;
         }
         const {doc,count:n,clipped,tall}=pagesOf(sources,s);
         doc.setAttribute('aria-hidden','true');doc.inert=true;  // a picture: its copied labels and buttons are not the dialog's

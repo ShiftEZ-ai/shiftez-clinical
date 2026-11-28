@@ -9459,6 +9459,9 @@ PLANNER_PEOPLE_SORT_LABELS = {"hours_desc": "Most hours first", "hours_asc": "Fe
 PLANNER_COLOUR_LABELS = {"type": "Duty type", "service": "Service", "role": "Rank", "person": "Person", "tag": "Tag",
                          "time_of_day": "Time of day"}
 PLANNER_COLOUR_TAG_LIMIT = VIEW_CHOICE_LIMIT
+# People layout totals after the days: these measures, a time of day by its code (time:M) or a duty type (type:<id>).
+PLANNER_TOTAL_MEASURES = {"hours": "Hours", "duties": "Duties", "weekend_days": "Weekend days"}
+PLANNER_TOTALS_LIMIT = VIEW_CHOICE_LIMIT
 PLANNER_PERSON_DISPLAYS = {"person": "Matched person", "team": "Recorded supervision team", "duty": "Everyone on matching duties"}
 PLANNER_PERSON_DISPLAY_DEFAULT = "duty"
 # Week/Month: a supervision team shows this many trainee rows, then "+N more" reviewed.
@@ -9522,6 +9525,13 @@ class ViewProperty(Schema):
         return self
 
 
+
+
+class PlannerTotal(Schema):
+    """One People total, in the view's order; a time of day or duty type that no longer exists is not drawn."""
+    key: Annotated[str, StringConstraints(pattern=r"^(" + "|".join(PLANNER_TOTAL_MEASURES)
+                                          + r"|time:[A-Z0-9]|type:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")]
+    on: bool = Field(default=True, strict=True)
 
 
 class ViewTimeWindow(Schema):
@@ -9604,6 +9614,8 @@ class PlannerViewSettings(PlannerViewDefinition):
     week_start: int | None = Field(default=None, ge=0, le=6)  # none: the department's week start
     time_window: ViewTimeWindow | None = None
     properties: list[ViewProperty] | None = Field(default=None, max_length=len(VIEW_PROPERTIES))
+    # People layout totals (absent: Hours alone, older views unchanged).
+    totals: list[PlannerTotal] | None = Field(default=None, max_length=PLANNER_TOTALS_LIMIT, exclude_if=lambda value: value is None)
     label: PersonLabel | None = None
     layers: PlannerLayers | None = Field(default=None, exclude_if=lambda value: value is None)
 
@@ -9620,10 +9632,10 @@ class PlannerViewSettings(PlannerViewDefinition):
             raise ValueError("Unknown schedule width key")
         return self
 
-    @field_validator("weekdays", "properties", "colour_tags")
+    @field_validator("weekdays", "properties", "colour_tags", "totals")
     @classmethod
     def each_once(cls, value):
-        keys = [v.key if isinstance(v, ViewProperty) else v for v in value or []]
+        keys = [v.key if isinstance(v, (ViewProperty, PlannerTotal)) else v for v in value or []]
         if len(set(keys)) != len(keys):
             raise ValueError("Each entry once")
         return value

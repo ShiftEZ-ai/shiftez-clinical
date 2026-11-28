@@ -3671,6 +3671,11 @@ export type PlannerLayers = {
   "mode"?: "edit" | "side" | "overlay";
 };
 
+export type PlannerTotal = {
+  "key": string;
+  "on"?: boolean;
+};
+
 export type PlannerViewDefinition = {
   "schema_version"?: 1;
   "mode"?: "week" | "month" | "person" | "list";
@@ -3721,6 +3726,7 @@ export type PlannerViewSettings = {
   "week_start"?: number | null;
   "time_window"?: ViewTimeWindow | null;
   "properties"?: Array<ViewProperty> | null;
+  "totals"?: Array<PlannerTotal> | null;
   "label"?: PersonLabel | null;
   "layers"?: PlannerLayers | null;
   "show_pairs"?: boolean | null;
@@ -6635,6 +6641,8 @@ export const REFERENCE_ROTATION_FILE_LIMIT = 500000 as const;
 export const PERSON_PROPERTY_ALIASES = {"rank": "person.category_ids", "services": "person.eligible_service_ids", "skills": "person.capability_ids", "programme": "person.programme_ids", "tags": "person.tags", "code": "person.short_code", "title": "person.title", "section": "person.directory_section", "phone": "person.contact:f0136000-0000-4000-8000-000000000001", "ext": "person.contact:f0136000-0000-4000-8000-000000000002", "pager": "person.contact:f0136000-0000-4000-8000-000000000003"} as const;
 export const FAIRNESS_METRIC_LABELS = {"duties": "Duties", "hours": "Hours", "session_units": "Session units", "weekends": "Weekends worked", "overtime_duties": "Overtime duties", "overtime_hours": "Overtime hours", "lead_turns": "Team lead turns", "supervision": "Trainee sessions supervised", "pair_exposure": "Duties shared with a partner", "workload": "Workload", "wishes_granted": "Wish points granted", "wishes_declined": "Wish points declined", "wishes_submitted": "Wish points asked for"} as const;
 export const PLANNER_COLOUR_TAG_LIMIT = 50 as const;
+export const PLANNER_TOTAL_MEASURES = {"hours": "Hours", "duties": "Duties", "weekend_days": "Weekend days"} as const;
+export const PLANNER_TOTALS_LIMIT = 50 as const;
 export const PRINT_IMAGE_DPI = {"96": "Screen", "150": "Medium", "200": "High", "300": "Print"} as const;
 export const PRINT_IMAGE_DPI_DEFAULT = 200 as const;
 export const PRINT_WRAP_DEFAULT = true as const;

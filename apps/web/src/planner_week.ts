@@ -23,7 +23,7 @@ import {whyTab,whyOne,effectWords,signed,type WhyState,type WhyRules} from './pl
 import type {ToolbarSpec,SortKey} from './table_view.js';
 import {columnGrip,gripHeadingName} from './table_menu.js';
 import {namesHidden,personLink,fullNameOf} from './person_label.js';
-import {PLANNER_TEAM_ROWS_DEFAULT,type ViewProperty} from './generated.js';
+import {PLANNER_TEAM_ROWS_DEFAULT,type ViewProperty,type PlannerTotal} from './generated.js';
 import {propertiesOf,sessionCode,itemParts,itemNodes,itemWords,ITEM_DRAWS,type ItemSurface,type PropKey} from './schedule_item.js';
 import {leaveText,issueKey,findingNumbers,FINDING_WORDS} from './findings.js';
 import {clashMark,clashNote,clashTag,clashesOf} from './double_booking.js';
@@ -180,7 +180,7 @@ export const teamLayout=():TeamLayout=>{const f=propertiesOf(weekView.props).fin
 export const showAdvisory=(surface:ItemSurface='card')=>propertiesOf(weekView.props,surface).some(p=>p.key==='rule'&&p.on);
 /** A session's open-place findings: their marker sits beside its "1 open" place, every other one at the cell's top right. */
 const OPEN_PLACE_CODES=new Set(['COVERAGE_GAP','COVERAGE_TARGET','OPEN_EXTRA_COVER','DISTINCT_PERSON_GAP']);
-export const weekView={props:null as ViewProperty[]|null,/** Trainee rows a team shows before "+N more" (PlannerViewSettings.team_rows). */teamRows:PLANNER_TEAM_ROWS_DEFAULT as number,/** Staffing numbers shown (PlannerViewSettings.staffing; false hides them). */staffing:true,onlyOpen:false,onlyIssues:false,compact:false,/** Drawn for print: every person in a month's cells and every row of the List (no "+N more", no pages). */forPrint:false,groupBy:'service' as Dim|'none',/** Then by: a second session dimension inside each group (the view's `subgroup`). */thenBy:'none' as Dim|'none',sortBy:'time' as 'time'|'type'|'place'|'hours'|'code',colourBy:'type' as 'type'|'service'|'role'|'person'|'tag'|'time_of_day',
+export const weekView={props:null as ViewProperty[]|null,/** People's totals after the days (PlannerViewSettings.totals; null: Hours). */totals:null as PlannerTotal[]|null,/** Trainee rows a team shows before "+N more" (PlannerViewSettings.team_rows). */teamRows:PLANNER_TEAM_ROWS_DEFAULT as number,/** Staffing numbers shown (PlannerViewSettings.staffing; false hides them). */staffing:true,onlyOpen:false,onlyIssues:false,compact:false,/** Drawn for print: every person in a month's cells and every row of the List (no "+N more", no pages). */forPrint:false,groupBy:'service' as Dim|'none',/** Then by: a second session dimension inside each group (the view's `subgroup`). */thenBy:'none' as Dim|'none',sortBy:'time' as 'time'|'type'|'place'|'hours'|'code',colourBy:'type' as 'type'|'service'|'role'|'person'|'tag'|'time_of_day',
   /** Colour by tag: the viewer's tag ids in priority order (PlannerViewSettings.colour_tags); the first one a person holds wins. */colourTags:[] as string[],
   /** Each grouping level's own order (PlannerViewSettings.group_sort): [dimension, 'desc'] turns that level round. */groupSort:[] as SortKey[],
   /** Resized parts of a Schedule grid (PlannerViewSettings.widths: row_heading, date, cell), px. */widths:{} as Record<string,number>,
