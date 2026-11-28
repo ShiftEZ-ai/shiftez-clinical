@@ -487,3 +487,35 @@ def test_a_named_conflict_says_the_limit_of_its_proof_and_a_timed_out_one_its_un
     # a group that was never named, and no promise that it will be named later.
     assert got['timed'] == {'text': unknown, 'bound': None}
     assert 'The rules can’t all be met' in got['timedHead'] and 'not been identified' not in got['timedHead']
+
+
+NONE_FIT = 'None of its changes fit the rota as it is now. Run auto-schedule again for the current rota.'
+
+
+def test_a_timed_out_safe_subset_check_says_it_ran_out_of_time_not_that_nothing_fits(client_modules):
+    """Apply's safe-subset check that reached its time allowance (the receipt's reconciliation_allowance_exhausted) never
+    claims that none of the changes fit; the partial line says the time ran out for the changes it left out."""
+    words = run(client_modules, "console.log(JSON.stringify(a.map(r=>m.nothingAppliedWords(r))));", [
+        {'reconciliation': {'status': 'unresolved'}},
+        {'reconciliation': {'status': 'unresolved', 'reconciliation_allowance_exhausted': False}},
+        {'reconciliation': {'status': 'unresolved', 'reconciliation_allowance_exhausted': True}},
+        {'reconciliation': {'status': 'content_conflict', 'reconciliation_allowance_exhausted': True}}])
+    assert words[0] == words[1] == ['Nothing was applied', NONE_FIT]
+    for said in words[2:]:
+        assert said[0] == 'Nothing was applied'
+        assert 'ran out of time' in said[1] and said[1] != NONE_FIT
+    job = {'result': {'additions': [{'participant': {'person_id': 'p1'}}, {'participant': {'person_id': 'p2'}}],
+                      'removals': []}}
+
+    def partial_line(exhausted):
+        rec = {'status': 'partial', 'addition_indexes': [0], 'removal_indexes': [], 'changed_facts': [],
+               'conflicting_placements': [], 'reconciliation_allowance_exhausted': exhausted}
+        return run(client_modules, "const o=m.inputsChanged(a.job,a.facts,{person:()=>'',session:()=>''});"
+                   "console.log(JSON.stringify(o.nodes[o.nodes.length-1].textContent));",
+                   {'job': job, 'facts': {**FACTS, 'reconciliation': rec}})
+    complete = partial_line(False)
+    assert '1 of 2 changes still fit' in complete and '1 is left out.' in complete
+    assert 'ran out of time' not in complete
+    late = partial_line(True)
+    assert '1 of 2 changes still fit' in late and '1 is left out.' in late
+    assert 'The check ran out of time, so it was not applied and may still fit.' in late

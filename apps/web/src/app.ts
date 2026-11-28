@@ -85,7 +85,7 @@ import {issuesPage,issueKey,type IssuesHooks} from './issues.js';
 import {setIssueNav,issueList,sessionChips,dayLabels,findingIssue as findingItem,type Issue,type SessionChip} from './issue_marker.js';
 import {ASSIGN_KINDS,actionLabel,deltaWords,fixListPage,fixPanelNodes,lastFixList,applyFixDelta,fixDeltaOf,fixPills,fixGate,fixRow,fixLevel,mustWords,couldWords,reviewItemsOf,reviewedWithRota,fixSummaryOf,readFixList,heldFixList,type FixCause,type FixHooks,type FixList,type FixSummary,type FixStep} from './fix_list.js';
 import {scoreReview} from './score_review.js';
-import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,NOTHING_APPLIED,adjustForRotaDialog,solverReceipt,outsideGroupLine} from './autoschedule_result.js';
+import {outcome,breaksNote,runFacts,resultHead,strictlyCurrent,candidateOptimality,readyWords,scoreTile,tile as statTile,scoreChange as statChange,stillToFix,changesByCause,clashCard,isClash,inputsChanged,rechecked,drifted,driftNote,nothingApplied,applyNeedsReview,APPLY_NOT_CONFIRMED,nothingAppliedWords,adjustForRotaDialog,solverReceipt,outsideGroupLine} from './autoschedule_result.js';
 import {scoreCheckPage,scoreCheckTitle,type Step as ScoreStep} from './score_check.js';
 import {aiProviderPage} from './ai_provider.js';
 import {startWorker,updateWorker,installWay,install,setBadge,tabAlertsOn,signedOut,reconcile,forgetPushStatus,alertNotification} from './pwa.js';
@@ -7525,7 +7525,7 @@ async function inspectSchedulingJob(job:Row){const result=(await get('/api/jobs/
         selectionHint.hidden=true;proposal=null;
         actions.replaceWith(outcome('warn',SUPERSEDED.state,STALE_WORDS.superseded,button(SUPERSEDED.next,()=>{close();reviewLatestRun(result.workspace_id);},'secondary small')));});
       // Nothing written: the dialog stays, saying so where Apply was (nothing is left to apply).
-      if(nothingApplied(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('err',...NOTHING_APPLIED));proposal=null;await refresh();return;}
+      if(nothingApplied(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('err',...nothingAppliedWords(reply)));proposal=null;await refresh();return;}
       if(applyNeedsReview(reply)){selectionHint.hidden=true;actions.replaceWith(outcome('warn',...APPLY_NOT_CONFIRMED));proposal=null;await refresh();return;}
       close();proposal=null;await refresh();};
     const applyChosen=button('Apply chosen',()=>applyJob([...pickAdd].map(Number),[...pickRemove].map(k=>Number(k.slice(1)))),'secondary');
@@ -7578,7 +7578,7 @@ async function sendGenerationApply(job:Row,pick?:{addition_indexes:number[];remo
 }
 const applyJob=async(job:Row,pick?:{addition_indexes:number[];removal_indexes:number[]})=>{
   const reply=await sendGenerationApply(job,pick);proposal=null;
-  if(nothingApplied(reply)){await refresh();throw new Error(NOTHING_APPLIED.join('. '));}
+  if(nothingApplied(reply)){await refresh();throw new Error(nothingAppliedWords(reply).join('. '));}
   if(applyNeedsReview(reply)){await refresh();throw new Error(APPLY_NOT_CONFIRMED.join('. '));}};
 /** SW3-A-04: an apply whose answer was lost (a gateway timeout under load, a dropped connection) may have been made all
  *  the same: the run says so. Applied: the page is told it was saved (APPLY_CONFIRMED) and nothing offers Apply again; a
