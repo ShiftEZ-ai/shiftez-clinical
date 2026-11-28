@@ -22,7 +22,7 @@ from .candidate_evidence import candidate_evidence, direct_coverage_shortages, f
 from . import leadership
 from .validation import effective_type_definition, is_open_extra_cover
 from .participation import presence_intervals
-from .generation import allocation_overtime_allowed, duty_labels, assignment_fixed, keep_assignment, replacement_summary, citation_finding_key, coverage_findings
+from .generation import allocation_overtime_allowed, duty_labels, assignment_fixed, keep_assignment, replacement_summary, citation_finding_key, coverage_findings, can_promote_usual_assignee
 from .time import aware, duration_hours, local_midnight, overlaps
 from .conditions import active_rules, counting_key, counting_views, scope_matches_throughout
 from .validation import attached_to, evaluate, finding_observations, capabilities_for, categories_for, exception_for, named_people, policy_applies, applicable_restriction_intervals, scope_intervals, session_scope, within_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
@@ -1005,8 +1005,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                                         'start': start.isoformat(), 'end': end.isoformat(), 'rule_id': rule_id})
 
     # Team lead: a variable only for people allowed to lead throughout the duty. Existing leads are hints
-    # (or constants when kept as they are); fixed people and fixed leads never change; without a lead
-    # setting the existing flag rides along with the person.
+    # (or constants when kept as they are). A fixed usual assignee can gain the flag while keeping the
+    # same booking. Without a lead setting the existing flag rides along with the person.
     lead_terms, lead_vars, lead_demand = {}, {}, set()
     for shift in shifts:
         sid, lead = shift['id'], leadership.summary(data, shift)
@@ -1020,13 +1020,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             may_lead = (lead and sid in editable and leadership.qualified(data, pid, shift, aware(p['start']), aware(p['end']))
                         and (lead['continuity'] != 'whole_duty' or leadership.covers_required(data, p, shift)
                              and leadership.qualified(data, pid, shift, start, end)))
-            if not decided and not (may_lead and not was_lead and not (assignment_fixed(shift, p) or protects_existing(data, shift, p))):
+            can_promote = may_lead and not was_lead and (can_promote_usual_assignee(data, shift, p)
+                or not assignment_fixed(shift, p) and not protects_existing(data, shift, p))
+            if not decided and not can_promote:
                 lead_terms[sid, pid] = int(was_lead)  # kept exactly (fixed, locked, or fill-gaps with its lead)
             elif not lead:
                 lead_terms[sid, pid] = choices[sid, pid] if was_lead else 0
             elif may_lead:
                 if not decided:
-                    participants[sid, pid] = dict(p)  # fill-gaps may name a kept person as lead: a changed copy
+                    participants[sid, pid] = dict(p)  # A kept person's lead flag can still change.
                 var = lead_terms[sid, pid] = lead_vars[sid, pid] = model.new_bool_var(f'lead:{sid}:{pid}')
                 model.add(var <= choices[sid, pid])
                 model.add_hint(var, int(was_lead))

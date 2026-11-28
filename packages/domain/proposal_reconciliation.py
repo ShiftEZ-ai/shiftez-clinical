@@ -42,7 +42,10 @@ def overlay(data, result, additions, removals):
     for row in value['shifts']:
         if row['id'] not in touched:
             continue
-        row['participants'] = [p for p in row['participants'] if p['id'] not in removed] + changes[row['id']]
+        previous = {p['id']: p for p in row['participants']}
+        proposed = [{**previous[p['id']], **p, 'revision': previous[p['id']]['revision'] + 1}
+                    if p['id'] in removed and p['id'] in previous else p for p in changes[row['id']]]
+        row['participants'] = [p for p in row['participants'] if p['id'] not in removed] + proposed
         row['revision'] += 1
         if row.get('series_id'):
             row['series_modified'] = True

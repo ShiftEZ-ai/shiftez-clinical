@@ -143,12 +143,15 @@ class Harness:
             if not processed:
                 return processed
 
-    def command(self, role, kind, payload=None, target=None, revision=None, status=200, key=None, expected_fingerprint=None):
+    def command(self, role, kind, payload=None, target=None, revision=None, status=200, key=None, expected_fingerprint=None,
+                *, hydrate_validation=True):
         response = self.client(role).post("/api/commands", headers={"idempotency-key": key or str(uuid.uuid4())},
             json={"kind": kind, "payload": payload or {}, "target_id": target, "expected_revision": revision,
                   **({"expected_fingerprint": expected_fingerprint} if expected_fingerprint is not None else {})})
         assert response.status_code in (status if isinstance(status, tuple) else (status,)), response.text
         reply = response.json()
+        if not hydrate_validation:
+            return reply
         # Command replies carry the rota check as a summary only (serialization.compact_reply); tests that assert on
         # the findings read the full check the server stored on the rota, which is the same evaluation.
         workspace = reply.get("workspace")
