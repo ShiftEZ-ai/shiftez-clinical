@@ -774,10 +774,7 @@ def test_change_count_matches_change_rows(browser, cp_server, h):
 
 
 def test_discarded_proposal_stays_discarded_after_reload(browser, cp_server, h):
-    """UX-06: Discard is saved with the job (job.dismiss, be-wave4); a reload shows it discarded, not ready to review."""
-    from pathlib import Path
-    if "'job.dismiss'" not in (Path(__file__).resolve().parents[1] / 'apps/api/commands.py').read_text(encoding='utf-8'):
-        pytest.skip('job.dismiss arrives with integration/be-wave4')
+    """Discard is saved with the job, and reload opens setup without the discarded proposal."""
     w = h.shift(h.workspace('FM discard persists'), start='2026-10-05T08:00:00+03:00', end='2026-10-05T12:00:00+03:00', people=[])['workspace']
     context, page, panel = _open(browser, cp_server, h, w, DESKTOP, 'light')
     try:
