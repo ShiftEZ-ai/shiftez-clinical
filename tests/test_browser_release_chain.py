@@ -144,7 +144,7 @@ def test_release_chain_from_new_people_to_audit(browser, cp_server, h):
         panel.get_by_role('button', name=re.compile('^People to schedule:')).click()
         group = coordinator.get_by_role('dialog', name='People to schedule', exact=True)
         add_filter(group)
-        pick_condition(coordinator, group, 'Person', [staff_name, protected, available])
+        pick_condition(coordinator, group.locator('.cond-line').first, 'Person', [staff_name, protected, available])
         group.get_by_role('button', name='Apply', exact=True).click()
         panel.get_by_role('button', name='Run auto-schedule', exact=True).click()
         expect(panel.get_by_role('progressbar')).to_be_visible()
