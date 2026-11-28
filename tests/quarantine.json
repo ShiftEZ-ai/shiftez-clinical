@@ -590,6 +590,20 @@
     "blocker": false
   },
   {
+    "nodeid": "tests/test_browser_autoschedule_fix_outcome.py::test_a_finished_runs_message_is_skipped_while_its_rotas_panel_is_open",
+    "reason": "unstable: failed its first attempt in run 46152154854 and passed in runs 46148339485 and 46146136369, all on queue base 84d6fbb8.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 2020,
+    "blocker": false,
+    "recovered_runs": [
+      "46152154854",
+      "46148339485",
+      "46146136369"
+    ]
+  },
+  {
     "nodeid": "tests/test_browser_autoschedule_progress.py::test_a_rota_check_runs_in_the_footer_not_the_panel",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
