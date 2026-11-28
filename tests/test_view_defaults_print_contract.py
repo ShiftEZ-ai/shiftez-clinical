@@ -56,7 +56,9 @@ def test_print_bounds_and_all_inclusions():
 
 
 @pytest.mark.parametrize('table,definition', [
-    ('people', {'print': {}}), ('fairness', {'print': {}}), ('schedule_print', {}), ('schedule_print', {'print': None}),
+    # A Schedule view may keep print settings, and they are still checked.
+    ('planner', {'print': {'paper': 'tabloid'}}), ('people', {'print': {}}), ('schedule_print', {}),
+    ('schedule_print', {'print': None}), ('fairness', {'print': {}}),
 ])
 def test_print_settings_are_required_only_on_print_presets(table, definition):
     with pytest.raises(ValidationError):
