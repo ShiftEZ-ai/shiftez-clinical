@@ -1,6 +1,6 @@
 import {watchJob,watchedJobs} from './api.js';
 import {sameControl,type ControlKey} from './focus_key.js';
-import {checkingWords,waitingWord,footerCheck,checkUnfinished,checkEndedStopped,rotaCheckCurrent,checkCancellable,checkRefused,checkTakeover,checkStoppedWords,CHECK_STOPPED_WHY,CHECK_TAKEN_OVER,takeOverJob,CHECK_NOT_STARTED,CHECK_AGAIN,checkBoundMs} from './rule_check_api.js';
+import {checkingWords,waitingWord,footerCheck,checkUnfinished,checkEndedStopped,rotaCheckCurrent,checkCancellable,checkRefused,checkTakeover,checkStoppedWords,CHECK_STOPPED_WHY,CHECK_TAKEN_OVER,takeOverJob,CHECK_NOT_STARTED,CHECK_AGAIN,CHECK_WAIT,CHECK_INCOMPLETE,checkSettledWords,checkBoundMs} from './rule_check_api.js';
 import type {CheckWorker} from './rule_check_api.js';
 import {recordError} from './feedback_context.js';
 import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
@@ -58,7 +58,7 @@ import {relatedPage,refreshRelated} from './bulk_children.js';
 import {setRuleNumber} from './bulk_rule.js';
 import {bulkEditorPage,setSheetContext,sheetStagedCount} from './sheet.js';
 import {runBulk,openChange,openStaged,type BulkChange} from './bulk_change.js';
-import {SHOW_AFTER,READ_TIMEOUT,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,observeSize,say,type Shape} from './loading.js';
+import {SHOW_AFTER,READ_TIMEOUT,busyLabel,joinRun,WAIT_WORDS,flight,skeleton,working,settle,reveal,track,busy,fadeOut,topProgress,swap,delayed,elapsed,clock,observeSize,say,type Shape} from './loading.js';
 import {stoppedWords,causeOf,causeWords} from './job_state_api.js';
 import {selectionBar} from './selection_bar.js';
 import {sidePanel,forgetPanelWidths,dockPanel,closeDock,dockDirty,dockLeave,dockOutlived,dockRevision,keepDock,markOpen,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -328,7 +328,8 @@ window.addEventListener('rota-saved',e=>{const d=(e as CustomEvent).detail;if(!p
 // Session saves use the same must-fix total as the Fix list and footer.
 window.addEventListener('rota-saved',e=>{
   const {kind,result}=(e as CustomEvent).detail||{};
-  const must=kind==='shift.create'||kind==='shift.update'?fixDeltaOf(result)?.summary?.must:0;
+  const summary=fixDeltaOf(result)?.summary;
+  const must=(kind==='shift.create'||kind==='shift.update')&&!summary?.checking?summary?.must:0;
   toastClause(must?mustWords(must)+'.':deltaWords(result));
 });
 /** A draft edit's reply (every draft edit and its Undo answer alike, planning.changed): the draft's row in the rota list
@@ -1129,16 +1130,30 @@ function showStale(on:boolean,error?:unknown){
     banner.prepend(icon('alert'));banner.append(button('Retry',retryRefresh,'secondary small'));staleBanner={text:key,node:banner};}
   main.prepend(staleBanner.node);
 }
+// #1436: an edit whose complete check follows its reply (the server's deferred kinds) holds a draft's Submit (data-step)
+// from the moment it starts saving; a step already waiting keeps its clock. A refused save draws them again as they were.
+const CHECK_DEFERS=new Set(['shift.update','workspace.undo','workspace.redo','draft.move']);
+// #1437: the reader's deferred saves ("rota:change" → revision) and each rota's latest own save (its change, '' when
+// not a deferred one): a receipt for any of them says its must fix with Show; only the latest may offer its Undo.
+// shortcut: kept for the page's life (a few strings per save), clear on rota leave if sessions grow long.
+const ownDeferred=new Map<string,number>(),latestOwn=new Map<string,string>();
+const holdSteps=()=>{const since=Date.now();
+  for(const b of document.querySelectorAll<HTMLElement>(':is(.rota-decisions,.fix-bar) [data-step]:not([data-check-hold])')){notYet(b,checkWait(since),true);b.dataset.checkHold=String(since);b.dataset.saveHold='';}
+  startTick();};
+const releaseSteps=()=>{if(!document.querySelector('[data-save-hold]'))return;if(checkBusy())setTimeout(releaseSteps,1500);else void redraw();};
 // Rota checks and automatic read markers must not replace the person's save status (api.ts automatic, D-4).
 const ownSave=(e:Event)=>{const d=(e as CustomEvent).detail||{};return !automatic(d.kind,d.payload);};
-window.addEventListener('rota-saving',e=>{if(ownSave(e))paintSave();});
-window.addEventListener('rota-save-settled',()=>paintSave());  // any refusal ends "Saving…" (a refused Undo says no more)
+window.addEventListener('rota-saving',e=>{if(ownSave(e))paintSave();if(ownSave(e)&&CHECK_DEFERS.has((e as CustomEvent).detail?.kind))holdSteps();});
+window.addEventListener('rota-save-settled',()=>{paintSave();releaseSteps();});  // any refusal ends "Saving…" (a refused Undo says no more)
 window.addEventListener('rota-save-checking',e=>{if(ownSave(e))paintSave();});
 // A save confirmed after an unknown outcome: the page reads the rota again, so it shows what the server has.
 window.addEventListener('rota-saved',e=>{if(!ownSave(e))return;const d=(e as CustomEvent).detail;
   // A held Apply wrote nothing: "Saving…" ends, but nothing is called saved.
   if(d?.kind==='generation.apply'&&!applyWrote(d.result)){paintSave();return;}
   lastSaved=Date.now();saveError='';saveUnconfirmed=false;saveErrorIn=null;paintSave();
+  // #1437: only this reader's own edits whose check was deferred may say they added a must fix.
+  const ws=d?.result?.workspace;if(ws?.id){const deferred=CHECK_DEFERS.has(d?.kind)&&(serverChecking(d.result.validation)||serverChecking(ws.validation))&&typeof ws.undo_change_id==='string';
+    latestOwn.set(String(ws.id),deferred?ws.undo_change_id:'');if(deferred)ownDeferred.set(`${ws.id}:${ws.undo_change_id}`,Number(ws.revision));}
   if((e as CustomEvent).detail?.replayed)void refresh(true);});
 window.addEventListener('rota-recheck',()=>void refresh());
 // A save refused inside a dialog is said there; once that dialog closes (discarded) nothing is left unsaved (SW3-C-05).
@@ -2084,9 +2099,18 @@ const checkSaid=()=>checkingWords(checkJob?checkJob.status:checkSync?'running':'
 /** The job's status moved (queued → running): every check line drawn says it in place, without a redraw. */
 const sayCheck=()=>{for(const line of document.querySelectorAll<HTMLElement>('[data-check-line]')){const said=checkSaid();
   if(line.dataset.checkLine!==said){line.dataset.checkLine=said;line.childNodes[1].textContent=said+' · ';line.querySelector('button')?.setAttribute('aria-label','Cancel: '+said.toLowerCase());}}
-  for(const n of document.querySelectorAll<HTMLElement>('.dock-panel.fix-side .fix-gate .fix-checking'))if(n.lastChild)n.lastChild.textContent=checkSaid();
-  // Submit, Approve and Publish held for this check say what its line says (schedulePage checkHold).
-  for(const b of document.querySelectorAll<HTMLElement>('[data-check-hold]'))notYet(b,checkSaid());};
+  // The gate's words are its second node (spinner, words, then its clock when it has one).
+  for(const n of document.querySelectorAll<HTMLElement>(':is(.dock-panel.fix-side,.fix-page) .fix-gate .fix-checking'))if(n.childNodes[1])n.childNodes[1].textContent=checkSaid();};
+/** #1436: a draft's Submit (and a sandbox's Merge into rota…) wait from the save's start to the current revision's complete check, with one
+ *  clock: the server's stale_since (else this page's own start of the check). */
+const checkWait=(since=checkStarted)=>since?`${CHECK_WAIT} · ${clock(Date.now()-since)}`:CHECK_WAIT;
+/** One tick for every held step and every gate clock drawn (each carries its own since); stops when none is left. */
+let checkTicker=0;
+const tickCheck=()=>{const held=document.querySelectorAll<HTMLElement>('[data-check-hold]'),clocks=document.querySelectorAll<HTMLElement>('[data-check-clock]');
+  if(!held.length&&!clocks.length){clearInterval(checkTicker);checkTicker=0;return;}
+  for(const n of clocks)n.textContent=clock(Date.now()-Number(n.dataset.checkClock));
+  for(const b of held)notYet(b,checkWait(Number(b.dataset.checkHold)),true);};
+const startTick=()=>{if(!checkTicker)checkTicker=window.setInterval(tickCheck,1000);};
 /** Someone is mid-task (a dialog, a popover, a field, a session panel): a redraw would rebuild it under them. */
 const checkBusy=()=>!!document.querySelector('dialog[open],.popover,.dock-panel:not([data-rota-targets]):not(.fix-side)')||(!!document.activeElement?.matches('input,textarea,select')&&!document.activeElement.closest('[data-rota-targets]')&&!document.activeElement.matches('.wk-panel input[type=search]'))
   // A session panel is mid-task while it saves or a reason or confirm is open; idle (after its save), the check's result
@@ -2131,6 +2155,7 @@ const DONE_JOB=['succeeded','failed','cancelled','applied','discarded'];
  *  until the check's job is known (job.create answered, or a check found running joined), never for the synchronous
  *  check run without workers, which the server cannot stop (UX-FIX-A). */
 const checkLine=()=>{const said=checkSaid(),line=elapsed(said,checkStarted,cancelCheck),b=line.querySelector('button');line.dataset.checkLine=said;
+  line.removeAttribute('role');  // #1436: nothing is said while the check runs; its end is said once (autoCheck)
   if(b){b.dataset.checkCancel='';b.hidden=!checkCancelShown();}return line;};
 /** Every check line drawn shows its Cancel only while the check can be stopped (checkCancellable). */
 const sayCancel=()=>{for(const b of document.querySelectorAll<HTMLElement>('[data-check-cancel]'))b.hidden=!checkCancelShown();};
@@ -2195,10 +2220,11 @@ function autoCheck(data:WorkspaceData,existing?:Row){
   // A job the server already has is new proof about the workers; without one the remembered probe stands.
   if(existing)void reprobeWorkers(String(existing.id));else probeWorkers();
   if(existing?(autoChecking||checkJob?.id===existing.id):autoCheckKey===key)return;
-  autoCheckKey=key;autoChecking=true;checkStarted=existing?Date.parse(existing.started_at||existing.created_at)||Date.now():Date.now();checkStop=null;checkCancelled='';checkUnstarted='';
+  // #1436: one clock, from the moment the rota went out of date (the server's stale_since), not from this page's start.
+  autoCheckKey=key;autoChecking=true;checkStarted=Date.parse(w.validation?.stale_since)||(existing?Date.parse(existing.started_at||existing.created_at)||Date.now():Date.now());checkStop=null;checkCancelled='';checkUnstarted='';
   checkSync=!existing&&!workersKnown()&&!serverChecking(w.validation);  // runCheck's own choice, known before the footer draws
   // Show the result without disturbing someone mid-task: wait while a dialog is open or a field has focus.
-  const settle=(job?:Row|null)=>{if(view!=='schedule'||workspaceId!==w.id)return;
+  const settle=(job?:Row|null,clearedBefore?:number)=>{if(view!=='schedule'||workspaceId!==w.id)return;
     // The result is taken in as it lands (its job is this page's own from now: onPulse skips its pulse); only the redraw
     // waits for someone mid-task.
     // A complete-check delta replaces the held validation in place. This is the
@@ -2220,21 +2246,50 @@ function autoCheck(data:WorkspaceData,existing?:Row){
       // step is kept), so the grid and footer show the checked rota at once instead of when focus moves.
       if(checkBusy()){setTimeout(show,1500);return;}
       void redraw();};
-    show();void loadNavBadges(true,['workspace.validate']);};
+    if(clearedBefore===undefined)show();else void sayChecked(w.id,job,clearedBefore).then(show,show);
+    void loadNavBadges(true,['workspace.validate']);};
   // A refused check is said once for this version of the rota (SR-19), not left as a silent "Needs a check".
   // A cancelled check's late answer is left alone: the person chose to go on with the previous results.
   if(existing){checkStoppable(existing,key,w);void redraw();}  // the footer shows it now, not at the next draw
   // Superseded by a newer edit's check on this rota (autoCheckKey moved on): this one's result is dropped, never drawn,
   // and the checking state stays the newer check's.
   const superseded=()=>autoCheckKey!==key&&autoCheckKey.startsWith(w.id+':');
-  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);settle(job);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
+  void runCheck(w,key,existing).then(job=>{if(checkCancelled===key||superseded())return;autoChecking=false;keepCheckRow(job);
+    settle(job,fixCache.get(w.id)?.list.summary.since?.cleared||0);}).catch(e=>{if(checkCancelled===key||superseded())return;autoChecking=false;
     // The page's own take-over failed too: the check hasn't started (the footer pill says so), with why.
     if(checkUnstarted===key){if(!sessionChanged(e))reportError(e);}
     // It names what stopped it (maintenance's cause) above the grid with Check again, never a toast that goes away (B7).
     // A failed job with no named cause is its own words alone (checkStoppedWords); a refused
     // synchronous check keeps the server's words after the elapsed time.
     else if(!sessionChanged(e)){const err=e as ApiError,s=stoppedWords(Date.now()-checkStarted,err.details),job=e instanceof CheckJobStopped;
-      checkStop={rota:w.id,lead:job&&!s.cause?err.message:s.lead,cause:s.cause||(job?'':err.message),refused:checkRefused(err.code,err.status)};}settle();});
+      checkStop={rota:w.id,lead:job&&!s.cause?err.message:s.lead,cause:s.cause||(job?'':err.message),refused:checkRefused(err.code,err.status)};
+      say('The rota check stopped. '+CHECK_AGAIN+'.');}settle();});
+}
+/** #1436/#1437: a check's end is said once. The reader's own edit that the check found to add a must fix is one warning
+ *  toast (the tray is the live region, so nothing else is said) with Show, and an Undo of exactly that edit only while it
+ *  is still their current save on this rota; otherwise the counts in words. */
+async function sayChecked(id:string,job:Row|null|undefined,clearedBefore:number){
+  const here=()=>view==='schedule'&&workspaceId===id;if(!here())return;
+  const d=scheduleCache.drafts.get(id)||await wholeRota(id,true,false).catch(()=>null);
+  if(!d||!here()||!d.workspace.validation_current)return;
+  const list=await fixListFor(id,d).catch(()=>null);
+  if(!list||!here()||list.revision!==d.workspace.revision||list.summary.checking)return;
+  // Only a complete, non-stale receipt, and only its changes (coalesced saves) that are this reader's own deferred saves,
+  // matched by change and causal revision. A compact read has no undo_change_id, so the local save and the revision on
+  // screen bind the Undo (the server refuses a superseded one).
+  const dl=job?.delta,late=dl?.kind==='complete_check'&&!dl.stale&&!dl.partial?dl.validation?.deferred_edit:null;
+  type Change={change_id:string;caused_by_revision:number;finding_keys:string[];shift_ids:string[]};
+  const mine:Change[]=(Array.isArray(late?.changes)?late.changes:[])
+    .filter((c:Change)=>c.finding_keys?.length&&ownDeferred.get(`${id}:${c.change_id}`)===Number(c.caused_by_revision));
+  const keys=new Set(mine.flatMap(c=>c.finding_keys)),added=list.causes.filter(c=>c.level==='must'&&!c.safety&&[...(c.finding_keys||[]),...Object.values(c.session_findings||{})].some(k=>keys.has(k)));
+  if(added.length){for(const c of mine)ownDeferred.delete(`${id}:${c.change_id}`);
+    const last=mine.find(c=>c.change_id===latestOwn.get(id)),edit=last||mine[mine.length-1],first=added[0];
+    // Show and Undo only when the one contributing save is still the reader's current save; otherwise Show only.
+    const undoOf=last&&d.workspace.revision===Number(last.caused_by_revision)?last.change_id:'';
+    const start=d.shifts.find(s=>edit.shift_ids?.includes(s.id))?.start;
+    notify(`${added.length} new must fix with your edit${start?' · '+formatDay(start,zone()):''}`,'warning',
+      undoOf?{label:'Undo',run:()=>undoLast(undoOf)}:undefined,undefined,{label:'Show',run:()=>openIssues(id,{cause:first.id})});return;}
+  say(checkSettledWords(Math.max(0,(list.summary.since?.cleared||0)-clearedBefore),list.summary.must));
 }
 // A double-booked session cancelled elsewhere (another draft, a recurring session) leaves the open draft's check out of
 // date: check it again by itself, once for cancels in quick succession. If that fails, the draft's "Check rota" stays.
@@ -2615,12 +2670,12 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       if(lifecycleOf(w)==='workspace.restore')workflow.append(button('Restore',()=>restoreRota(w,restoredRota).catch(reportError),'secondary'));
     }else if(sandbox&&draft&&rota)workflow.append(compact(button('Merge into rota…',()=>void mergePanel(w,{rota,time:x=>formatTime(x,zone()),day:x=>formatDay(x,zone()),
       ring:ids=>{for(const n of document.querySelectorAll('.cause-ring'))n.classList.remove('cause-ring');for(const id of ids)for(const n of document.querySelectorAll(`[data-session~="${CSS.escape(id)}"]`))n.classList.add('cause-ring');},
-      done:id=>chooseDraft(id),person:id=>name('people',id),before:(f=>f?{must:f.must,places_open:f.places_open}:null)(fixSummaryOf(rota.health?.summary))}),'secondary',{'aria-label':'Merge into rota…'}),'fork'));
+      done:id=>chooseDraft(id),person:id=>name('people',id),before:(f=>f?{must:f.must,places_open:f.places_open}:null)(fixSummaryOf(rota.health?.summary))}),'secondary',{'aria-label':'Merge into rota…','data-step':''}),'fork'));
     // SW3-A-11 (D41): no rota for the period to merge into is said where Merge is, with who can fix it (never a missing
     // button). aria-disabled keeps its focus and tip; pressing it says why, with the setting for an admin.
     else if(sandbox&&draft&&permits(CAPABILITY.COORDINATOR)){const why=mergeBlocked();
       workflow.append(compact(button('Merge into rota…',()=>notify(why+'.','info',permits(CAPABILITY.ADMIN)&&!rotaCoordinatorIds.length?{label:'Choose Rota Coordinators',run:()=>navigate('configuration/'+addressOf('scheduling_groups'))}:undefined),'secondary',{'aria-label':'Merge into rota…','aria-disabled':'true','data-tip':why}),'fork'));}
-    else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…','data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
+    else if(!sandbox&&permits(CAPABILITY.COORDINATOR)&&(w.status==='draft'||(w.status==='approved'&&!outdated)))workflow.append(compact(button(step,withDraft(publishDialog),'secondary',{'aria-label':step,'data-busy':'Checking…',...(w.status==='draft'?{'data-step':''}:{}),'data-tip':w.status==='draft'?'Check it, then send it to an approver. Publish it here once approved.':'Check again, then publish to staff'}),'send'));
     else if(w.status==='approved'&&!outdated&&permits(CAPABILITY.APPROVER))workflow.append(compact(button('Publish…',withDraft(publishDialog),'secondary',{'aria-label':'Publish…','data-busy':'Checking…'}),'send'));
     // One predicate for Reopen: the note below shows exactly when the button does not.
     const mayReopen=!w.archived_at&&['submitted','approved'].includes(w.status)&&permits(CAPABILITY.COORDINATOR);
@@ -2694,12 +2749,14 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       :kind==='checked'?el('span',{class:'health-pill neutral'},icon('check'),TERMS.checked)
       :kind==='stale'?staleHealth(fixHealth(w.id,{...fixSum!,stale:true} as FixSummary,data,w),validate):kind==='check-now'?validate
       :el('span',{class:'health-pill warn','data-tip':'The rota or its rules changed since the last check.'},icon('clock'),TERMS.needsCheck);
-    // Submit, Approve and Publish wait while the latest revision is not checked, whatever the check's state (running,
-    // waiting, stalled, not started, cancelled, failed): held in place (D59 notYet), saying what the footer says.
-    const checkHold=reading||!draft||fresh&&!serverChecking(w.validation)?'':kind==='checking'?checkSaid():kind==='provisional'?checkingWords(provisional!.status)
-      :kind==='waiting'?waitingWord('queued'):kind==='not-checked'?TERMS.notChecked
-      :['stalled','stale','check-now'].includes(kind)?validate.lastElementChild!.textContent!.split(' · ')[0]:TERMS.needsCheck;
-    if(checkHold)for(const b of workflow.children)if(b instanceof HTMLButtonElement){notYet(b,checkHold);if(kind==='checking')b.dataset.checkHold='';}
+    // #1436: a draft's Submit and Merge into rota… (data-step; Approve and Publish keep the stale-input path) wait while the latest revision has no
+    // complete check: held in place (D59 notYet), the reason beside them. A check under way "Waits for the rota check ·
+    // m:ss" on the one clock; one that stopped, was cancelled or never ran "Needs a complete check".
+    const pending=serverChecking(w.validation),since=Date.parse(w.validation?.stale_since)||checkStarted;
+    const waiting=['checking','provisional','waiting'].includes(kind)||kind!=='stalled'&&!cancelled&&!unfinished&&autoChecking&&autoCheckKey.startsWith(w.id+':');
+    const checkHold=reading||!draft||fresh&&!pending?'':waiting?checkWait(since):CHECK_INCOMPLETE;
+    if(checkHold){for(const b of workflow.querySelectorAll<HTMLElement>('[data-step]')){notYet(b,checkHold,true);if(waiting)b.dataset.checkHold=String(since);}
+      if(waiting)startTick();}
     // Overlaps: an undecided published rota on its days, or competing drafts. Both open the same overlap panel.
     const overlap=w.overlap||named?.overlap||work.find(r=>r.id===w.id)?.overlap;
     const conflicts=overlap?.publications?.length||0,competing=overlap?.drafts?.length||0;
@@ -2826,7 +2883,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   target.append(toolbarSlot);
   // B7: a check that stopped says why, under the toolbar, with Check again (the results shown are the previous check's).
   // Also a failed job of a provisional check (its stored partial check still counts as current): never a silent stop.
-  if(w&&draft&&(!fresh||serverChecking(w.validation))&&checkStop?.rota===w.id){const line=note('','error');line.classList.add('stale-banner','check-stopped');line.setAttribute('role','status');line.id=CHECK_STOPPED_WHY;
+  if(w&&draft&&(!fresh||serverChecking(w.validation))&&checkStop?.rota===w.id){const line=note('','error');line.classList.add('stale-banner','check-stopped');line.removeAttribute('role');line.id=CHECK_STOPPED_WHY;  // #1436: said once, by autoCheck
     line.querySelector(':scope>span')?.replaceChildren(el('strong',{},checkStop.lead),checkStop.cause?' '+checkStop.cause:'');
     line.prepend(icon('alert'));if(!checkStop.refused)line.append(button(CHECK_AGAIN,checkAgain,'secondary small'));target.append(line);}
   if(Object.entries({location_ids:'locations',assignment_type_ids:'assignment_types',person_ids:'people',category_ids:'categories',programme_ids:'programmes',service_ids:'services'}).some(([k,kind])=>(schedFilters[k]||[]).some(id=>!find(kind,id))))target.append(note('A saved filter refers to a record no longer available to this account. Clear or replace that filter; it has not been silently dropped.','warning'));
@@ -2958,8 +3015,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   weekHooks.unfiltered=unfiltered;weekHooks.rota=rota;weekHooks.checking=autoChecking&&draft&&!fresh&&!checkStalled();
   // The check behind the latest edit has ended without a result (failed, not started, cancelled) or nobody runs it.
   weekHooks.checkEnded=()=>checkStop?.rota===w!.id||checkUnstarted.startsWith(w!.id+':')||!!checkCancelled&&checkCancelled===autoCheckKey&&autoCheckKey.startsWith(w!.id+':')||checkStalled();
-  // An edit's reply: Submit, Approve and Publish are held at once (its check is queued), before the page redraws.
-  weekHooks.edited=()=>{for(const b of workflow.children)if(b instanceof HTMLButtonElement&&b.getAttribute('aria-disabled')!=='true')notYet(b,waitingWord('queued'));};
+  // An edit's reply: a draft's held steps (data-step) wait at once on the one clock, before the page redraws.
+  weekHooks.edited=holdSteps;
   // Staff: a published duty inside their own recorded or approved leave says so ("Leave approved · cover being
   // arranged"); the publication itself is never changed by leave, so "Your duty" alone would contradict the approval.
   if(!draftData&&me!.person_id&&!permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER)){
@@ -3665,7 +3722,8 @@ function fixHealth(id:string,s:FixSummary,data:WorkspaceData|null,w:Row|null|und
     popover(at,(panel,close)=>panel.append(...scoreWhy(score,pid=>name('people',pid),sid=>{close();const x=byId.get(sid);if(x&&!openSession(x))readOnlySession(x);},review&&(()=>{close();review();}))),{label:'Why this score',placement:'below-end'});}:undefined;
   // V08: a summary without a score (an applied run's command_changes check and its fix_list_after say score null) shows
   // the rota's current check's score, which the complete check patches into the held draft (applyCheckDelta).
-  const pills=fixPills(g?{...s,must:g.must,could:g.could,score:null}:{...s,score:s.score??(score?shownScore(score):null)},{load:()=>readFixList(id),held:()=>{const h=fixCache.get(id)?.list;return h&&h.summary.must===s.must&&h.summary.could===s.could?h:heldFixList(id,s);},open:()=>openIssues(id),breakdown,hooks:fixHooks(id,data,w),step:readyStep(w,data)});
+  const held=fixCache.get(id)?.list,added=!g&&held&&held.summary.must===s.must?held.causes.filter(c=>c.level==='must'&&c.new).length:0;
+  const pills=fixPills(g?{...s,must:g.must,could:g.could,score:null}:{...s,added,score:s.score??(score?shownScore(score):null)},{load:()=>readFixList(id),held:()=>{const h=fixCache.get(id)?.list;return h&&h.summary.must===s.must&&h.summary.could===s.could?h:heldFixList(id,s);},open:()=>openIssues(id),breakdown,hooks:fixHooks(id,data,w),step:readyStep(w,data)});
   if(g)pills.prepend(el('span',{class:'footer-group'},g.name));
   if(data&&proposalShown(data))pills.prepend(proposalPill(data));
   // Owner, 7 Nov 2026: the score shows whenever the rota has one, not only once nothing must be fixed. Capped, it says
@@ -3988,7 +4046,7 @@ function applyRemoteEdit(r:Row):boolean{
 /** ✓ chips last only while the server says their session left its cause: a delta (an Undo's too) or a full read that
  *  lists the session in a cause again drops it, so no local list of fixes outlives an edit (maintenance). */
 function settleDone(id:string,l:FixList){
-  if(fixFocus?.rota!==id||!fixFocus.done.size)return;
+  if(fixFocus?.rota!==id||!fixFocus.done.size||l.summary.checking)return;
   const open=new Set(l.causes.flatMap(c=>causeShifts(c)));
   for(const sid of [...fixFocus.done.keys()])if(open.has(sid))fixFocus.done.delete(sid);
 }
@@ -4041,10 +4099,11 @@ function fillBox(c:FixCause,s:Row,data:WorkspaceData,again:()=>void):HTMLElement
       more:()=>{queueFill(id,s.id,undefined,issue);toCalendar(s);void redraw();},
       // Refused because the rota moved on: forget the draft and Fix list held, and read both again.
       stale:async()=>{scheduleCache.drafts.delete(id);fixCache.delete(id);await refresh();},
-      // The reply's fix_list_delta has already said whether the session is fixed (rota-saved, above): name who on its ✓
-      // chip, then stay on it while it is still open, else move to the cause's next open session.
-      done:async who=>{const fixed=fixFocus?.done.get(s.id);if(fixed)fixed.who=who;
-        const now=fixCache.get(id)?.list.causes.find(x=>x.id===c.id),open=now?sessionsOf(now,data):[];
+      // A checked choice that resolves this cause fills its chip on save. A later whole check can reopen it.
+      done:async (who,resolves)=>{const list=fixCache.get(id)?.list,focus=fixFocus?.rota===id?fixFocus:null;
+        const fixed=focus?.done.get(s.id);if(fixed)fixed.who=who;
+        else if(resolves&&list?.summary.checking)focus?.done.set(s.id,{cause:c.id,who});
+        const now=list?.causes.find(x=>x.id===c.id),open=now?sessionsOf(now,data).filter(x=>!focus?.done.has(x.id)):[];
         // The move on after an Assign is the person's (they are fixing these): its candidates load at once (LEAD-UIUX).
         focusOn(id,{cause:c.id,shift:(open.find(x=>x.id===s.id)||open.find(x=>x.start>s.start)||open[0])?.id,chosen:true});
         // The reply's delta is held already: show its ✓ and the next session now, not after the redraw below (QA cycle 3 maintenance:
@@ -4112,7 +4171,9 @@ async function drawFixPanel(force=false){
         const only=fixFocus?.rota===id&&fixFocus.only?new Set(fixFocus.only):null,shown=only?{...now,causes:now.causes.filter(c=>only.has(c.id))}:now;
         body.replaceChildren(...(only?[el('p',{class:'fix-only'},`Showing ${shown.causes.length} of ${now.causes.length}`,
             button('Show all',()=>{if(fixFocus)fixFocus.only=undefined;paint();},'link-button'))]:[]),
-          ...fixPanelNodes({...shown,summary:{...now.summary,...(autoChecking&&workspaceId===id?{checking:!checkStalled(),checking_words:checkSaid()}:{})}},h,readyStep(d?.workspace,d)));
+          ...fixPanelNodes({...shown,summary:{...now.summary,...(autoChecking&&workspaceId===id?{checking:!checkStalled(),checking_words:checkSaid(),checking_since:checkStarted}:{})}},h,readyStep(d?.workspace,d)));
+        // #1436: the list is busy while its check runs (its gate's clock ticks unannounced); its end is said once.
+        if(autoChecking&&workspaceId===id&&!checkStalled()){body.setAttribute('aria-busy','true');startTick();}else body.removeAttribute('aria-busy');
         ringCause(focusedCause(now,d));keep(body);};
       paint();}});}
   finally{fixRefreshing=false;}
@@ -4184,7 +4245,11 @@ function fixBar(data:WorkspaceData,openAuto?:(button:HTMLButtonElement)=>void){
   // ME-15: on the Fix list the panel opens beside it, in place; elsewhere the schedule opens with its panel.
   const auto:HTMLButtonElement|null=steps?compact(button('Auto-schedule',()=>{const s={...(schedulingByRota.get(w.id)||{...freshScheduling(w.id),...ownSetup(w.id)}),open:true};
     schedulingByRota.set(w.id,s);schedulingSettings=s;if(openAuto)openAuto(auto!);else toRota();},'secondary auto-button',{'aria-controls':'auto-panel','aria-expanded':'false'}),'sparkle'):null;
-  const submit=steps?compact(button('Submit for review…',()=>void publishDialog(data).catch(reportError),'secondary',{'data-busy':'Checking…'}),'send'):null;
+  const submit=steps?compact(button('Submit for review…',()=>void publishDialog(data).catch(reportError),'secondary',{'data-busy':'Checking…','data-step':''}),'send'):null;
+  if(submit&&serverChecking(w.validation)){
+    const running=autoChecking&&autoCheckKey.startsWith(w.id+':')&&!checkStalled(),since=Date.parse(w.validation?.stale_since)||checkStarted;
+    notYet(submit,running?checkWait(since):CHECK_INCOMPLETE,true);
+    if(running){submit.dataset.checkHold=String(since);startTick();}}
   const planning=planningOf(data);
   const bar=el('div',{class:'planner-bar review-bar fix-bar'},back,sandboxPill(w,me!.identity_id)||rotaStatusPill(w),planning?groupScopeButton(w.id,planning):'',el('span',{class:'grow'}),auto||'',submit||'');
   fitRow(bar,['tight','tighter','tightest'],()=>phoneQuery.matches||bar.scrollWidth>bar.clientWidth+1);
@@ -4199,6 +4264,10 @@ async function fixPage(target:HTMLElement,id:string){
   // after an edit changes no revision, only the check's evaluated_at and scope, which the Fix list is keyed on
   // (fixListFor). Kept, a held copy left the page on the edit's "Checking…" counts. A newer patched copy still wins.
   const [,data]=await Promise.all([ensureCatalogues(),wholeRota(id,true,false).catch(()=>scheduleCache.drafts.get(id)||null)]);
+  if(mySerial!==renderSerial)return;
+  if(data?.workspace.status==='draft'&&!data.workspace.archived_at&&permits(CAPABILITY.COORDINATOR)
+      &&editableDraft(data.workspace,me!.identity_id)&&serverChecking(data.workspace.validation)){
+    workspaceId=id;autoCheck(data);}
   const day=String(data?.workspace.starts_on||departmentToday());
   // A saved view is a scheduling group (R2): people by rank, programme or tag, as the person is on the rota's first day.
   const facts=(kind:string,key:string)=>{const by=new Map<string,string[]>();for(const m of rows(kind))if(activeOn(m,day))by.set(m.person_id,[...(by.get(m.person_id)||[]),String(m[key])]);return by;};
@@ -4219,14 +4288,20 @@ async function fixPage(target:HTMLElement,id:string){
   const inPlace=():Partial<FixHooks>=>{const l=fixCache.get(id)?.list||lastFixList(id);return l?fixFocusHooks(id,data,l,()=>pageHooks.redraw?.(),false):{};};
   const pageHooks:FixHooks&{redraw?:()=>void}={...fixHooks(id,data),...(permits(CAPABILITY.COORDINATOR)?{chips:c=>inPlace().chips?.(c)||null,fill:c=>inPlace().fill?.(c)||null,assign:c=>inPlace().assign?.(c)||null}:{act:undefined})};
   // One hooks object: the page sets its redraw on it (fix_list.ts), which the chips call.
-  const list=await fixListPage(column,id,Object.assign(pageHooks,{read:()=>fixListFor(id,data),step:readyStep(data?.workspace,data),shareable:permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN),planning:(p=>{if(!p)return null;const g=scopedGroup(id,p);return {...p,group_id:g?.group_id??null,group_version_id:g?.group_version_id??(g?p.group_version_id:null)};})(planningOf(data)),
+  const checkSummary=(summary:FixSummary):FixSummary=>{const stop=checkStop?.rota===id?checkStop:null;
+    if(stop)return {...summary,checking:false,check_stop:{lead:stop.lead,cause:stop.cause,tryAgain:stop.refused?undefined:checkAgain}};
+    const running=autoChecking&&autoCheckKey.startsWith(id+':')&&!checkStalled();
+    if(running){startTick();return {...summary,checking:true,checking_words:checkSaid(),checking_since:checkStarted};}
+    return summary;};
+  const list=await fixListPage(column,id,Object.assign(pageHooks,{read:()=>fixListFor(id,data),checkSummary,step:readyStep(data?.workspace,data),shareable:permits(CAPABILITY.COORDINATOR,CAPABILITY.ADMIN),planning:(p=>{if(!p)return null;const g=scopedGroup(id,p);return {...p,group_id:g?.group_id??null,group_version_id:g?.group_version_id??(g?p.group_version_id:null)};})(planningOf(data)),
     checks:()=>navigate(routeHash('schedule',['issues'],{draft:id,view:'checks'}).slice(1)),
     personFacts:(p:string)=>({category_ids:ranks.get(p)||[],programme_ids:programmes.get(p)||[],tags:tags.get(p)||[]}),
     // Only what someone on the rota holds that day (F-09: no retired or test programmes, no rank nobody has).
     fields:[{key:'category_ids',label:'Rank',choices:choices(rows('categories').filter(r=>heldBy(ranks).has(r.id)))},{key:'programme_ids',label:'Programme',choices:choices(rows('programmes').filter(r=>heldBy(programmes).has(r.id)))},{key:'tags',label:'Tag',choices:tagChoices}]}));
   if(mySerial!==renderSerial)return;
   if(data)swapPlannerBar(fixBar(data,openAuto),target);
-  target.append(footerStatus(fixHealth(id,list.summary,data)));
+  const summary=checkSummary(list.summary),health=fixHealth(id,summary,data),retry=summary.check_stop?.tryAgain;
+  target.append(footerStatus(retry?staleHealth(health,button(CHECK_AGAIN,retry,'secondary small')):health));
 }
 /** What Fix list rows read and do wherever they are drawn: a cause's action, its rule lines and the names in its evidence. */
 /** A cause's other fixes, from its own findings' fix hints (leave, a series to extend, the limit, rota rules…): under ▾,
@@ -8709,8 +8784,9 @@ window.addEventListener('offline',()=>{stream?.close();stream=null;showConnectio
 // The draft on screen names the revision (a stale one is refused: the conflict message says to reload).
 const NO_UNDO='Nothing left to undo';
 const draftOnScreen=async()=>scheduleCache.drafts.get(workspaceId)?.workspace||(await rotaMeta(workspaceId)).workspace;
-async function undoLast(){
-  const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo'},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
+/** `undoOf`: undo exactly that change (#1437's late must fix), refused if it is no longer the latest. */
+async function undoLast(undoOf?:string){
+  const w=await draftOnScreen(),done=[{kind:'workspace.undo',result:await command('workspace.undo',{reason:'Undo',...(undoOf?{undo_of:undoOf}:{})},w.id,w.revision).catch(e=>{throw undoRefused(e);})}];
   await applyUndone(done);notifyUndone(done,'Undone. The previous arrangement is back and checked again.');
 }
 // Its "Redone." message (the undo registry) offers Undo again.

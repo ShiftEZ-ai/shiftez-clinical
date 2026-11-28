@@ -1,5 +1,5 @@
 """The session panel is live for the next edit as soon as its save answers; the whole-rota check runs behind it, and
-Submit, Approve and Publish wait for it in the footer's own words, whatever state the check is in."""
+a draft's Submit waits for it on one clock until the check is complete (#1436), whatever state the check is in."""
 import contextlib
 import re
 
@@ -14,6 +14,7 @@ pytestmark = pytest.mark.browser
 SAVE = 'Saved · checking the rest of the rota…'
 QUEUED = 'Waiting to check'
 RUNNING = 'Checking the rota'
+WAITS, INCOMPLETE = 'Waits for the rota check', 'Needs a complete check'
 WHOLE_ROTA_CLAIM = re.compile(r'Rota check passed|must fix')
 # Every flash a session panel shows, kept as it appears (a flash can be replaced before a later assertion reads it).
 FLASHES = """() => { window.__flashes = []; new MutationObserver(() => {
@@ -66,21 +67,25 @@ def submit_of(page):
     return page.locator('.planner-bar').get_by_role('button', name='Submit for review…', exact=True)
 
 
-def held_as_footer_says(page, words=None, press=False):
-    """Submit is held in place (focusable, aria-disabled) with the footer's own words for the check: one name per state,
-    in its tip, its screen-reader description and (`press`) the message a press shows. Returns the words."""
+def held_for_check(page, words=WAITS, press=False):
+    """Submit is held in place (focusable, aria-disabled) with one reason (#1436), in its tip, beside it in words and in
+    its screen-reader description, and (`press`) in the message a press shows: a check under way "Waits for the rota
+    check · m:ss" on one clock, one that ended without a result "Needs a complete check". Returns the tip."""
     submit = submit_of(page)
     expect(submit).to_have_attribute('aria-disabled', 'true', timeout=20000)
-    if words:
-        expect(submit).to_have_attribute('data-tip', words, timeout=20000)
-    words = submit.get_attribute('data-tip')
-    assert words
-    expect(page.locator('.app-footer')).to_contain_text(words)
-    expect(submit).to_have_accessible_description(re.compile(re.escape(words)))
+    reason = re.escape(words) + (r' · \d+:\d\d' if words == WAITS else '')
+    tip = re.compile('^' + reason + '$')
+    expect(submit).to_have_attribute('data-tip', tip, timeout=20000)
+    expect(submit).to_have_accessible_description(re.compile(reason))
+    why = submit.evaluate("b => (b.getAttribute('aria-describedby') || '').split(' ')"
+                          ".map(id => document.getElementById(id)).find(n => n?.matches('.why-unavailable'))?.id || ''")
+    assert why, "the reason is the held step's description"
+    expect(page.locator('#' + why)).to_be_visible()
+    expect(page.locator('#' + why)).to_have_text(tip)
     if press:
         submit.click(force=True)  # a real press on the held control (Playwright waits for aria-disabled ones otherwise)
-        expect(page.locator('#toast-tray .toast').first).to_have_text(words)
-    return words
+        expect(page.locator('#toast-tray .toast').first).to_have_text(tip)
+    return submit.get_attribute('data-tip')
 
 
 def refuse_delta(scopes):
@@ -130,15 +135,15 @@ def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(b
         older = checks_open(h, w)
         assert len(older) == 1, 'the complete check is still waiting for a worker'
         expect(panel.locator('.wk-cands [aria-disabled=true], .wk-cands button:disabled')).to_have_count(0)
-        # (c) Submit is held, focusable, saying what the footer says: the check is queued.
-        held_as_footer_says(page, QUEUED)
-        # A worker picks the check up: the footer says it in place, and Submit's tip, description and press say the
-        # same. The older check's end reaches this page only when released, so it lands after the newer edit's check
+        # (c) Submit is held, focusable, waiting for the check on one clock.
+        held_for_check(page)
+        # A worker picks the check up: the footer says it in place, and Submit keeps waiting on the same clock, in its
+        # tip, description and press. The older check's end reaches this page only when released, so it lands after the newer edit's check
         # has started.
         older_id, released = older[0]['id'], []
         older_reads_running(page, older_id, released)
         expect(page.locator('.app-footer [data-check-line]')).to_contain_text(RUNNING, timeout=20000)
-        held_as_footer_says(page, RUNNING, press=True)
+        held_for_check(page, press=True)
         # (b) A second edit while the check runs: the candidate list for it is loaded and live, and the edit is sent at
         # the current revision and saved.
         current = h.detail(w)['workspace']['revision']
@@ -155,7 +160,7 @@ def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(b
         expect(panel.locator('.wk-save-slot')).to_have_text(SAVE)
         newer = checks_open(h, w)
         assert [j['id'] for j in newer] != [older_id] and newer, 'the newer edit has its own check'
-        held_as_footer_says(page, QUEUED)
+        held_for_check(page)
         # (d) The older check ends LAST, after the newer check started: its end (the server failed it as stale) is
         # dropped without drawing. The footer keeps the newer check's words, no "Check stopped", and Submit stays held.
         line = page.locator('.app-footer [data-check-line]')
@@ -168,7 +173,7 @@ def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(b
             expect(line).not_to_have_text(ticked, timeout=5000)
         expect(page.locator('.check-stopped')).to_have_count(0)
         expect(page.locator('.app-footer')).not_to_contain_text('Check stopped')
-        held_as_footer_says(page, QUEUED)
+        held_for_check(page)
         # (e) The worker runs the newer check: the holds release and the slot empties in place.
         for _ in range(5):
             if not checks_open(h, w):
@@ -180,7 +185,7 @@ def test_panel_is_live_while_the_whole_rota_check_runs_and_submit_waits_for_it(b
         expect(submit_of(page)).not_to_have_attribute('aria-disabled', 'true', timeout=20000)
         expect(panel.locator('.wk-save-slot')).to_have_count(1)
         expect(panel.locator('.wk-save-slot')).to_have_text('')
-        expect(page.locator('.app-footer').get_by_role('status').filter(has_text=re.compile('Waiting to check|Checking the rota'))).to_have_count(0)
+        expect(page.locator('.app-footer').locator('[data-check-line]').filter(has_text=re.compile('Waiting to check|Checking the rota'))).to_have_count(0)
         assert len({p['person_id'] for s in h.detail(w)['shifts'] for p in s['participants']}) == 2
     finally:
         context.close()
@@ -198,9 +203,9 @@ def test_a_reply_the_page_cannot_patch_claims_no_result_and_a_cancelled_check_ke
         first, _ = assign_first(page, open_gap(page))
         no_whole_rota_claim(page)
         assert scopes == ['command_changes'], scopes
-        held_as_footer_says(page, QUEUED)
+        held_for_check(page)
         # Cancel the check: nothing is queued now, so the footer says "Not checked" (never "Waiting to check"), and the
-        # latest revision is unchecked, so Submit stays held, saying the same.
+        # latest revision is unchecked, so Submit stays held until a complete check.
         cancel = page.locator('.app-footer').get_by_role('button', name=re.compile(r'^Cancel: '))
         expect(cancel).to_be_visible(timeout=20000)
         queued = [job['id'] for job in checks_open(h, w)]
@@ -212,7 +217,7 @@ def test_a_reply_the_page_cannot_patch_claims_no_result_and_a_cancelled_check_ke
         assert stopped.value.ok, stopped.value.status
         assert stopped.value.request.post_data_json['target_id'] in queued, (stopped.value.request.post_data_json, queued)
         expect(cancel).to_have_count(0, timeout=20000)
-        held_as_footer_says(page, 'Not checked', press=True)
+        held_for_check(page, INCOMPLETE, press=True)
         expect(page.locator('.app-footer')).not_to_contain_text(QUEUED)
         assert not checks_open(h, w), 'the cancelled check is not queued'
     finally:
@@ -241,7 +246,7 @@ def test_a_check_that_has_not_started_keeps_submit_held_and_the_panel_stops_sayi
         panel = open_gap(page)
         first, _ = assign_first(page, panel)
         expect(panel.get_by_role('status').filter(has_text=first + ' added to the draft')).to_be_visible(timeout=20000)
-        held_as_footer_says(page, "Check hasn't started")
+        held_for_check(page, INCOMPLETE)
         # The panel's slot no longer says the check is running, and keeps its place.
         expect(panel.locator('.wk-save-slot')).to_have_count(1)
         expect(panel.locator('.wk-save-slot')).to_have_text('')
@@ -256,20 +261,20 @@ def test_a_check_that_has_not_started_keeps_submit_held_and_the_panel_stops_sayi
 def test_an_older_check_failed_by_the_next_edit_never_draws_stopped_before_the_newer_check_is_on_the_page(browser, live_server, h):  # noqa: F811
     """Amendment drafts and replies the page cannot patch: the page reads the rota whole after each edit, so the older
     check's end (the server failed it as stale when the next edit queued its own) can arrive before the newer check is
-    on the page. It is dropped: no "Check stopped" in the footer or above the grid, and Submit keeps the footer's words."""
+    on the page. It is dropped: no "Check stopped" in the footer or above the grid, and Submit keeps waiting on its clock."""
     w, context, page = start(browser, live_server, h)
     try:
         scopes = []
         page.route(re.compile(r'.*/api/commands$'), refuse_delta(scopes))
         open_rota(page, w['id'])
         assign_first(page, open_gap(page))
-        held_as_footer_says(page, QUEUED)
+        held_for_check(page)
         older = checks_open(h, w)
         assert len(older) == 1
         older_id, released = older[0]['id'], []
         older_reads_running(page, older_id, released)
         expect(page.locator('.app-footer [data-check-line]')).to_contain_text(RUNNING, timeout=20000)
-        held_as_footer_says(page, RUNNING)
+        held_for_check(page)
         # From the second edit on, the page's whole reads of the rota wait (parked), as a slow read does at scale.
         parked, holding = [], [True]
         whole_read = re.compile(r'.*/api/workspaces/' + re.escape(w['id']) + r'\?view=schedule$')
@@ -293,14 +298,14 @@ def test_an_older_check_failed_by_the_next_edit_never_draws_stopped_before_the_n
         expect(page.locator('.check-stopped')).to_have_count(0)
         assert len(parked) > reads, 'the dropped check asks for the rota as it is now'
         expect(page.locator('.app-footer')).not_to_contain_text('Check stopped')
-        held_as_footer_says(page)
-        # The reads land: the newer check is on the page, and Submit waits for it in the footer's words.
+        held_for_check(page)
+        # The reads land: the newer check is on the page, and Submit still waits for it on its clock.
         holding.clear()
         for route in parked:
             with contextlib.suppress(Exception):  # a read the page has since replaced may be gone
                 route.continue_()
         expect(page.locator('.app-footer [data-check-line]')).to_contain_text(QUEUED, timeout=20000)
-        held_as_footer_says(page, QUEUED)
+        held_for_check(page)
         expect(page.locator('.app-footer')).not_to_contain_text('Check stopped')
     finally:
         context.close()

@@ -865,8 +865,10 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                 if command.kind != 'workspace.validate':
                     state = {'workspace.submit': 'draft', 'workspace.approve': 'submitted', 'workspace.publish': 'approved'}[command.kind]
                     require(workspace.status == state, 'WORKFLOW_STATE', 'The rota is not ready for this action', 409)
+                # Pending drafts go directly to lifecycle so authority and state checks keep their usual order.
                 # Publish keeps the cheap preconditions; only its final writer acquires inputs.
-                if command.kind != 'workspace.publish':
+                if command.kind != 'workspace.publish' and (command.kind == 'workspace.validate'
+                                                            or not planning.assignment_check_pending(workspace)):
                     since = m.now()
                     if command.kind == 'workspace.submit':
                         checked, data = planning.review_gate_check(db, workspace, reuse=True)
@@ -1010,8 +1012,9 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
     background_merge = command.kind in {'workspace.merge.preview', 'workspace.merge.apply'} and command.payload.get('background', True)
     # Batch checks and overlap projections share one final preparation calculation.
     # Publication performs its fresh safety validation at the final writer boundary.
-    staged = (not assignment_reply and not background_merge and command.kind != 'workspace.publish'
-              and (command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve'
+    staged = ((not assignment_reply or command.kind == 'draft.move') and not background_merge
+              and command.kind != 'workspace.publish'
+              and (command.kind in planning_preparation.KINDS or command.kind == 'workspace.approve' and workspace_check is not None
               and (command.payload.get('rejected_review_item_ids') or
                    any(item.get('accept') is False for item in command.payload.get('decisions', []) if isinstance(item, dict)))))
     if staged:
@@ -1037,6 +1040,7 @@ def _execute(engine, settings, token, csrf, idempotency_key, command, correlatio
                     require_role(actor, *command_roles(command))
                     if not existing_receipt(db, actor):
                         planning_preparation.bind(db, planning_plan)
+                        db.info['_assignment_reply'] = assignment_reply
                         planner_tools.assert_precondition(db, actor, command)
                         if command.kind == 'workspace.approve':
                             planning.lifecycle(db, actor, command, validation=(workspace_check[1], workspace_check[2]))

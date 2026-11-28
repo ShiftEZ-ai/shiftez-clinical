@@ -161,6 +161,36 @@ def test_move_conflicts_are_not_partially_saved(h, case):
     assert state(h, w) == before
 
 
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_move_replies_with_its_admission_before_display_check(h, monkeypatch):
+    from packages.domain import fairness, rota_summary, score
+    from .test_be18_command_latency import worker_up
+    from apps.worker.main import process_one
+
+    w, source, target = pair(h)
+    worker_up(h)
+
+    def no_display(*args, **kwargs):
+        pytest.fail('The move must leave display output to the validation job')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(fairness, 'evaluate_goals', no_display)
+        patch.setattr(rota_summary, 'rota_summary', no_display)
+        patch.setattr(score, 'schedule_score', no_display)
+        result = post(h, command(w, source, target))
+    assert result['receipt_id'] and result['workspace']['undo_change_id']
+    assert result['validation']['scope'] == 'command_changes'
+    assert 'summary_counts' not in result['delta'] and 'fix_list' not in result
+    moved = {row['id']: row['participants'] for row in result['shifts']}
+    assert not moved[source['id']]
+    assert [p['id'] for p in moved[target['id']]] == [source['participants'][0]['id']]
+    assert process_one(h.app.state.engine)
+    with transaction(h.app.state.engine) as db:
+        check = db.get(m.Workspace, w['id']).validation
+        assert not check.get('scope') and check.get('score')
+        assert any(f['code'] == 'COVERAGE_GAP' and f['shift_id'] == source['id'] for f in check['findings'])
+
+
 def test_move_preserves_unrelated_existing_mandatory_problems(h):
     w, source, target = pair(h)
     w = h.shift(w, '2026-10-06T08:00:00+03:00', '2026-10-06T12:00:00+03:00', people=[])['workspace']

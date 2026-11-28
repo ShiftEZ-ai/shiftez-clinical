@@ -1359,6 +1359,9 @@ export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Per
         issueMarker(atOpen.map(f=>findingIssue(f)),{title,key,now:now(true),act:()=>atCause(atOpen)||(hooks.open?hooks.open(s):openPanel({kind:'fill',shift:s.id}))}));
       if(rest.length)out.push(el('span',{class:'wk-cell-mark'},issueMarker(rest.map(f=>findingIssue(f)),{title,key,now:now(false),act:()=>atCause(rest)||(hooks.open?hooks.open(s):openPanel({kind:'session',shift:s.id}))})));
     }
+    // #1436: a session an edit changed whose complete check is still to come shows a neutral clock (its marks as before).
+    if((w.validation?.stale_shift_ids as string[]|undefined)?.includes(s.id)){const pending=el('span',{class:'wk-pending',role:'img','aria-label':'Checking'},icon('clock'));
+      const mark=out.find(n=>n.classList.contains('wk-cell-mark'));if(mark)mark.append(pending);else out.push(el('span',{class:'wk-cell-mark'},pending));}
     return out;
   }
 
@@ -1843,7 +1846,7 @@ export function candidateList(o:{result:Row;list:HTMLElement;search:HTMLInputEle
       const plan=c.supervision as StaffingSupervisionPlan|null|undefined,choose=!!plan&&!plan.proposal&&plan.choices.length>0,paired=supervisedBy(c);
       // "Add with a warning": an advisory finding only; breaking a mandatory rule is a different, armed button (SR-13).
       const assign=choose?null:button(tone==='ok'?'Assign':'Assign with warning',()=>o.assign(c),tone==='ok'?primary?'primary small':'secondary small':'secondary small warn',
-        {'aria-label':tone==='ok'?`Assign ${nameOf(c)}`:`Assign ${nameOf(c)} with a warning`});
+        {'aria-label':tone==='ok'?`Assign ${nameOf(c)}`:`Assign ${nameOf(c)} with a warning`,...(o.brief?{'data-busy':'Applying…'}:{})});
       const reason=o.brief&&c.reason_short?String(c.reason_short):'';
       return el('div',{class:'wk-cand '+tone},el('div',{class:'wk-cand-top'},avatar(nameOf(c),'duty'),el('strong',{},nameOf(c)),assign),
         reason?el('p',{class:'wk-reason'+(tone==='warn'?' warn':''),'data-ctip':reason},reason):tone==='ok'?el('ul',{class:'wk-facts'},...(paired?[el('li',{},'With '+paired)]:[]),...facts(c).map((t,i)=>el('li',{class:i===0&&shortRest(c)?'warn':'','data-tip':i===0&&shortRest(c)?'Short break before this session. No rule blocks it, but check it is reasonable.':undefined},t)),resolves(c),c.fills?null:el('li',{class:'warn'},'Does not close the gap alone')):
@@ -1908,7 +1911,7 @@ export function candidateList(o:{result:Row;list:HTMLElement;search:HTMLInputEle
  *  again while the save is on its way (a live update, the rota's check), and its new box must not offer Assign again. */
 const assigning=new Set<string>();
 export function inlineFill(o:{data:WorkspaceData;shift:Row;issue?:FillIssue;limit?:number;code:(personId:string)=>string;
-  done:(who:string)=>unknown;more:()=>void;
+  done:(who:string,resolves:boolean)=>unknown;more:()=>void;
   /** A save refused because the rota changed meanwhile (409 / STALE_*): read the rota and its Fix list again. */
   stale:()=>unknown;
   /** False: nobody asked for this session's candidates yet (the panel opened, an issue list's Open all): the box
@@ -1917,7 +1920,7 @@ export function inlineFill(o:{data:WorkspaceData;shift:Row;issue?:FillIssue;limi
   const w=o.data.workspace,finding=o.issue?.key||'',key=`${w.id}:${w.revision}:${o.shift.id}::${finding}`,flight=`${w.id}:${o.shift.id}`;
   const box=el('div',{class:'fix-fill'});
   // Single flight: while this session's Assign is saving, every box drawn for it says so and offers nothing to press.
-  if(assigning.has(flight)){box.append(working('Saving…'));return box;}
+  if(assigning.has(flight)){box.append(working('Applying…'));return box;}
   // fill-options runs only when someone asks for candidates (LEAD-UIUX, 7 Nov 2026: it took 58 s, unasked, on open).
   if(o.ask===false&&!asks.has(key)){
     const show=button('Show who can work it',()=>{o.asked?.();box.replaceWith(inlineFill({...o,ask:true}));},'secondary small');
@@ -1945,9 +1948,9 @@ export function inlineFill(o:{data:WorkspaceData;shift:Row;issue?:FillIssue;limi
     list.replaceChildren(note((error as Error).message,'error',error),button('Try again',()=>{asks.forget(key);box.replaceWith(inlineFill(o));},'secondary small'));});
   function draw(result:Row){
     candidateList({result,list,search,code:o.code,replace:false,issue:o.issue,limit:o.limit??3,brief:true,
-      assign:(c,reason='')=>{if(assigning.has(flight))return;assigning.add(flight);busy(true);list.prepend(working('Saving…'));
-        void (async()=>{
-          try{await assignCandidate(w,o.shift,c,result,reason);asks.forget(key);assigning.delete(flight);await o.done(nameOf(c));}
+      assign:(c,reason='')=>{if(assigning.has(flight))return;assigning.add(flight);busy(true);
+        return (async()=>{
+          try{await assignCandidate(w,o.shift,c,result,reason);asks.forget(key);assigning.delete(flight);await o.done(nameOf(c),o.issue?c.resolves===true:c.fills===true);}
           catch(error){assigning.delete(flight);asks.forget(key);
             // The rota moved on before this save (another edit, a check, another tab): nothing was saved. A stale save is
             // said once by the app's conflict message (api.ts rota-conflict); any other 409 says the server's words. Either

@@ -785,6 +785,7 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
     return {"id": job.id, "kind": job.kind, "input": job.input_snapshot, "input_fingerprint": job.input_fingerprint,
             "attempt": attempt,
             "department_id": job.department_id, "requested_by": job.requested_by, "lease_started": lease_started,
+            "queued_at": job.created_at,
             "resume_state": job.resume_state, 'resume_checkpoint': job.resume_checkpoint,
             "search_control": job.search_control, "progress": job.progress}
 
@@ -1927,9 +1928,12 @@ def process_one(engine, *, scheduler=None, solver_workers=1, settings=None, reco
                 log.warning("job_result_write_timeout", extra={"job_id": claim["id"], "kind": claim["kind"], "lane": lane})
                 return True  # Leave lease recovery to claim_job; do not overwrite another attempt.
             completed = time.monotonic()
+            settle_timing = ({'settle_ms': round(max(0, (m.now() - aware(claim['queued_at'])).total_seconds()) * 1000)}
+                             if claim['kind'] == 'validation' and claim.get('queued_at') else {})
             log.log(logging.WARNING if error else logging.INFO, "job_finished",
                     extra={"job_id": claim["id"], "kind": claim["kind"], "status": "failed" if error else "succeeded",
                            "error_code": error, "lane": lane, "duration_ms": round((completed - started) * 1000, 2),
+                           **settle_timing,
                            **({'result_persistence_seconds': completed - computed} if generation_timings else {})})
         finally:
             # Release both Python graphs and native CP-SAT arenas on success, failure, cancellation, or write timeout.

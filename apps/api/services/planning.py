@@ -421,6 +421,11 @@ def assignment_reply_available(db, command):
         current = workspace_content(db, workspace)
         target = change.before_snapshot
         return _participant_only_snapshot(target, current)
+    if command.kind == 'draft.move':
+        value = s.DraftMove.model_validate(command.payload)
+        workspace = db.get(m.Workspace, value.workspace_id)
+        return bool(workspace and workspace.status == 'draft' and not workspace.base_publication_id
+                    and background_checks_available(db))
     if command.kind != 'shift.update':
         return False
     value = s.ShiftEdit.model_validate(command.payload)
@@ -521,7 +526,7 @@ def assignment_check(db, workspace, before, *, shared_inputs=None):
 def defer_complete_check(db, actor, workspace, previous, result, data):
     """Keep historical whole-rota evidence visibly stale until the ordinary worker replaces it."""
     from .jobs import queue_validation, queue_current_validation
-    from packages.domain.rota_summary import fix_list_context, refresh_fix_list_context, remember_fix_list, fix_list_delta, rota_summary
+    from packages.domain.rota_summary import fix_list_context, remember_fix_list
     scope = result.pop('_command_scope')
     checked_scope = 'engine_version' in result
     preparation = db.info.get('_planning_preparation')
@@ -539,32 +544,29 @@ def defer_complete_check(db, actor, workspace, previous, result, data):
     coverage = [row for row in previous.get('coverage', [])
                 if row['shift_id'] not in (refreshed if pending_reply else scope['shifts'])]
     # The complete result belongs to its old fingerprint; never represent a partial check as fresh evidence.
-    context = (refresh_fix_list_context(previous.get('fix_list_context', {}), data, scope)
-               if pending_reply else fix_list_context(data))
-    result = {**previous, 'scope': 'command_changes', 'fingerprint': previous.get('fingerprint', ''),
-              'fix_list_context': context,
-              'findings': findings + result['findings'], 'coverage': coverage + result['coverage']}
-    result.pop('score', None)
-    result.pop('checking', None)  # Job state owns liveness; failures/cancellation must return to Needs a check.
-    for key in INTERNAL_CHECK_KEYS:
-        result.pop(key, None)
+    held = {key: value for key, value in previous.items()
+            if key not in INTERNAL_CHECK_KEYS | {'score', 'checking', 'display_pending', 'stale_since', 'stale_shift_ids'}}
+    held.update(scope='command_changes', fingerprint=previous.get('fingerprint', ''))
+    result = {**held, 'findings': findings + result['findings'], 'coverage': coverage + result['coverage']}
+    if pending_reply:
+        # Settle compares with the last complete evidence. Keep the admitted rows in the bounded edit reply only.
+        stale_since = previous.get('stale_since') or command_time(db).isoformat()
+        affected = (set(previous.get('stale_shift_ids') or ()) | scope['shifts']) & set(data['focus_ids'])
+        pending = {'stale_since': stale_since, 'stale_shift_ids': sorted(affected)}
+        workspace.validation = {**held, **pending, 'display_pending': True}
+        result.update(pending)
+        summary = (previous.get('fix_list_delta') or {}).get('summary')
+        result['fix_list_delta'] = {'cleared': [], 'new': [], 'changed': [], 'causes': [],
+                                    'summary': {**summary, 'checking': True, 'stale': True} if summary else None}
+        return result
+
+    result['fix_list_context'] = fix_list_context(data)
     result['error_count'] = sum(f['severity'] == 'error' for f in result['findings'])
     result['warning_count'] = sum(f['severity'] == 'warning' for f in result['findings'])
     result['valid'] = not result['error_count']
-    if not db.info.get('_assignment_reply'):
-        result['evaluated_at'] = m.now().isoformat()
-        remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [],
-                              summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
-    else:
-        accepted_issues = workspace.accepted_issues or []
-        before_fix = (rota_summary(previous, accepted_issues=accepted_issues)['fix_list']
-                      if previous.get('evaluated_at') else None)
-        after_fix = rota_summary(result, accepted_issues=accepted_issues)['fix_list']
-        after_fix['summary']['checking'] = True  # Partial findings update now; the queued worker owns complete evidence.
-        result['fix_list_delta'] = fix_list_delta(before_fix, after_fix)
-        if before_fix is None:
-            # Without a baseline, do not invent a claim about what this edit introduced or cleared.
-            result['fix_list_delta'].update(cleared=[], new=[], changed=[])
+    result['evaluated_at'] = m.now().isoformat()
+    remember_fix_list(previous, result, accepted_issues=workspace.accepted_issues or [],
+                      summary_cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
     workspace.validation = result
     return {k: v for k, v in result.items() if k not in INTERNAL_CHECK_KEYS}
 
@@ -683,6 +685,7 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     assignment_prepared = defer_assignments and (prepared is None or pending_reply)
     if pending_reply:
         prepared = pending_assignment_check(db, workspace, before, admission=prepared)
+        pending_reply = prepared is not None
     elif assignment_prepared:
         prepared = assignment_check(db, workspace, before, shared_inputs=shared_inputs)
     if prepared is None:
@@ -794,15 +797,20 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
         workspace_record['undo_change_id'] = change.id
     from .people import with_adjustment_names
     workspace_record = with_adjustment_names(db, actor, workspace_record)
+    reply = {"workspace": workspace_record, "validation": result,
+             "shifts": changed_rows, "removed_shift_ids": sorted(set(was) - {r['id'] for r in now}),
+             'fix_list_delta': result['fix_list_delta'],
+             "issues": issue_changes(issues_before, {issue_key(f): f for f in result['findings']}),
+             "delta": delta}
+    if pending_reply:
+        prior_summary = result['fix_list_delta']['summary']
+        return {**reply, 'health': {'checked': False,
+                **({'summary': {'fix_list': {'summary': prior_summary}}} if prior_summary else {})}}
     from packages.domain.rota_summary import rota_summary
     summary = rota_summary(result, accepted_issues=workspace.accepted_issues or [], compact=True,
                            cache=(db.info.get('_planning_preparation') or db.info.get('_generation_plan') or {}).get('summary_cache'))
-    return {"workspace": workspace_record, "validation": result, "health": health(workspace, validation=result, summary=summary),
-            "shifts": changed_rows, "removed_shift_ids": sorted(set(was) - {r['id'] for r in now}),
-            'fix_list_delta': result['fix_list_delta'],
-            'fix_list': rota_fix_list(workspace, validation=result, summary=summary),
-            "issues": issue_changes(issues_before, {issue_key(f): f for f in result['findings']}),
-            "delta": delta}
+    return {**reply, 'health': health(workspace, validation=result, summary=summary),
+            'fix_list': rota_fix_list(workspace, validation=result, summary=summary)}
 
 
 def rota_fix_list(workspace, *, validation=None, summary=None):
@@ -905,6 +913,15 @@ def edit_delta(before, workspace, changed_rows, removed_shift_ids, previous_vali
             or len(findings) > limits['findings'] or len(coverage) > limits['coverage']):
         return None
 
+    delta = {'base_revision': revision_from, 'revision': revision_to, 'shifts': shifts,
+             'removed_shift_ids': removed, 'assignments': [], 'removed_assignment_ids': [],
+             'findings': {'shift_ids': sorted(touched_shifts), 'person_ids': sorted(touched_people), 'items': findings},
+             'coverage': {'shift_ids': sorted(touched_shifts), 'person_ids': sorted(touched_people), 'items': coverage},
+             'current_fingerprint': current_fingerprint, 'current_input_revision': current_input_revision,
+             'current_availability_revision': current_availability_revision, 'stale': False}
+    if (validation or {}).get('checking') and validation.get('scope') == 'command_changes':
+        return delta
+
     # Coverage rows are intervals.  Summary counts use the same strongest
     # bounds as coverage_places, taking each session's peak once rather than
     # summing overlapping intervals.
@@ -925,13 +942,7 @@ def edit_delta(before, workspace, changed_rows, removed_shift_ids, previous_vali
         'places_open': places_open,
         'open_sessions': sum(bool(row['places_open']) for row in by_shift.values()),
     }
-    return {'base_revision': revision_from, 'revision': revision_to, 'shifts': shifts,
-            'removed_shift_ids': removed, 'assignments': [], 'removed_assignment_ids': [],
-            'findings': {'shift_ids': sorted(touched_shifts), 'person_ids': sorted(touched_people), 'items': findings},
-            'coverage': {'shift_ids': sorted(touched_shifts), 'person_ids': sorted(touched_people), 'items': coverage},
-            'summary_counts': summary_counts, 'current_fingerprint': current_fingerprint,
-            'current_input_revision': current_input_revision,
-            'current_availability_revision': current_availability_revision, 'stale': False}
+    return {**delta, 'summary_counts': summary_counts}
 
 
 def assignment_source(actor, source: s.AssignmentSourceKind, run_id=None):
@@ -2129,7 +2140,9 @@ def move(db, actor, command):
     shifts[target.id]['participants'].append(participant)
     require_change_authority(db, actor, workspace, before, after=proposed)
     person_access(db, actor, assignment.person_id)
-    data = domain_snapshot(db, workspace)
+    pending = db.info.get('_assignment_reply') and assignment_reply_available(db, command)
+    snapshot_options = {'include_fairness': False, 'include_objectives': False} if pending else {}
+    data = domain_snapshot(db, workspace, **snapshot_options)
     shifts = {row['id']: row for row in data['shifts'] if row['id'] in data['focus_ids']}
     origin, destination = shifts[source.id], shifts[target.id]
     require(not inactive(origin) and not inactive(destination), 'SESSION_CLOSED',
@@ -2140,7 +2153,7 @@ def move(db, actor, command):
             'DUPLICATE_PARTICIPATION', 'This person is already on the target session')
     require(series_candidate_allowed(data, destination, assignment.person_id), 'USUAL_ASSIGNEES_FIXED',
             'This recurring session keeps its configured usual people', 409)
-    baseline = command_evaluate(db, data)
+    baseline = command_evaluate(db, data, include_goals=False) if pending else command_evaluate(db, data)
     open_places = target_deficit(baseline, target.id)
     require(open_places > 0, 'NO_OPEN_PLACE', 'The target session has no open place', 409)
     participant = {key: seat[key] for key in s.ParticipantInput.model_fields if key in seat}
@@ -2160,19 +2173,24 @@ def move(db, actor, command):
         if row.series_id:
             row.series_modified = True
     name_attached_supervisors(db, workspace, target)
-    admit_assignment_change(db, actor, workspace, before, 'MOVE_INVALID', message='The move introduces a mandatory problem; no assignment was moved')
-    result = changed(db, actor, workspace, before, value.reason)
-    # Compare validator evidence; the reply also contains actor-specific resolution actions.
-    introduced = compare_findings(baseline, workspace.validation, protect_intervals=True)['new_or_worse_findings']
+    admission = admit_assignment_change(db, actor, workspace, before, 'MOVE_INVALID',
+                                       message='The move introduces a mandatory problem; no assignment was moved')
+    if pending:
+        # Move still needs the whole decision check, including whether the destination gained cover.
+        check = command_evaluate(db, admission[1], include_goals=False)
+    else:
+        result = changed(db, actor, workspace, before, value.reason)
+        check = workspace.validation
+    introduced = compare_findings(baseline, check, protect_intervals=True)['new_or_worse_findings']
     # Moving leaves its source open, while new skill, lead, supervision and other mandatory problems still block it.
     require(not any(row['code'] not in EDIT_NON_REFUSING_CODES
                     or row['code'] in COVERAGE_CODES and row.get('shift_id') != source.id
                     for row in introduced),
             'MOVE_INVALID', 'The move introduces a mandatory problem; no assignment was moved', 422, refusal_details(introduced))
-    remaining = target_deficit(workspace.validation, target.id)
+    remaining = target_deficit(check, target.id)
     require(remaining < open_places, 'MOVE_DOES_NOT_FILL',
-            'This person does not fill the target open place; no assignment was moved', 422, refusal_details(result['validation']['findings']))
-    return result
+            'This person does not fill the target open place; no assignment was moved', 422, refusal_details(check['findings']))
+    return changed(db, actor, workspace, before, value.reason, prepared=admission, defer_assignments=True) if pending else result
 
 
 def latest_change(workspace, *columns, skip_single_sort=False, before=None):
@@ -2719,6 +2737,15 @@ def _lock_review_check_inputs(db, actor, data):
     return organisation
 
 
+def assignment_check_pending(workspace):
+    return not workspace.base_publication_id and bool((workspace.validation or {}).get('display_pending'))
+
+
+def require_assignment_check_settled(workspace):
+    require(not assignment_check_pending(workspace), 'CHECK_NOT_CURRENT',
+            'Finish checking this draft before submitting, approving or publishing it.', 409)
+
+
 def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
     if command.kind == 'workspace.validate':
         workspace = validation_workspace(db, actor, command, check_revision=validation is None)
@@ -2779,6 +2806,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         from .planning_groups import require_submitter
         require_submitter(db, actor, workspace)
         require(workspace.status == "draft", "WORKFLOW_STATE", "Only a draft can be submitted", 409)
+        require_assignment_check_settled(workspace)
         from packages.domain.rota_summary import submission_prerequisite
         has_session = db.scalar(select(m.Shift.id).where(m.Shift.workspace_id == workspace.id).limit(1)) is not None
         if prerequisite := submission_prerequisite(int(has_session)):
@@ -2810,6 +2838,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                                 'input_manifest': _check_manifest(data['input_manifest'])}
     elif action == "approve":
         require(workspace.status == "submitted", "WORKFLOW_STATE", "Only a submitted candidate can be approved", 409)
+        require_assignment_check_settled(workspace)
         if validation is None:
             acquired = []
             result = revalidate(db, workspace, include_internal=True, reuse=True, store=False, data_out=acquired)
@@ -2836,6 +2865,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         acknowledged_gaps.record_decision(actor, workspace, value, decision)
     elif action == "publish":
         require(workspace.status == "approved", "WORKFLOW_STATE", "Only an approved candidate can be published", 409)
+        require_assignment_check_settled(workspace)
         from .notification_audience import is_test_identity, non_test_assignee_count
         settings = db.get_bind().get_execution_options().get("rota_write_settings")
         publisher = db.get(m.Identity, actor.identity_id)

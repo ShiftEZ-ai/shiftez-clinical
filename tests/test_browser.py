@@ -1004,8 +1004,9 @@ def footer_item(page, selector, text):
 def footer_working(page, text, phone=False):
     """A footer working item ("Checking the rota · 0:04 · Cancel"): where it is shown (inline, or behind the "+N" key on
     a one-line phone footer that has no room). Returns the footer or the key's popover holding it. `phone` is kept for
-    callers; where the item sits is the footer's to decide, so both are read the same way."""
-    footer_item(page, '[role=status]', text)
+    callers; where the item sits is the footer's to decide, so both are read the same way. The rota check's line is no
+    live region (#1436: its end is said once), so it is found by its own mark."""
+    footer_item(page, '[role=status], [data-check-line]', text)
     pop = page.locator('.popover.footer-key-pop')
     return pop if pop.count() else page.locator('.app-footer')
 
