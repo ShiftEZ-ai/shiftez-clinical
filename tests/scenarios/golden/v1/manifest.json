@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "revision": 9,
+  "revision": 10,
   "timezone": "Asia/Riyadh",
   "seeds": [
     11,
@@ -18,6 +18,7 @@
     "atlas/A-POOLED-CREDIT-01.json",
     "atlas/A-ORDERED-COVER-01.json",
     "atlas/A-SUPERVISION-01.json",
+    "atlas/A-STANDALONE-SUPERVISION-01.json",
     "atlas/A-ALLOCATION-COVER-01.json",
     "atlas/A-WEEKLY-LIMIT-01.json",
     "atlas/A-FAIR-01.json",

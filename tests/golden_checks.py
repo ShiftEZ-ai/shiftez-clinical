@@ -294,6 +294,33 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
+def check_standalone_supervision(data, ids, spec):
+    expected = spec['expect']
+    for seed in expected['seed_robustness']['seeds']:
+        candidate = feasible(data, solve(data, seed))
+        for duty, roles in expected['staffing'].items():
+            actual = {row['person_id']: (row['participation'], row.get('supervisor_person_id'))
+                      for row in shift(candidate, ids[duty])['participants']}
+            assert actual == {ids[person]: (role, ids[supervisor] if supervisor else None)
+                              for person, (role, supervisor) in roles.items()}, (seed, duty, actual)
+
+    solo = copy.deepcopy(data)
+    # Use the same recorded role on both duties so the validator has to read the rank lists.
+    for duty in expected['staffing']:
+        place(solo, ids[duty], [ids['senior']])
+    checked = evaluate(solo)
+    assert not checked['valid'], checked
+    gaps = {row['shift_id'] for row in finding_observations(checked) if row['code'] == 'SUPERVISION_GAP'}
+    assert gaps == {ids[duty] for duty in expected['validator']['supervision_gap_duties']}, checked
+
+    supervisor_only = copy.deepcopy(solo)
+    place(supervisor_only, ids['shared'], [{'person_id': ids['supervisor'], 'participation': 'supervisor'}])
+    cover_gaps = expected_findings(supervisor_only, ids, expected['validator']['cover_gap'], 'cover')
+    assert cover_gaps, 'scenario not sensitive to scoped cover'
+    return {'assertions': {'staffing', 'validator', 'seed_robustness'},
+            'bindings': {'shared_type': len(gaps), 'cover': len(cover_gaps)}}
+
+
 def check_scenario(data, ids, spec):
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
@@ -312,4 +339,5 @@ def check_scenario(data, ids, spec):
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
             'A-WEEKLY-LIMIT-01': check_weekly_limit,
+            'A-STANDALONE-SUPERVISION-01': check_standalone_supervision,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

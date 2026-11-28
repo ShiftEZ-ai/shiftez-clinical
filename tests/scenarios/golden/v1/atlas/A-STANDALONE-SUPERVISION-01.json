@@ -1,0 +1,81 @@
+{
+  "id": "A-STANDALONE-SUPERVISION-01",
+  "revision": 1,
+  "title": "Trainee rank depends on duty type",
+  "intent": "The same senior trainee works alone on the standalone duty and with a named supervisor on the shared duty.",
+  "pressure": "The standalone duty has one place. On the shared duty the supervisor can fill ordinary cover alone, but the scoped cover rule requires someone from the senior rank.",
+  "covers": {
+    "kind.minimum_cover": ["staffing", "validator", "seed_robustness"]
+  },
+  "commands": [
+    {"key": "senior_rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Standalone scenario senior rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "junior_rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Standalone scenario junior rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "supervisor_rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Standalone scenario supervisor rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "standalone_service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "Standalone scenario solo service", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "shared_service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "Standalone scenario shared service", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "Standalone scenario room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "Standalone scenario room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 2}, "reason": "Synthetic scenario"}},
+    {"key": "senior", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Standalone senior participant (test)", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "supervisor", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Standalone supervisor participant (test)", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "senior_membership", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$senior", "category_id": "$senior_rank", "starts_on": "2027-01-01"}},
+    {"key": "supervisor_membership", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$supervisor", "category_id": "$supervisor_rank", "starts_on": "2027-01-01"}},
+    {"key": "senior_standalone", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$senior", "service_id": "$standalone_service", "starts_on": "2027-01-01"}},
+    {"key": "senior_shared", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$senior", "service_id": "$shared_service", "starts_on": "2027-01-01"}},
+    {"key": "supervisor_shared", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$supervisor", "service_id": "$shared_service", "starts_on": "2027-01-01"}},
+    {"key": "skill", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "capabilities", "value": {"name": "Standalone scenario supervision skill", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "supervision_grant", "role": "credentialer", "kind": "grant.create",
+     "payload": {"person_id": "$supervisor", "capability_id": "$skill", "starts_on": "2027-01-01", "evidence": "Synthetic qualification"}},
+    {"key": "standalone_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "Standalone scenario solo duty", "starts_on": "2027-01-01",
+       "definition": {"requirements": [{"minimum": 1, "maximum": 1}], "supervision": {
+         "trainee_category_ids": ["$junior_rank"], "capability_id": "$skill", "trainees_per_supervisor": 1, "require_pairing": true}}}, "reason": "Synthetic scenario"}},
+    {"key": "shared_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "Standalone scenario shared duty", "starts_on": "2027-01-01",
+       "definition": {"requirements": [{"minimum": 1, "maximum": 2}], "supervision": {
+         "trainee_category_ids": ["$junior_rank", "$senior_rank"], "capability_id": "$skill", "trainees_per_supervisor": 1, "require_pairing": true}}}, "reason": "Synthetic scenario"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "A-STANDALONE-SUPERVISION-01", "starts_on": "2027-01-04", "ends_on": "2027-01-06"}},
+    {"key": "standalone", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$standalone_type", "location_id": "$room",
+       "service_ids": ["$standalone_service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
+    {"key": "shared", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$shared_type", "location_id": "$room",
+       "service_ids": ["$shared_service"], "start": "2027-01-05T08:00:00+03:00", "end": "2027-01-05T12:00:00+03:00", "participants": []}},
+    {"key": "cover", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "Shared duty senior cover", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01",
+       "definition": {"rule": {"kind": "minimum_cover", "minimum": 1}, "scope": {"assignment_type_id": "$shared_type", "category_id": "$senior_rank"},
+         "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "activate_cover", "role": "approver", "kind": "policy.activate", "target": "$cover", "revision": "$cover.revision",
+     "payload": {"reason": "Synthetic scenario review"}}
+  ],
+  "inputs": {
+    "generation_options": {"shortlist_width": 0}
+  },
+  "expect": {
+    "binding_rules": ["shared_type", "cover"],
+    "staffing": {
+      "standalone": {"senior": ["staff", null]},
+      "shared": {"senior": ["trainee", "supervisor"], "supervisor": ["supervisor", null]}
+    },
+    "validator": {
+      "supervision_gap_duties": ["shared"],
+      "cover_gap": {"code": "SCOPED_COVERAGE_GAP", "session": "shared", "person": null}
+    },
+    "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
+  }
+}
