@@ -156,7 +156,7 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     // the live auto-schedule view's (LiveHost.stamp; null: an open place), so a live chip is keyed like a drawn one.
     const stampChip=(n:Element,shift:Row,pid:string)=>{const code=weekView.colourBy==='type'?dutyColour(shift):'slate';
       key.mark(n,'t:'+shift.assignment_type_id,el('span',{class:`pg-chip duty-${code}`,'aria-hidden':'true'},sessionCode(ctx,shift)),shift.type_snapshot.name,0);
-      return weekView.colourBy==='type'?code:colours.seenChip(shift,pid,n);};
+      colours.codeMark(shift,n);return weekView.colourBy==='type'?code:colours.seenChip(shift,pid,n);};
     const openKey=(n:Element)=>markOpen(key,n,el('span',{class:'pg-chip pg-open lg-mark','aria-hidden':'true'},el('b',{},'+1')));
     const shiftOf=new Map(data.shifts.map(x=>[x.id,x]));
     const placeOf=new Map((ctx.catalogues.locations||[]).map(l=>[l.id,l]));  // each chip names its place (QA-127a)

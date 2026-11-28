@@ -249,6 +249,8 @@ export function uniqueCodes(people: {id: string; display_name?: string; short_co
 }
 /** Colour palette shared by duty types, services, staff roles, people and tags. */
 export const PALETTE=['teal','blue','violet','amber','coral','indigo','pink','slate'] as const;
+/** Each palette colour's name, as every colour choice says it. */
+export const COLOUR_NAMES:Record<typeof PALETTE[number],string>={teal:'Teal',blue:'Sky',violet:'Purple',amber:'Gold',slate:'Slate',coral:'Coral',indigo:'Indigo',pink:'Pink'};
 /** A record's chosen colour, or a stable automatic one from its id (so everything has a colour from day one). */
 // Automatic colours skip slate so every record gets a real hue, and coral, which reads as a problem (red is for
 // problems only: owner, 21 Oct 2026); both stay available to pick.

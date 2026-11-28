@@ -16,6 +16,7 @@ export const CONFIG_KINDS:Record<string,ConfigKind>={
   // Its own page (scheduling_groups.ts) reads its versioned rows, so no record count here (settings).
   scheduling_groups:{label:'Scheduling groups',singular:'scheduling group',address:'scheduling-groups',group:'Scheduling',settings:true,
     purpose:'Each group schedules its own people in the shared rota; people in no group are scheduled by the Rota Coordinators.'},
+  times_of_day:{label:'Times of day',address:'times-of-day',group:'Scheduling',settings:true},
   resource_pools:{label:'Resource pools',singular:'resource pool',group:'Scheduling',purpose:'Shared rooms or equipment that sessions draw on; without one nothing is capped.'},
   locations:{label:'Locations',singular:'location',group:'Places & services',purpose:'Where sessions happen: UCC, clinic rooms, remote.'},
   location_types:{label:'Location types',singular:'location type',group:'Places & services',colour:'auto',purpose:'Kinds of place (clinic room, ward) so duty types and rules can name them.'},

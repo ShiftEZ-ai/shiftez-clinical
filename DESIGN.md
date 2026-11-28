@@ -351,6 +351,10 @@ and a desktop window narrowed below it gets the same rule at once.
   administrator can always sign in with a password) shows only with institutional only. Programme set-up stays on Programmes & rotations
   (programme leads own it). The auto-schedule options are one component in five visible groups,
   used for the department defaults and for one run (Schedule › Auto-schedule).
+- Times of day (Configuration › Scheduling, `times_of_day.ts`): the department's named parts of the day, one row each by start
+  (code in its colour, name, one-character code, start, colour, where it ends), the contract's defaults until saved; a name,
+  code or start used twice is said on both rows; Save takes a reason, Undo one step. Colour by › Time of day draws each duty
+  in the part its local start falls in, with the code on People and schedule chips and each part in the key.
 - Score weights are relative: each part shows its share ("35%"); any total is fine and is not said. The warning line
   speaks only when the weights cannot be used, and says why.
 - Score review (`score_review.ts`): Configuration › Auto-schedule & scoring ›

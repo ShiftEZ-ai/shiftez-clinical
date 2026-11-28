@@ -14,6 +14,7 @@ import {setSessionOpener,tag,ruleSummary,pin,assignmentRules,sessionRules,dayTit
 import {supervisedBy,teamOrder,teamGroups,teamText,shownPeople,leadContext,leadState,leadNeed,type TeamEntry,type LeadState} from './planner_teams.js';
 import {teamView,teamProblem,teamLabel,teamIssue,rankOn,BOX_CODES,statesShortfall,TEAM_LAYOUT_DEFAULT,type TeamProblem,type TeamLayout} from './team_view.js';
 import {personPill} from './person_pill.js';
+import {timesOfDay,timeOfDayAt} from './times_of_day.js';
 import {issueMarker,issueGlyph,issueLabel,findingIssue,issueList,SEVERITY_WORDS,LEVEL_WORDS,type Issue as MarkIssue} from './issue_marker.js';
 import {mustWords} from './fix_list.js';
 import {routeHash} from './routes.js';
@@ -179,7 +180,7 @@ export const teamLayout=():TeamLayout=>{const f=propertiesOf(weekView.props).fin
 export const showAdvisory=(surface:ItemSurface='card')=>propertiesOf(weekView.props,surface).some(p=>p.key==='rule'&&p.on);
 /** A session's open-place findings: their marker sits beside its "1 open" place, every other one at the cell's top right. */
 const OPEN_PLACE_CODES=new Set(['COVERAGE_GAP','COVERAGE_TARGET','OPEN_EXTRA_COVER','DISTINCT_PERSON_GAP']);
-export const weekView={props:null as ViewProperty[]|null,/** Trainee rows a team shows before "+N more" (PlannerViewSettings.team_rows). */teamRows:PLANNER_TEAM_ROWS_DEFAULT as number,/** Staffing numbers shown (PlannerViewSettings.staffing; false hides them). */staffing:true,onlyOpen:false,onlyIssues:false,compact:false,/** Drawn for print: every person in a month's cells and every row of the List (no "+N more", no pages). */forPrint:false,groupBy:'service' as Dim|'none',/** Then by: a second session dimension inside each group (the view's `subgroup`). */thenBy:'none' as Dim|'none',sortBy:'time' as 'time'|'type'|'place'|'hours'|'code',colourBy:'type' as 'type'|'service'|'role'|'person'|'tag',
+export const weekView={props:null as ViewProperty[]|null,/** Trainee rows a team shows before "+N more" (PlannerViewSettings.team_rows). */teamRows:PLANNER_TEAM_ROWS_DEFAULT as number,/** Staffing numbers shown (PlannerViewSettings.staffing; false hides them). */staffing:true,onlyOpen:false,onlyIssues:false,compact:false,/** Drawn for print: every person in a month's cells and every row of the List (no "+N more", no pages). */forPrint:false,groupBy:'service' as Dim|'none',/** Then by: a second session dimension inside each group (the view's `subgroup`). */thenBy:'none' as Dim|'none',sortBy:'time' as 'time'|'type'|'place'|'hours'|'code',colourBy:'type' as 'type'|'service'|'role'|'person'|'tag'|'time_of_day',
   /** Colour by tag: the viewer's tag ids in priority order (PlannerViewSettings.colour_tags); the first one a person holds wins. */colourTags:[] as string[],
   /** Each grouping level's own order (PlannerViewSettings.group_sort): [dimension, 'desc'] turns that level round. */groupSort:[] as SortKey[],
   /** Resized parts of a Schedule grid (PlannerViewSettings.widths: row_heading, date, cell), px. */widths:{} as Record<string,number>,
@@ -718,22 +719,28 @@ export function colourRule(ctx:Context,days:readonly string[],key:Legend){
   const memberOf=new Map<string,Row>(),rankById=new Map((ctx.catalogues.categories||[]).map(c=>[c.id,c]));
   for(const r of ctx.catalogues.memberships||[])if(!memberOf.has(r.person_id)&&current(r))memberOf.set(r.person_id,r);
   const roleOf=(pid:string)=>{const m=memberOf.get(pid);return m?rankById.get(m.category_id):undefined;};
-  const hue=(s:Row)=>weekView.colourBy==='service'?colourOf(services.get(s.service_ids[0]),s.service_ids[0]):dutyColour(s);
+  // A duty's time of day: the department's band its local start falls in (times_of_day.ts), in the grids' own zone.
+  const times=timesOfDay(ctx.me.department),zone=ctx.me.organisation.timezone,partOf=(s:Row)=>timeOfDayAt(times,toLocal(s.start,zone).slice(11,16));
+  const hue=(s:Row)=>weekView.colourBy==='service'?colourOf(services.get(s.service_ids[0]),s.service_ids[0]):weekView.colourBy==='time_of_day'?partOf(s).colour:dutyColour(s);
   // Person tags (records and member links), indexed once per draw: chip marks and Colour by tag read it.
   const heldTags=personTags(ctx.catalogues),tagOf=(pid:string)=>priorityTag(heldTags.get(pid),weekView.colourTags);
   // Chips follow the person or their rank (its one tint, C21) when the view asks for it; otherwise the session's colour.
   const chipHue=(s:Row,pid:string)=>weekView.colourBy==='person'?colourOf(people.get(pid),pid):weekView.colourBy==='role'?rankColour(roleOf(pid)?.id||'')
     :weekView.colourBy==='tag'?(()=>{const t=tagOf(pid);return t?colourOf(t):'slate';})():hue(s);
   // `node`: the element drawn in that hue, stamped as its colour's key entry (dom.ts legend `mark`; every mark has one).
-  const enter=(node:Element,k:string,swatch:string,words:string)=>key.mark(node,k,swatch,words,0);
-  const seen=(s:Row,node:Element)=>{const c=hue(s);if(weekView.colourBy==='service'){const id=s.service_ids[0];enter(node,'c:s:'+id,'duty-'+c,labelOf(services.get(id))||'No service');}else enter(node,'c:t:'+s.assignment_type_id,'duty-'+c,s.type_snapshot.name);return c;};
+  const enter=(node:Element,k:string,swatch:string|HTMLElement,words:string)=>key.mark(node,k,swatch,words,0);
+  const seen=(s:Row,node:Element)=>{const c=hue(s);if(weekView.colourBy==='time_of_day'){const t=partOf(s);enter(node,'c:d:'+t.code,el('span',{class:`tod-code duty-${c}`,'aria-hidden':'true'},t.code),`${t.name} from ${t.start}`);}
+    else if(weekView.colourBy==='service'){const id=s.service_ids[0];enter(node,'c:s:'+id,'duty-'+c,labelOf(services.get(id))||'No service');}else enter(node,'c:t:'+s.assignment_type_id,'duty-'+c,s.type_snapshot.name);return c;};
   const seenChip=(s:Row,pid:string,node:Element)=>{
     if(!pid)return seen(s,node);
     if(weekView.colourBy==='person'){enter(node,'c:p','lg-people','Colour: one per person');return chipHue(s,pid);}
     if(weekView.colourBy==='tag'){const t=tagOf(pid);enter(node,'c:g:'+(t?.id||''),'duty-'+chipHue(s,pid),t?'#'+t.name:'No chosen tag');return chipHue(s,pid);}
     if(weekView.colourBy!=='role')return seen(s,node);
     const r=roleOf(pid),c=chipHue(s,pid);enter(node,'c:r:'+(r?.id||''),'duty-'+c,r?labelOf(r):'No rank');return c;};
-  return {hue,seen,seenChip,heldTags};
+  /** A chip's time-of-day code, drawn in its hue while Colour by is Time of day: colour is never the only cue. */
+  const codeMark=(s:Row,chip:Element)=>{if(weekView.colourBy!=='time_of_day'||!s.start||chip.querySelector(':scope>.tod-code'))return;
+    chip.prepend(el('span',{class:'tod-code','aria-hidden':'true'},partOf(s).code));};
+  return {hue,seen,seenChip,heldTags,codeMark};
 }
 export function weekGrid(ctx:Context,data:WorkspaceData,visible:Row[],period:Period,onPage:(page:number)=>void,hooks:WeekHooks){
   const zone=ctx.me.organisation.timezone,w=data.workspace,checked=!!w.validation;
