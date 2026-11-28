@@ -430,14 +430,14 @@ def test_switching_rule_and_issue_views_starts_at_their_identifying_facts(browse
         assert position(scroll)['y'] == 0
         expect(page.locator('.rt-issue .rt-rule-link').first).to_be_in_viewport()
         expect(page.locator('.rt-iline .rt-n').first).to_be_in_viewport()
-        scroll.evaluate('e=>e.scrollLeft=e.scrollWidth')
-        x = position(scroll)['x']
-        assert x > 0, position(scroll)
-        view('Acknowledged')
-        expect(page.locator('.rt-issue').first).to_be_visible()
-        assert position(scroll)['x'] == x
-        view('Needs attention')
-        assert position(scroll)['x'] == x
+        # A phone reads each issue as one block (issue 1639): neither issue view scrolls sideways, so the rule name and
+        # the actions never part.
+        for label in ['Acknowledged', 'Needs attention']:
+            scroll.evaluate('e=>e.scrollLeft=e.scrollWidth')
+            assert position(scroll)['x'] == 0, position(scroll)
+            view(label)
+            expect(page.locator('.rt-issue').first).to_be_visible()
+            expect(page.locator('.rt-issue .rt-rule-link').first).to_be_in_viewport()
         view('All rules')
         expect(page.locator('.rt-scroll')).to_be_visible()
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')

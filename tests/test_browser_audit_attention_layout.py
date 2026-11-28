@@ -52,13 +52,15 @@ def assert_collection_spacing(page):
 
 
 def assert_line_facts_are_separate(page):
-    result = page.locator('.rt-iline').evaluate_all(r'''lines => {
+    # A phone reads each issue as one block (issue 1639): there a line's facts may also sit one below the other.
+    stacked = page.viewport_size['width'] < 720
+    result = page.locator('.rt-iline').evaluate_all(r'''(lines, stacked) => {
       const failures=[];
       let facts=0;
       for (const [index,line] of lines.entries()) {
         const owner=line.closest('td'),cell=owner.getBoundingClientRect();
         const slots=[...line.children].map(n=>n.getBoundingClientRect());
-        if(slots.some((r,i)=>i&&r.left<slots[i-1].right-1))
+        if(slots.some((r,i)=>i&&r.left<slots[i-1].right-1&&!(stacked&&r.top>=slots[i-1].bottom-1)))
           failures.push({line:index,reason:'line facts no longer scan in separate columns'});
         if(owner.classList.contains('dt-wrap'))for(const item of line.querySelectorAll('.pill-item')) {
           const pill=item.querySelector(':scope > .rp');if(!pill)continue;
@@ -88,7 +90,7 @@ def assert_line_facts_are_separate(page):
         }
       }
       return {lines:lines.length,facts,failures,viewport:innerWidth,scrollWidth:document.documentElement.scrollWidth};
-    }''')
+    }''', stacked)
     assert result['lines'] > 0 and result['facts'] >= 4, result
     assert not result['failures'], result
     assert result['scrollWidth'] <= result['viewport'], result

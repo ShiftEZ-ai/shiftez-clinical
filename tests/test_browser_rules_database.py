@@ -32,6 +32,66 @@ def propose_all(page, text):
     return dialog
 
 
+def two_issue_rules(h):
+    """Staff 01's leave line sets only "max 0": blank inherits the monthly minimum for everyone (a conflict); another
+    line ends within 30 days. Each issue offers two actions."""
+    flag(h)
+    today = date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day'])
+    a = h.seed['people'][0]
+    catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line'),
+                                           line({'max': {'value': 0, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 on leave')])
+    catalogue_rule(h, 'people_per_session', [line({'max': {'value': 3, 'level': 'mandatory'}}, ends_on=str(today + timedelta(days=11)))])
+
+
+# Each label and sentence a person reads to decide, checked where it shows: not clipped inside its box, inside the
+# viewport and the issue list's visible box, and (actions) not covered at its centre.
+UNCLIPPED = r'''nodes => nodes.map(n => {
+  n.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'});
+  const r=n.getBoundingClientRect(),box=n.closest('.rt-scroll').getBoundingClientRect(),cell=n.closest('td');
+  const hit=n.matches('button')?document.elementFromPoint(r.left+r.width/2,r.top+r.height/2):n;
+  return {text:n.textContent.trim(),
+    clipped:n.scrollWidth>n.clientWidth+1||cell.scrollWidth>cell.clientWidth+1,
+    outside:r.left<Math.max(0,box.left)-1||r.right>Math.min(innerWidth,box.right)+1||r.top<0||r.bottom>innerHeight+1,
+    covered:!(hit&&(hit===n||n.contains(hit)))};
+})'''
+
+
+# Geometry only, no colour is read: these two cases and the Needs attention test below cover both widths in both themes.
+@pytest.mark.parametrize('width,scheme', [(1440, 'dark'), (390, 'light')])
+def test_needs_attention_shows_every_action_and_sentence_in_full(browser, live_server, h, width, scheme):
+    two_issue_rules(h)
+    context, page = sign_in(browser, live_server, 'coordinator', {'width': width, 'height': 900})
+    try:
+        page.emulate_media(color_scheme=scheme)
+        navigate(page, 'rules')
+        main = page.locator('#main')
+        main.locator('button.dt-saved').click()
+        page.get_by_role('menuitemradio', name=re.compile('^Needs attention')).click()
+        rows = main.locator('tr.rt-issue')
+        expect(rows).to_have_count(2)
+        expect(rows.nth(0).locator('.rt-what-text')).to_have_text('Line 2 inherits min 1 from line 1, which contradicts its own numbers')
+        actions = rows.locator('.rt-recommended-action, .rt-fixes button')
+        expect(actions).to_have_text(['Give line 2 no min (None)', 'Keep · acknowledge…', 'Let it end · acknowledge…', re.compile(r'^Extend to ')])
+        # The list fits its pane at both widths: nothing a row says sits past a sideways scroll.
+        scroll = main.locator('.rt-scroll')
+        assert scroll.evaluate('e=>e.scrollWidth<=e.clientWidth+1'), scroll.evaluate('e=>[e.scrollWidth,e.clientWidth]')
+        for found in [actions.evaluate_all(UNCLIPPED), rows.locator('.rt-what-text').evaluate_all(UNCLIPPED)]:
+            assert len(found) >= 2, found
+            assert not [x for x in found if x['clipped'] or x['outside'] or x['covered']], found
+        # Every row keeps its rule name with its actions; on a phone each issue reads as one block below the last.
+        names = rows.locator('.rt-rule-link')
+        expect(names).to_have_text(['Duties per month', 'People per session'])
+        if width < 720:
+            boxes = rows.evaluate_all('rs=>rs.map(r=>r.getBoundingClientRect()).map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}))')
+            assert boxes[1]['top'] >= boxes[0]['bottom'] - 1, boxes
+            cells = rows.nth(0).locator('td[data-col]').evaluate_all('cs=>cs.map(c=>c.getBoundingClientRect().top)')
+            assert cells == sorted(cells) and len(set(cells)) == 4, cells
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+        shot(page, f'needs-attention-full-{width}-{scheme}')
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
 def test_lines_selected_across_rules_change_together_and_an_approver_approves(browser, live_server, h, width, scheme):
     flag(h)
@@ -161,14 +221,7 @@ def test_exact_mandatory_line_reads_exactly_in_its_rule_row(browser, live_server
 
 @pytest.mark.parametrize('width,scheme', [(1440, 'light'), (390, 'dark')])
 def test_needs_attention_applies_recommended_fixes_into_the_proposal(browser, live_server, h, width, scheme):
-    flag(h)
-    today = date.fromisoformat(h.get('coordinator', '/api/rules/catalogue')['day'])
-    a = h.seed['people'][0]
-    # Staff 01's leave line sets only "max 0": blank inherits the monthly minimum for everyone (a conflict); another line
-    # ends within 30 days.
-    catalogue_rule(h, 'duties_per_month', [line({'min': {'value': 1, 'level': 'mandatory'}, 'max': {'value': 20, 'level': 'mandatory'}}, note='Everyone line'),
-                                           line({'max': {'value': 0, 'level': 'mandatory'}}, who={'conditions': [{'field': 'person_ids', 'values': [a]}]}, note='Staff 01 on leave')])
-    catalogue_rule(h, 'people_per_session', [line({'max': {'value': 3, 'level': 'mandatory'}}, ends_on=str(today + timedelta(days=11)))])
+    two_issue_rules(h)
     found = h.get('coordinator', '/api/rules/catalogue')['attention']
     assert [(x['kind'], x['fixes'][0]['kind']) for x in found] == [('inherits', 'none'), ('ending', 'acknowledge')]
     assert all(x['acknowledged'] is None for x in found)
