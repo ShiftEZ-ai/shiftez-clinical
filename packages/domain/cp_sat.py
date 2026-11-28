@@ -1177,8 +1177,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             caps, named = interval_caps, named or interval_named
         return trainees, caps or {}, named
 
-    from .fill_priority import FillPriority
-    fill_priority = FillPriority(model, data, choices, {s['id']: s for s in shifts}, options.allocation_order == 'tiered')
+    from .fill_priority import FillPriority, allocation_order_rules, allocation_tier
+    order_rules = allocation_order_rules(data['policies']) if generating else []
+    ranks = {}
+    if order_rules:
+        shifts_by_id = {s['id']: s for s in shifts}
+        for sid, pid in sorted(choices):
+            control.check()
+            ranks[sid, pid] = allocation_tier(data, shifts_by_id[sid], pid, rules=order_rules)
+    fill_priority = FillPriority(model, ranks, include_unranked=options.allocation_order == 'tiered')
     cover_triggers = {}
     pooled_cover_cells = {}
 

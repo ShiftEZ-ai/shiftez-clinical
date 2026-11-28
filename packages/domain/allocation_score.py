@@ -32,7 +32,11 @@ def allocation_score_items(data, choices=None, participants=None, pairings=None,
     q = math or _Numbers()
     strengths = strengths or StrengthMultipliers().model_dump()
     data = {**data, '_allocation_match_cache': data.get('_allocation_match_cache', {})}
-    policies = [p for p in data['policies'] if p['definition']['rule']['kind'] == 'allocation_preference']
+    policies = [
+        p for p in data['policies'] if (rule := p['definition']['rule'])['kind'] == 'allocation_preference'
+        and (not rule.get('session_priority') or rule.get('priority') or rule.get('overtime_priority')
+             or rule.get('balance_by', 'none') != 'none')
+    ]
     overtime_rules = [p for p in data['policies'] if p['definition']['rule']['kind'] == 'allocation_overtime']
     attached_people = {row['person_id'] for row in data.get('mentorships', [])}
     if not policies and not overtime_rules and not attached_people:
@@ -126,7 +130,7 @@ def allocation_score_items(data, choices=None, participants=None, pairings=None,
         check()
         rule = policy['definition']['rule']
         weight = strengths[policy['definition'].get('strength', 'medium')]
-        base = rule.get('priority', 0) + rule.get('session_priority', 0)
+        base = rule.get('priority', 0)
         extra = rule.get('overtime_priority', 0)
         multiplier = Fraction(weight, strengths['medium'])
         positive_priority = max(0, base, base + extra)

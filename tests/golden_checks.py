@@ -262,6 +262,47 @@ def check_allocation_cover(data, ids, spec):
             'bindings': {'balance': len(bound)}}
 
 
+def check_allocation_order(data, ids, spec):
+    from packages.domain.generation import generate as greedy
+    from packages.domain.score import schedule_score
+
+    expected = spec['expect']
+    invariance = expected['invariance']
+    sid = ids['duty']
+    gapped = disabled(data, ids['middle'])
+    dense = copy.deepcopy(gapped)
+    dense_places = {ids[key]: rank for key, rank in invariance['dense_places'].items()}
+    for policy in dense['policies']:
+        if policy['id'] in dense_places:
+            policy['definition']['rule']['session_priority'] = dense_places[policy['id']]
+    counterfactual = disabled(gapped, ids['first'])
+    with_order = ids[invariance['with_order']]
+    without_first = ids[expected['counterfactual']['without_first']]
+
+    def preference(rota, pid):
+        trial = copy.deepcopy(rota)
+        place(trial, sid, [pid])
+        return schedule_score(trial, evaluate(trial))['components']['preferences']['value']
+
+    for pid in (with_order, without_first):
+        assert preference(data, pid) == preference(gapped, pid) == preference(dense, pid)
+    assert preference(gapped, without_first) > preference(gapped, with_order)
+
+    bindings = 0
+    for mode in ('weighted', 'tiered'):
+        for rota, person in ((data, with_order), (gapped, with_order),
+                             (dense, with_order), (counterfactual, without_first)):
+            trial = {**rota, 'generation_options': {**rota['generation_options'], 'allocation_order': mode}}
+            results = [greedy(trial, 5, deterministic=True),
+                       *(solve(trial, seed) for seed in expected['seed_robustness']['seeds'])]
+            for result in results:
+                candidate = feasible(trial, result)
+                assert [p['person_id'] for p in shift(candidate, sid)['participants']] == [person], (mode, result)
+                if person == without_first:
+                    bindings += 1
+    return {'assertions': {'invariance', 'counterfactual', 'seed_robustness'}, 'bindings': {'first': bindings}}
+
+
 def check_weekly_limit(data, ids, spec):
     expected = spec['expect']
     sid, first, second, rid = ids['s2'], ids['p0'], ids['p1'], ids['workload']
@@ -311,5 +352,6 @@ def check_scenario(data, ids, spec):
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
+            'A-ALLOCATION-ORDER-01': check_allocation_order,
             'A-WEEKLY-LIMIT-01': check_weekly_limit,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

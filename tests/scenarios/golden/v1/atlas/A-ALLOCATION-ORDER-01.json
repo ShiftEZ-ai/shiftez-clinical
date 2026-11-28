@@ -1,0 +1,74 @@
+{
+  "id": "A-ALLOCATION-ORDER-01",
+  "revision": 1,
+  "title": "Allocation places are ordered",
+  "intent": "The first eligible place wins under both allocation modes.",
+  "pressure": "Two eligible people compete for one place. The later line has greater strength and the weighted score favours the later person.",
+  "covers": {
+    "kind.allocation_preference.session_priority": ["invariance", "counterfactual", "seed_robustness"]
+  },
+  "commands": [
+    {"key": "rank", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "categories", "value": {"name": "Order witness rank", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "service", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "services", "value": {"name": "Order witness service", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "location_types", "value": {"name": "Order witness room type", "starts_on": "2027-01-01"}, "reason": "Synthetic scenario"}},
+    {"key": "room", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "locations", "value": {"name": "Order witness room", "starts_on": "2027-01-01", "location_type_id": "$room_type", "capacity": 2}, "reason": "Synthetic scenario"}},
+    {"key": "p0", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Order witness participant A", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "p1", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "people", "value": {"display_name": "Order witness participant B", "tags": ["golden"]}, "reason": "Synthetic scenario"}},
+    {"key": "member0", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p0", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "member1", "role": "admin", "kind": "membership.create",
+     "payload": {"person_id": "$p1", "category_id": "$rank", "starts_on": "2027-01-01"}},
+    {"key": "eligible0", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p0", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "eligible1", "role": "credentialer", "kind": "eligibility.create",
+     "payload": {"person_id": "$p1", "service_id": "$service", "starts_on": "2027-01-01"}},
+    {"key": "workspace", "role": "coordinator", "kind": "workspace.create",
+     "payload": {"name": "Order witness rota", "starts_on": "2027-01-04", "ends_on": "2027-01-07"}},
+    {"key": "duty_type", "role": "admin", "kind": "catalogue.create",
+     "payload": {"catalogue": "assignment_types", "value": {"name": "Order witness duty", "starts_on": "2027-01-01", "definition": {"requirements": [{"minimum": 1, "maximum": 1}]}}, "reason": "Synthetic scenario"}},
+    {"key": "duty", "role": "coordinator", "kind": "shift.create", "revision": "$workspace.revision",
+     "payload": {"workspace_id": "$workspace", "assignment_type_id": "$duty_type", "location_id": "$room", "service_ids": ["$service"], "start": "2027-01-04T08:00:00+03:00", "end": "2027-01-04T12:00:00+03:00", "participants": []}},
+    {"key": "first", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "First allocation place", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01",
+      "definition": {"rule": {"kind": "allocation_preference", "priority": 0, "session_priority": 90}, "scope": {"person_id": "$p0", "assignment_type_id": "$duty_type"}, "severity": "advisory", "strength": "low", "workspace_id": "$workspace"}}},
+    {"key": "first_active", "role": "approver", "kind": "policy.activate", "target": "$first", "revision": "$first.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "last", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "Later allocation place", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01",
+      "definition": {"rule": {"kind": "allocation_preference", "priority": 0, "session_priority": 4}, "scope": {"person_id": "$p1", "assignment_type_id": "$duty_type"}, "severity": "advisory", "strength": "high", "workspace_id": "$workspace"}}},
+    {"key": "last_active", "role": "approver", "kind": "policy.activate", "target": "$last", "revision": "$last.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "middle", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "Intermediate allocation place on another day", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01",
+      "definition": {"rule": {"kind": "allocation_preference", "priority": 0, "session_priority": 40}, "scope": {"assignment_type_id": "$duty_type", "weekdays": [1]}, "severity": "advisory", "workspace_id": "$workspace"}}},
+    {"key": "middle_active", "role": "approver", "kind": "policy.activate", "target": "$middle", "revision": "$middle.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "preference", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "Personal allocation preference", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01",
+      "definition": {"rule": {"kind": "allocation_preference", "priority": 800}, "scope": {"person_id": "$p1", "assignment_type_id": "$duty_type"}, "severity": "advisory", "workspace_id": "$workspace"}}},
+    {"key": "preference_active", "role": "approver", "kind": "policy.activate", "target": "$preference", "revision": "$preference.revision",
+     "payload": {"reason": "Independent synthetic approval"}}
+  ],
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0,
+      "scoring": {
+        "weights": {"coverage": 0, "rules": 0, "fairness": 0, "preferences": 100, "stability": 0},
+        "strengths": {"low": 1, "medium": 4, "high": 16}
+      }
+    }
+  },
+  "expect": {
+    "binding_rules": ["first"],
+    "invariance": {"dense_places": {"first": 2, "last": 1}, "with_order": "p0"},
+    "counterfactual": {"without_first": "p1"},
+    "seed_robustness": {"seeds": [11, 29, 47], "workers": 1}
+  }
+}
