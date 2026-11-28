@@ -9561,6 +9561,9 @@ class PlannerViewSettings(PlannerViewDefinition):
     # Staffing numbers (places filled / needed under each day, group totals, a grid's Staffed / needed row): absent shows
     # them (older views unchanged); false hides them for this view and its exports.
     staffing: bool | None = Field(default=None, strict=True, exclude_if=lambda value: value is None)
+    # People × Days row height: absent fits each row to its duties (older views unchanged); "same" gives every row one
+    # line, a day's further duties as "+n". Print always fits content.
+    row_height: Literal["fit", "same"] | None = Field(default=None, exclude_if=lambda value: value is None)
     # Coverage's own axes; `rows`/`columns` above are the calendar's. A view saved before this field read its Coverage
     # axes from rows/columns when its mode was coverage, and still does (the web normaliser).
     coverage: CoverageAxes | None = Field(default=None, exclude_if=lambda value: value is None)

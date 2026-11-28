@@ -989,6 +989,10 @@ and a desktop window narrowed below it gets the same rule at once.
   contract's `VIEW_ITEM_SHOWN_BY_DEFAULT`. Staffing numbers is one switch per view (`PlannerViewSettings.staffing`),
   also in the export. The List's columns are saved with the view, and the export's key repeats on every page. A
   setting is offered only where it is drawn.
+  People × Days Row height (`PlannerViewSettings.row_height`, saved with the view): Fit content (default) or Same
+  for every row, where each cell is one line and a day's further duties are one "+n" beside the first chip (keyed
+  "More duties"; it lists the day's duties, each opening as its chip does, and carries a hidden duty's must-fix);
+  print always fits content.
 - Person names: one renderer (`person_label.ts`) and one parser (`nameWords` in
   `dom.ts`, under the department's title and family-name particle lists) name every person; no screen formats a name,
   strips a title or makes initials itself. A name in a chip, cell, row or list item shows the label (the Schedule: its

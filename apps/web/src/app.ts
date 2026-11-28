@@ -2074,11 +2074,11 @@ const plannerPart=(p:Partial<PlannerSettings>|undefined)=>{const mode=p?.mode===
     // Display settings: absent reads as the default and is not stored.
     person_display:p?.person_display&&p.person_display!==PLANNER_PERSON_DISPLAY_DEFAULT&&pickedPeople(p.search_options||undefined,p.filters).length?p.person_display:null,
     group_sort:p?.group_sort?.length?p.group_sort.filter(([,d])=>d==='desc'):null,
-    team_rows:p?.team_rows&&p.team_rows!==PLANNER_TEAM_ROWS_DEFAULT?p.team_rows:null,staffing:p?.staffing===false?false:null,
+    team_rows:p?.team_rows&&p.team_rows!==PLANNER_TEAM_ROWS_DEFAULT?p.team_rows:null,staffing:p?.staffing===false?false:null,row_height:p?.row_height==='same'?'same':null,
     widths:p?.widths&&Object.keys(p.widths).length?Object.fromEntries(PLANNER_WIDTH_KEYS.filter(k=>Number(p.widths![k])>0).map(k=>[k,Math.round(p.widths![k])])):null} as PlannerSettings;};
 const plannerDefinition=():PlannerSaved=>({...(schedConditions?{conditions:schedConditions}:{}),...tableColumns('planner-list'),planner:distinctAxes(plannerPart({mode:schedView==='year'?'year':(({people:'person',coverage:'coverage',list:'list',timeline:'timeline'} as Record<string,PlannerSettings['mode']>)[schedView]||'week'),range:schedView==='year'?null:rangeNow() as PlannerSettings['range'],
   search:searchText,search_options:schedSearch,filters:schedFilters,
-  group_by:schedView==='people'?peopleView.group:weekView.groupBy,people_sort:schedView==='people'?peopleView.sort.replace('-','_') as PlannerSettings['people_sort']:null,sort_by:weekView.sortBy,colour_by:weekView.colourBy,colour_tags:weekView.colourTags,density:weekView.compact?'compact':'comfortable',team_rows:weekView.teamRows,staffing:weekView.staffing?null:false,only_open:weekView.onlyOpen,only_issues:weekView.onlyIssues,label:viewNames,properties:weekView.props,
+  group_by:schedView==='people'?peopleView.group:weekView.groupBy,people_sort:schedView==='people'?peopleView.sort.replace('-','_') as PlannerSettings['people_sort']:null,sort_by:weekView.sortBy,colour_by:weekView.colourBy,colour_tags:weekView.colourTags,density:weekView.compact?'compact':'comfortable',team_rows:weekView.teamRows,staffing:weekView.staffing?null:false,row_height:weekView.sameRows?'same':null,only_open:weekView.onlyOpen,only_issues:weekView.onlyIssues,label:viewNames,properties:weekView.props,
   weekdays:viewDays.weekdays,week_start:viewDays.week_start,time_window:viewDays.time_window,days:rangeNow()==='custom'?viewDays.days:null,
   columns:gridColumns==='day'?null:gridColumns,cells:cellsNow()==='counts'?'counts':null,rows:schedView==='timeline'?gridRows:null,coverage:{rows:coverRows,columns:coverColumns},subgroup:useGrid()||schedView==='week'&&isSessionGroup(gridSubgroup)?gridSubgroup:null,collapsed:[...collapsed],
   layers:{draft:draftsShown,leave:peopleView.leave,mine:mineOnly,mode:layerMode},person_display:personDisplay,group_sort:weekView.groupSort.filter((x):x is [Dim,'asc'|'desc']=>isDim(x[0])),widths:weekView.widths}))});
@@ -2108,7 +2108,7 @@ function applyPlannerView(p:Partial<PlannerSettings>|undefined,conditions?:Condi
   if(v.mode==='person'){peopleView.group=v.group_by as typeof peopleView.group;peopleView.sort=(v.people_sort||'hours_desc').replace('_','-') as typeof peopleView.sort;}
   // Collapsed groups are part of the view (SI-35).
   collapsed.clear();for(const g of v.collapsed||[])collapsed.add(g);
-  Object.assign(weekView,{props:v.properties||null,groupBy:schedView!=='timeline'&&personDim(v.group_by||'')||v.mode==='person'?'service':v.group_by,sortBy:v.sort_by,colourBy:v.colour_by,colourTags:[...(v.colour_tags||[])],compact:v.density==='compact',teamRows:v.team_rows??PLANNER_TEAM_ROWS_DEFAULT,staffing:v.staffing!==false,onlyOpen:v.only_open,onlyIssues:v.only_issues,
+  Object.assign(weekView,{props:v.properties||null,groupBy:schedView!=='timeline'&&personDim(v.group_by||'')||v.mode==='person'?'service':v.group_by,sortBy:v.sort_by,colourBy:v.colour_by,colourTags:[...(v.colour_tags||[])],compact:v.density==='compact',teamRows:v.team_rows??PLANNER_TEAM_ROWS_DEFAULT,staffing:v.staffing!==false,sameRows:v.row_height==='same',onlyOpen:v.only_open,onlyIssues:v.only_issues,
     groupSort:[...(v.group_sort||[])],widths:{...(v.widths||{})}});
   personDisplay=v.person_display||PLANNER_PERSON_DISPLAY_DEFAULT;
   selected.clear();
@@ -3241,6 +3241,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
       tags:{options:personTagChoices,value:()=>weekView.colourTags,set:ids=>{weekView.colourTags=ids;void redraw();},limit:PLANNER_COLOUR_TAG_LIMIT}}:undefined,
     density:cardGrid?{value:()=>weekView.compact?'compact':'comfortable',set:k=>{weekView.compact=k==='compact';void redraw();}}:undefined,
     teamRows:cardGrid?{value:()=>weekView.teamRows,set:n=>{weekView.teamRows=n;void redraw();}}:undefined,
+    rowHeight:schedView==='people'?{value:()=>weekView.sameRows?'same':'fit',set:k=>{weekView.sameRows=k==='same';void redraw();}}:undefined,
     // Planners' grids that draw staffing numbers (Week and Month day heads and group totals, the grid's Staffed / needed row).
     staffing:planner&&(cardGrid||schedView==='timeline')?{value:()=>weekView.staffing,set:on=>{weekView.staffing=on;void redraw();}}:undefined,
     // A layout offers what its items draw (ITEM_DRAWS, the one item renderer): People only where an item is a session,
