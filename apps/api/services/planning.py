@@ -2897,6 +2897,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         manifest = result['input_manifest']
         result['input_manifest'] = {**manifest, 'dirty_hint': {**manifest['dirty_hint'],
             'input_revision': organisation.input_revision, 'availability_revision': organisation.availability_revision}}
+        workspace.validation = {**checked, 'input_manifest': result['input_manifest']}
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
