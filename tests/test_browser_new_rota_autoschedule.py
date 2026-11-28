@@ -124,11 +124,11 @@ def test_create_before_the_suggested_name_lands_clears_its_error_when_it_does(br
             expect(name).to_have_value('')
             dialog.get_by_role('button', name='Create draft', exact=True).click()
             expect(name).to_have_attribute('aria-invalid', 'true')
-            expect(dialog.get_by_text('Add a rota name', exact=True)).to_be_visible()
+            expect(dialog.locator('.field-error').filter(has_text='Add a rota name')).to_be_visible()
             # Release answers what is held, then unroutes: unrouting first already lets them through (Playwright 1.63+).
             held.release(overlaps)
             expect(name).to_have_value(re.compile(r'^Rota '))
             expect(name).not_to_have_attribute('aria-invalid', 'true')
-            expect(dialog.get_by_text('Add a rota name', exact=True)).to_be_hidden()
+            expect(dialog.locator('.field-error').filter(has_text='Add a rota name')).to_be_hidden()
     finally:
         context.close()
