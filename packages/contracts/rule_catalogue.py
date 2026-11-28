@@ -313,7 +313,7 @@ _V2_ENTRIES['spread_evenly'].update(
     setting_labels={'holder': 'Across', 'within': 'Within', 'mode': 'How even', 'maximum_gap': 'Maximum gap'},
     setting_help={'maximum_gap': 'Levelled means a maximum gap of one; a supervision adjustment may only tighten the configured gap.'},
     setting_option_labels={'holder': {'supervisors': 'Supervisors in each session'},
-                           'within': {'session': 'Each session'},
+                           'within': {'session': 'Each session', 'calendar_week': 'Each session and calendar week'},
                            'mode': {'levelled': 'Levelled', 'maximum_gap': 'Maximum gap'}})
 _V2_ENTRIES['workload_limit'] = _entry(
     'workload_limit', 'workload', 'Workload limit', 'Counts over time, or no duties at the selected times and places.',

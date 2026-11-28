@@ -1,10 +1,7 @@
 """Small, deterministic helpers for the generic ``Spread evenly`` rule.
 
-The first supported holder is a session's supervision team.  Levelling is a
-property of one session, so it belongs beside pairing rather than in the
-rota-wide fairness ledger.  The matcher is deliberately bounded by the
-people in one session and uses a capacitated bipartite matching to minimise
-the largest holder load before reporting a finding.
+The session matcher uses capacitated bipartite matching to minimise the
+largest holder load. Calendar-week rules also compare weekly pairing loads.
 """
 
 from collections import Counter
@@ -28,7 +25,7 @@ def session_spread_policies(policies, applies, member_id, shift, a, b):
         if (policy.get('status', 'active') != 'active' or not policy.get('active', True)
                 or policy['definition']['rule'].get('kind') != 'spread_evenly'
                 or policy['definition']['rule'].get('holder', 'supervisors') != 'supervisors'
-                or policy['definition']['rule'].get('within', 'session') != 'session'
+                or policy['definition']['rule'].get('within', 'session') not in {'session', 'calendar_week'}
                 or not applies(policy, member_id, shift, a, b)):
             continue
         result.setdefault(spread_policy_key(policy), policy)

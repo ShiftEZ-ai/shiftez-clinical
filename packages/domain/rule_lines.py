@@ -471,7 +471,7 @@ def weakens_safety_rules(before, after, *, matching_scopes_only=False, from_day=
         return json.dumps([copy.get('department_id'), definition.get('workspace_id'),
                            definition['rule']['kind'], _canonical_scope(definition['scope'])], sort_keys=True)
 
-    def obligations(policies):
+    def obligations(policies, *, also_session=False):
         for copy in mandatory_safety_copies(policies):
             definition = copy['definition']
             rule = definition['rule']
@@ -482,11 +482,16 @@ def weakens_safety_rules(before, after, *, matching_scopes_only=False, from_day=
                 rule = {key: value for key, value in rule.items() if key != 'mode'}
                 rule['maximum_gap'] = spread_gap(copy)
                 directions = {'maximum_gap': 'min'}
-            shape = json.dumps({key: value for key, value in rule.items() if key not in directions}, sort_keys=True)
             first = max(str(copy.get('starts_on') or ''), from_day or '')
             last = str(copy.get('ends_on') or '\uffff')
             if from_day is None or first < last:
-                yield scope_key(copy), shape, first, last, rule, directions
+                required = [rule]
+                if also_session and kind == 'spread_evenly' and rule.get('within') == 'calendar_week':
+                    required.append({**rule, 'within': 'session'})
+                for obligation in required:
+                    shape = json.dumps({key: value for key, value in obligation.items()
+                                        if key not in directions}, sort_keys=True)
+                    yield scope_key(copy), shape, first, last, obligation, directions
 
     scopes = set()
     if matching_scopes_only:
@@ -497,7 +502,7 @@ def weakens_safety_rules(before, after, *, matching_scopes_only=False, from_day=
             scopes.update(scope_key(copy) for copy in active_rules([{**row, 'definition': definition, 'active': True}])
                           if safety_rule(copy['definition']) and not copy.get('_advisory_catalogue_slot'))
     replacements = {}
-    for scope, shape, first, last, rule, _ in obligations(after):
+    for scope, shape, first, last, rule, _ in obligations(after, also_session=True):
         replacements.setdefault((scope, shape), []).append((first, last, rule))
     for scope, shape, first, last, rule, directions in obligations(before):
         if matching_scopes_only and scope not in scopes:

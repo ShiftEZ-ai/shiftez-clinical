@@ -17,6 +17,15 @@ from scripts.system_command import MAINTENANCE_ISSUER, MAINTENANCE_SUBJECT
 
 @pytest.mark.parametrize('placement', ['rule_settings', 'line_settings'])
 def test_spread_evenly_proposal_with_tags_evaluates_and_generates(h, placement):
+    assert_spread_proposal_evaluates_and_generates(h, placement, 'session')
+
+
+@pytest.mark.parametrize('placement', ['rule_settings', 'line_settings'])
+def test_calendar_week_spread_proposal_with_tags_evaluates_and_generates(h, placement):
+    assert_spread_proposal_evaluates_and_generates(h, placement, 'calendar_week')
+
+
+def assert_spread_proposal_evaluates_and_generates(h, placement, within):
     from packages.domain import cp_sat, generation
     from packages.domain.validation import evaluate
 
@@ -26,7 +35,7 @@ def test_spread_evenly_proposal_with_tags_evaluates_and_generates(h, placement):
     h.command('approver', 'rule.catalogue.activate', {'reason': 'Independent conversion review'},
               change['id'], change['revision'])
     h.configure('tags', {'name': 'Synthetic team', 'labels': ['people']})
-    settings = {'spread_evenly': {'holder': 'supervisors', 'within': 'session', 'mode': 'levelled'}}
+    settings = {'spread_evenly': {'holder': 'supervisors', 'within': within, 'mode': 'levelled'}}
     proposal = h.command('coordinator', 'rule.propose', {
         'catalogue_id': 'spread_evenly', 'catalogue_version': 2,
         'settings': settings if placement == 'rule_settings' else {},
@@ -36,12 +45,12 @@ def test_spread_evenly_proposal_with_tags_evaluates_and_generates(h, placement):
     stored = proposal['definition']['rule']
     if placement == 'line_settings':
         stored = stored['lines'][0]
-    assert stored['settings']['spread_evenly']['within'] == 'session'
+    assert stored['settings']['spread_evenly']['within'] == within
     active = h.command('approver', 'policy.activate', {'reason': 'Independent spread review'},
                        proposal['id'], proposal['revision'])['record']
     data = h.snapshot(workspace)
     [spread] = [p for p in active_rules(data['policies'], context=data) if p['id'] == active['id']]
-    assert spread['definition']['rule']['within'] == 'session'
+    assert spread['definition']['rule']['within'] == within
     original = copy.deepcopy(data)
     assert isinstance(evaluate(data)['valid'], bool)
     assert data == original

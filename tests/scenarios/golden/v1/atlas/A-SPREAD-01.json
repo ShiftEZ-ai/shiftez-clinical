@@ -1,9 +1,9 @@
 {
   "id": "A-SPREAD-01",
-  "revision": 2,
+  "revision": 3,
   "title": "Spread trainee pairings across session supervisors",
-  "intent": "Opposite imbalances in consecutive sessions do not cancel each other.",
-  "pressure": "Pairing preferences favor opposite supervisors and the mandatory rule must still level both sessions.",
+  "intent": "Session imbalances cannot cancel each other, and level sessions can still produce an uneven week.",
+  "pressure": "Pairing preferences favor particular supervisors while both spread bounds still bind.",
   "covers": {
     "kind.spread_evenly": [
       "session_loads",
@@ -17,6 +17,7 @@
     ],
     "kind.spread_evenly.within": [
       "session_loads",
+      "weekly_loads",
       "permitted_gap",
       "seed_robustness"
     ],
@@ -92,6 +93,10 @@
      "payload": {"name": "A-SPREAD-01 session pairing", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "spread_evenly", "holder": "supervisors", "within": "session", "mode": "levelled", "maximum_gap": 1}, "scope": {"assignment_type_id": "$duty_type"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
     {"key": "spread_active", "role": "approver", "kind": "policy.activate", "target": "$spread", "revision": "$spread.revision",
      "payload": {"reason": "Independent synthetic approval"}},
+    {"key": "weekly", "role": "coordinator", "kind": "policy.create",
+     "payload": {"name": "A-SPREAD-01 weekly pairing", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "spread_evenly", "holder": "supervisors", "within": "calendar_week", "mode": "levelled", "maximum_gap": 1}, "scope": {"assignment_type_id": "$duty_type"}, "severity": "mandatory", "workspace_id": "$workspace"}}},
+    {"key": "weekly_active", "role": "approver", "kind": "policy.activate", "target": "$weekly", "revision": "$weekly.revision",
+     "payload": {"reason": "Independent synthetic approval"}},
     {"key": "prefer_first", "role": "coordinator", "kind": "policy.create",
      "payload": {"name": "A-SPREAD-01 first pairing preference", "owner": "Scenario coordinator", "source": "Synthetic scenario", "starts_on": "2027-01-01", "definition": {"rule": {"kind": "allocation_preference", "priority": 9, "supervisor_ids": ["$p0"]}, "scope": {"assignment_type_id": "$duty_type", "weekdays": [0], "person_ids": ["$p2", "$p3", "$p4"]}, "severity": "advisory", "workspace_id": "$workspace"}}},
     {"key": "prefer_first_active", "role": "approver", "kind": "policy.activate", "target": "$prefer_first", "revision": "$prefer_first.revision",
@@ -115,8 +120,10 @@
       "workers": 1
     },
     "binding_rules": [
-      "spread"
+      "spread",
+      "weekly"
     ],
+    "weekly_loads": {"levelled": [3, 3], "skewed": [2, 4]},
     "permitted_gap": 3,
     "session_loads": {
       "holder": "supervisors",

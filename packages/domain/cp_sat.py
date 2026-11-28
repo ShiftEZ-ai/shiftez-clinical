@@ -13,6 +13,7 @@ from fractions import Fraction
 from collections import defaultdict
 from functools import cache
 from datetime import date, timedelta
+from itertools import combinations
 from zoneinfo import ZoneInfo
 
 from ortools import __version__ as solver_version
@@ -27,7 +28,7 @@ from .time import aware, duration_hours, local_midnight, overlaps
 from .conditions import active_rules, counting_key, counting_views, scope_matches_throughout
 from .validation import attached_to, evaluate, finding_observations, capabilities_for, categories_for, exception_for, named_people, policy_applies, applicable_restriction_intervals, scope_intervals, session_scope, within_dates, qualified, qualified_supervisor, rotation_blocks, restriction_blocks, lead_qualified
 from .validation import validate_session_setup, capabilities_during, index_person_rows, person_rows, workload_gap_blockers, staffing_credit
-from .validation import participation_for, trainee_intervals, is_trainee, supervision_commitments
+from .validation import participation_for, trainee_intervals, is_trainee, supervision_commitments, weekly_spread
 from .supervision_levelling import levelled_pairing, session_spread_policies, spread_gap, spread_policy_key
 from packages.contracts.schemas import safety_rule
 
@@ -42,6 +43,59 @@ from .recurrence import inactive, with_series_state, series_candidate_allowed, s
 from .fill_priority import STAGE_ORDER, stage_label
 
 CHECKPOINT_INTERVAL_SECONDS = 60
+
+
+def add_weekly_spread(model, data, policy, sessions, opportunities, loads, start, end, check):
+    """Bound loads when both supervisors have the same active pairing opportunities."""
+    pairs = set()
+    for _, holders in opportunities:
+        profiles = defaultdict(list)
+        for pid, (capacity, _) in holders.items():
+            profiles[capacity].append(pid)
+        for peers in profiles.values():
+            pairs.update(combinations(sorted(peers), 2))
+
+    def index(literal):
+        return -literal - 1 if isinstance(literal, int) else literal.index
+
+    guards = {}
+    for left, right in sorted(pairs):
+        check()
+        mismatches = {}
+        impossible = False
+        for member, holders in opportunities:
+            lhs_profile, lhs = holders.get(left, (None, 0))
+            rhs_profile, rhs = holders.get(right, (None, 0))
+            same = lhs_profile == rhs_profile or lhs_profile is None or rhs_profile is None
+            if same and index(lhs) == index(rhs):
+                continue
+            if isinstance(lhs, int) and isinstance(rhs, int):
+                if isinstance(member, int):
+                    impossible = True
+                    break
+                mismatches[member.index] = member
+                continue
+            key = (same, index(lhs), index(rhs), index(member))
+            mismatch = guards.get(key)
+            if mismatch is None:
+                different = model.new_bool_var('weekly_spread_opportunity_differs')
+                expression = lhs - rhs if same else lhs + rhs
+                model.add(expression != 0).only_enforce_if(different)
+                model.add(expression == 0).only_enforce_if(different.Not())
+                mismatch = different
+                if not isinstance(member, int):
+                    mismatch = model.new_bool_var('weekly_spread_active_opportunity_differs')
+                    model.add_min_equality(mismatch, [member, different])
+                guards[key] = mismatch
+            mismatches[mismatch.index] = mismatch
+        if impossible:
+            continue
+        difference = sum(loads[left].values()) - sum(loads[right].values())
+        gap = spread_gap(policy)
+        name = policy_name(policy, data=data, person_ids=[left, right], session_ids=sorted(sessions), start=start, end=end)
+        unchanged = [term.Not() for term in mismatches.values()]
+        model.add(difference <= gap).only_enforce_if(unchanged).with_name(name)
+        model.add(-difference <= gap).only_enforce_if(unchanged).with_name(name)
 
 
 def _coverage_floor_key(row):
@@ -378,6 +432,9 @@ def _proposal_checks(data, selected, tolerated, gap_before, *, editable=None):
     scope_to = max((aware(s['end']) for s in scope_shifts), default=None)
 
     def in_scope(f):
+        detail = f.get('detail') or {}
+        if f['code'] == 'SUPERVISION_LEVEL' and detail.get('within') == 'calendar_week':
+            return not selected.isdisjoint(detail['affected_shift_ids'])
         if f.get('shift_id') in by_id:
             return f['shift_id'] in selected
         return not f.get('start') or not f.get('end') or scope_from is None or overlaps(
@@ -539,7 +596,13 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                                     and p['definition']['rule']['kind'] == 'supervision_limit'
                                     for p in data.get('policies', ())))
     locked_gap_ids = {f['shift_id'] for f in locked_staffing}
+    def repairable_weekly_spread(f):
+        detail = f.get('detail') or {}
+        return (f['code'] == 'SUPERVISION_LEVEL' and detail.get('within') == 'calendar_week'
+                and not editable.isdisjoint(detail['affected_shift_ids']))
+
     kept_issues = [f for f in kept_findings if f['code'] not in fillable and in_scope(f)
+                   and not repairable_weekly_spread(f)
                    and not (f['code'] == 'ATTACHMENT_PAIRING'
                             and (f['shift_id'], f['person_id']) in repairable_attachments)]
     assignment_limits = {'MAXIMUM_PARTICIPANTS', 'SCOPED_PARTICIPANT_LIMIT'}
@@ -560,7 +623,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                         if f['code'] not in fillable or f.get('shift_id') in context_ids}
         result['outside_scope_issues'] = issues_where(protected_validation, lambda f: citation_finding_key(f) in outside_keys)
         publish_issues([f for f in outside if f['code'] not in fillable or f.get('shift_id') in context_ids], 'outside_scope')
-    protected_conflicts = [f for f in kept_findings if in_scope(f) and (
+    protected_conflicts = [f for f in kept_findings if in_scope(f) and not repairable_weekly_spread(f) and (
         f.get('person_id') and f['code'] not in fillable or f['code'] in assignment_limits
         or f.get('shift_id') in selected - editable)
         and not (f['code'] == 'ATTACHMENT_PAIRING'
@@ -1570,6 +1633,27 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             staffing_limits[sid] = ([choices[sid, pid] for pid in mutable_people], places_to_fill)
         elif relative_fair_share and not can_cap and (not whole_duty or maximum_places > places_to_fill):
             staffing_choices.extend(choices[sid, pid] for pid in mutable_people)
+
+    weekly_policies = [p for p in data['policies'] if p['definition']['rule']['kind'] == 'spread_evenly'
+                       and p['definition']['rule'].get('within') == 'calendar_week'
+                       and p['definition']['severity'] == 'mandatory']
+    if weekly_policies:
+        def spread_people(shift, definition, a, b):
+            sid = shift['id']
+            return [participants[sid, pid] for pid in present_at(shift, a, b, True)]
+
+        def spread_pair(sid, tid, pid):
+            if sid in editable:
+                return pairings.get((sid, tid, pid))
+            return int(participants[sid, tid].get('supervisor_person_id') == pid)
+
+        weekly_views = counting_views(data, weekly_policies)
+        buckets = weekly_spread(data, shifts, focus, [*weekly_views, *supervision_limits], spread_people,
+                                lambda sid, pid: choices[sid, pid] if (sid, pid) in decisions else 1,
+                                spread_pair, control.check)
+        for policy, sessions, opportunities, loads, start, end in buckets:
+            if not editable.isdisjoint(sessions):
+                add_weekly_spread(model, data, policy, sessions, opportunities, loads, start, end, control.check)
 
     control.check()
     from .cp_sat_workload import add_workload_limits

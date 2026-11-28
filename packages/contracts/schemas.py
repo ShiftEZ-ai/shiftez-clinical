@@ -3251,7 +3251,7 @@ class SpreadEvenly(Schema):
     """A bounded distribution rule; supervision is the first supported holder kind."""
     kind: Literal['spread_evenly']
     holder: Literal['supervisors'] = 'supervisors'
-    within: Literal['session'] = 'session'
+    within: Literal['session', 'calendar_week'] = 'session'
     mode: Literal['levelled', 'maximum_gap'] = 'levelled'
     maximum_gap: int = Field(default=1, ge=0, le=100, strict=True)
 

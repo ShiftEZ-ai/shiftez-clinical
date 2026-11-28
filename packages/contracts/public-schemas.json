@@ -7346,8 +7346,11 @@
             "type": "string"
           },
           "within": {
-            "const": "session",
             "default": "session",
+            "enum": [
+              "session",
+              "calendar_week"
+            ],
             "title": "Within",
             "type": "string"
           },
@@ -20078,8 +20081,11 @@
             "type": "string"
           },
           "within": {
-            "const": "session",
             "default": "session",
+            "enum": [
+              "session",
+              "calendar_week"
+            ],
             "title": "Within",
             "type": "string"
           },
