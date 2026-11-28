@@ -71,24 +71,30 @@ def test_child_environment_is_allowlisted_and_contains_no_worker_secrets(monkeyp
 @pytest.mark.skipif(sys.platform != 'linux', reason='Linux prctl and POSIX subprocess credentials; Windows has no restricted token')
 @pytest.mark.parametrize('separate', [False, True])
 def test_linux_child_cannot_read_parent_environ_and_has_expected_credentials(separate):
-    if not separate and os.geteuid() == 0:
-        pytest.skip('Root workers cannot use the same-UID fallback')
-    if separate and os.geteuid() != 0:
-        pytest.skip('Changing UID/GID requires root or SETUID/SETGID capabilities')
+    dockerfile = (isolation.ROOT / 'infra/Dockerfile').read_text(encoding='utf-8')
+    [worker_user] = [line.split()[1] for line in dockerfile.splitlines() if line.startswith('USER ')]
+    worker_uid, worker_gid = map(int, worker_user.split(':'))
+    assert worker_uid > 0 and worker_gid > 0, 'The worker image must use non-root credentials'
+    capabilities = '-all,+setuid,+setgid' if separate else '-all'
+    launcher = ['sudo', '-n'] if os.geteuid() else []
+    launcher += ['setpriv', '--reuid', str(worker_uid), '--regid', str(worker_gid), '--clear-groups',
+                 f'--bounding-set={capabilities}', f'--inh-caps={capabilities}', f'--ambient-caps={capabilities}', '--']
+    source_root = os.getenv('CI_UNIT_APP_SOURCE', str(isolation.ROOT))
     code = f'''
 import json, os, subprocess, sys
-sys.path.insert(0, {str(isolation.ROOT)!r})
+sys.path.insert(0, {source_root!r})
 from apps.api.services import score_check_isolation as isolation
-os.environ.pop('ROTA_SCORE_CHECK_UID', None)
-os.environ.pop('ROTA_SCORE_CHECK_GID', None)
-isolation.protect_parent()
-options = {{}}
+assert (os.geteuid(), os.getegid(), os.getgroups()) == ({worker_uid}, {worker_gid}, [])
+with open('/proc/self/status', encoding='utf-8') as status:
+    effective = next(int(line.split()[1], 16) for line in status if line.startswith('CapEff:'))
+assert effective == {((1 << 6) | (1 << 7)) if separate else 0}  # CAP_SETGID and CAP_SETUID
+os.environ['ROTA_ENV'] = {'production' if separate else 'test'!r}
 if {separate!r}:
     import pwd
     account = pwd.getpwnam('nobody')
     os.environ['ROTA_SCORE_CHECK_UID'] = str(account.pw_uid)
     os.environ['ROTA_SCORE_CHECK_GID'] = str(account.pw_gid)
-    options = isolation._privilege_options()
+options = isolation._privilege_options()
 child = """import json, os
 try:
     open('/proc/%s/environ' % os.getppid(), 'rb').read()
@@ -105,7 +111,8 @@ if {separate!r}:
     assert uid == account.pw_uid and gid == account.pw_gid and groups == []
 print('protected')
 '''
-    result = subprocess.run([sys.executable, '-I', '-c', code], capture_output=True, timeout=10)
+    result = subprocess.run([*launcher, sys.executable, '-I', '-B', '-c', code],
+                            cwd='/tmp', env={}, capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr.decode()
     assert result.stdout.strip() == b'protected'
 

@@ -275,15 +275,6 @@
       ],
       "reason": "Observed skip in accepted measured run 44114266718; retained without inventing a pass.",
       "review": "sha256:d8ef62b484960812a34b91dc886ac6b614e03bdfb0c098db31a836db08b50f0d"
-    },
-    {
-      "node": "tests/test_score_check_hardening.py::test_linux_child_cannot_read_parent_environ_and_has_expected_credentials[case-iaeolpfojahmepedhjlkkdhgfmmmgieohjbpphjckfmkcgclihcnahkbpfeimpdo]",
-      "observed_in": [
-        1,
-        2
-      ],
-      "reason": "Observed skip in accepted measured run 44114266718; retained without inventing a pass.",
-      "review": "sha256:d8ef62b484960812a34b91dc886ac6b614e03bdfb0c098db31a836db08b50f0d"
     }
   ]
 }
