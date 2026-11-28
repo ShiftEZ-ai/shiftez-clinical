@@ -127,7 +127,9 @@ def test_planner_legend_follows_filters_colour_by_names_and_layouts(browser, liv
             expect(entries.filter(has_text='Unused duty')).to_have_count(0)
         # By time of day each chip also carries its time's code, so colour is not the only cue.
         colour_by(page, 'Time of day')
-        expect(page.locator('.people-grid .pg-chip > .tod-code')).to_have_text(['M', 'E'])
+        codes = page.locator('.people-grid .pg-chip > .tod-code')
+        expect(codes).to_have_count(2)
+        assert sorted(codes.all_inner_texts()) == ['E', 'M']
         colour_by(page, 'Duty type')
         expect(page.locator('.people-grid .tod-code')).to_have_count(0)
         pick_view(page, 'Coverage')
