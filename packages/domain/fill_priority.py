@@ -63,6 +63,55 @@ def allocation_tier(data, shift, person_id, supervisor_id=None, *, rules=None):
     return max(ranks, default=0)
 
 
+def first_trainee_place_rank(data, shift, person_id, supervisor_ids, rules):
+    """A first place is part of the highest session rank that applies to this pairing."""
+    from .generation import allocation_policy_matches, preferred_supervisors
+
+    rank = None
+    first = False
+    for policy in rules:
+        rule = policy['definition']['rule']
+        value = rule['session_priority']
+        if (rank is not None and value < rank) or not allocation_policy_matches(data, policy, shift, person_id):
+            continue
+        names_supervisor = rule.get('supervisor_ids') or rule.get('supervisor_relationship') == 'mentor'
+        if names_supervisor and not preferred_supervisors(data, rule, shift, person_id, supervisor_ids):
+            continue
+        first = bool(rule.get('first_trainee_places')) or value == rank and first
+        rank = value
+    return rank if first else None
+
+
+def first_trainee_place_objectives(model, data, shifts, choices, pairings, editable, rules, check):
+    if not any(p['definition']['rule'].get('first_trainee_places') for p in rules):
+        return []
+    loads = defaultdict(list)
+    ranked_loads = defaultdict(list)
+    ranked_people = defaultdict(set)
+    for (sid, pid, supervisor), pair in pairings.items():
+        check()
+        if sid not in editable:
+            continue
+        loads[sid, supervisor].append(pair)
+        rank = first_trainee_place_rank(data, shifts[sid], pid, {supervisor}, rules)
+        if rank is not None:
+            ranked_loads[rank, sid, supervisor].append(pair)
+            ranked_people[rank].add((sid, pid))
+    credits = defaultdict(list)
+    for (rank, sid, supervisor), pairs in ranked_loads.items():
+        check()
+        first = model.new_bool_var('first_trainee_place')
+        load = sum(pairs)
+        model.add(load >= 1).only_enforce_if(first)
+        if len(loads[sid, supervisor]) != len(pairs):
+            model.add(sum(loads[sid, supervisor]) == load).only_enforce_if(first)
+        credits[rank].append(first)
+    # Extra pairings cannot improve the objective once every first place is used.
+    return [(f'fill:trainee_places:{rank}',
+             [sum(choices[key] for key in sorted(ranked_people[rank])) - sum(credits[rank])], 0)
+            for rank in sorted(credits, reverse=True)]
+
+
 class FillPriority:
     def __init__(self, model, tiers, *, include_unranked=False):
         self.model = model

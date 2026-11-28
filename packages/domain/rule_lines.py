@@ -1518,6 +1518,10 @@ def _copy(policy, line, n, kind, level, numbers, settings, winners, lines, sourc
         body.update(slot['fixed'])
         if slot['field']:
             body[slot['field']] = int(value) if float(value).is_integer() else value
+    if (body.get('first_trainee_places') and has_value(line, 'session_priority')
+            and not any(key == 'session_priority' for _, _, key in numbers)):
+        # A separately scored personal priority does not carry the supervised places.
+        del body['first_trainee_places']
     starts_on, ends_on = _later(policy.get('starts_on'), line.get('starts_on')), _earlier(policy.get('ends_on'), line.get('ends_on'))
     if kind == 'block_quota':
         # Validate the configured block before intersection: an inactive line cannot hide a malformed quota.

@@ -5,7 +5,7 @@ checked against the canonical validator and the final candidate is checked again
 """
 import copy
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from fractions import Fraction
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
@@ -22,7 +22,7 @@ from .conditions import active_rules, bucket_keys, counting_key, counting_views,
 from .supervision_levelling import levelled_order, session_spread_policies
 from .patterns import day_of, wish_outcomes, wish_shape
 from .recurrence import inactive, with_series_state, usual_assignee_fixed, series_candidate_allowed
-from .fill_priority import STAGE_ORDER, allocation_order_rules, allocation_tier, stage_progress
+from .fill_priority import STAGE_ORDER, allocation_order_rules, allocation_tier, first_trainee_place_rank, stage_progress
 
 # 43: reject proposals that introduce or worsen missing supervision.
 ALGORITHM_VERSION = "bounded-greedy-44"
@@ -904,6 +904,10 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
         return sum(w['weight'] * (changed[w['id']][0] - before[w['id']][0])
                    for w in wishes if w['id'] in before)
     order_rules = allocation_order_rules(data['policies'])
+    trainee_order_rules = [p for p in order_rules if p['definition']['rule'].get('first_trainee_places')]
+    first_place_ranks = {p['definition']['rule']['session_priority'] for p in trainee_order_rules}
+    if first_place_ranks:
+        first_place_ranks.add(0)  # A supervisor added during the run can make a previously unranked pair eligible.
     session_priorities = {}
     stage_people = defaultdict(list)
     if order_rules:
@@ -994,11 +998,12 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
 
     name_leads()
     draft_safety = data.get('_draft_type_safety', {})
-    for strict_first, overflow_phase, stage, shift in (
-            (strict_first, phase, stage, shift)
+    for strict_first, overflow_phase, stage, first_place_only, shift in (
+            (strict_first, phase, stage, first_place_only, shift)
             for strict_first in _sweep_modes(baseline)
             for phase in passes
             for stage in stages
+            for first_place_only in ((True, False) if stage in first_place_ranks else (False,))
             for shift in ordered_shifts if stage is None or (stage, shift['id']) in stage_people):
         if interrupted():
             timed_out = True
@@ -1096,13 +1101,16 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                 pairings = [None]
                 intervals = trainee_intervals(data, shift, participant)
                 attached = attached_to(data, pid, shift, a, b) if intervals else {}
-                if intervals and (supervision.get('require_pairing') or attached or any(
+                order_trainee = intervals and any(
+                    allocation_policy_matches(data, p, shift, pid) for p in trainee_order_rules)
+                needs_pair = intervals and (supervision.get('require_pairing') or attached or any(
                         p['status'] == 'active' and (p['kind'] in {'supervision_limit', 'spread_evenly'} or
                             p['kind'] == 'max_duties' and p['definition']['rule'].get('group_by') == 'supervisor' or
                             p['kind'] == 'allocation_preference' and (p['definition']['rule'].get('balance_by') == 'supervisor'
                                 or p['definition']['rule'].get('supervisor_relationship') == 'mentor'
                                 or p['definition']['rule'].get('supervisor_ids')))
-                        for p in data['policies'])):
+                        for p in data['policies']))
+                if needs_pair or order_trainee:
                     pairings = sorted(p['person_id'] for p in shift['participants'] if all(
                         qualified_supervisor(data, shift, p, lo, hi) for lo, hi in intervals))
                     level = any(session_spread_policies(
@@ -1112,10 +1120,20 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                         for lo, hi in intervals)
                     loads = [p.get('supervisor_person_id') for p in shift['participants']]
                     balanced = levelled_order(pairings, loads) if level else list(pairings)
-                    pairings.sort(key=lambda supervisor_id: (supervisor_id not in attached, attached.get(supervisor_id) != 'required',
+                    counts = Counter(loads) if order_trainee else {}
+                    ordered_pairs = {s for s in pairings if order_trainee
+                        and first_trainee_place_rank(data, shift, pid, {s}, order_rules) is not None}
+                    pairings.sort(key=lambda supervisor_id: (attached.get(supervisor_id) != 'required',
+                        (2 if counts[supervisor_id] else 0) if supervisor_id in ordered_pairs else 1,
+                        supervisor_id not in attached,
                         balanced.index(supervisor_id) if level else 0,
                         -allocation_settings(data, shift, pid, supervisor_id, history=history[pid],
                                              candidate_overtime=overtime)[0], supervisor_id))
+                    if first_place_only:
+                        pairings = [s for s in pairings if s not in ordered_pairs or not counts[s]
+                                    or attached.get(s) == 'required']
+                    elif not needs_pair:
+                        pairings.append(None)
                 for other, prior in displaced:
                     other['participants'].remove(prior)
                 if own_duty_blocked(recheck.prepared, shift, participant, [s for s, _ in history[pid]], own_errors):
@@ -1126,6 +1144,8 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                         break
                     if supervisor_id:
                         participant['supervisor_person_id'] = supervisor_id
+                    else:
+                        participant.pop('supervisor_person_id', None)
                     shift['participants'].append(participant)
                     result = recheck.trial([shift, *(other for other, _ in displaced)], [pid])
                     # A consultant joining a session whose attached trainee is paired elsewhere is re-paired below.
