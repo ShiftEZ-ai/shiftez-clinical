@@ -1045,6 +1045,8 @@ and a desktop window narrowed below it gets the same rule at once.
 - One *Print or export* dialog: paged preview left (the pages that print, white paper on `--sub`), settings right in
   labelled groups (Content, Page, Appearance, Include) under the Preset button; summary ("N pages · A4 landscape")
   and *Published sheet…* in the footer. Settings last for the session; closing never asks.
+- A saved Schedule view keeps the settings last printed from it; Print from that view starts with them, before the
+  session's settings and the personal and department presets.
 - Paper is always light (`.export-sheet` redeclares the light tokens): title block (view, department · period,
   status; a draft in error red), hairline under it, footer 9 px muted (printed by/date left, page numbers right),
   optional signature line. Greyscale: each duty hue also gets a pattern so types stay apart without colour.

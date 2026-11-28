@@ -10,8 +10,8 @@ import {render} from './feedback_capture.js';
 import {printPages,type PrintData} from './schedule_print.js';
 import {zipStore} from './zip.js';
 import {savedViewItems,fetchViews,type SavedView} from './table_view.js';
-import {PRINT_IMAGE_DPI,type TableViewDefinition,type TableViewDefaults} from './generated.js';
-import {BUILT_INS,INCLUDES,normalise,samePrint,startingPreset,listPresets,session,dpiOf,PRINT_KEY,type Print} from './print_presets.js';
+import {PRINT_IMAGE_DPI,type PrintSettings,type TableViewDefinition,type TableViewDefaults} from './generated.js';
+import {BUILT_INS,INCLUDES,normalise,samePrint,startingPreset,listPresets,session,openingPrint,dpiOf,PRINT_KEY,type Print} from './print_presets.js';
 
 export interface ExportSource{
   /** The view's name ("Week", or a saved view's name), the period on screen and the department. */
@@ -41,6 +41,10 @@ export interface ExportHost{
   restore():void;
   /** Coordinators and admins share presets and set the department's default. */
   canShare:boolean;
+  /** The saved view on screen: the print settings last used from it, and `keep` to record them on Print or Save
+   *  (absent when this person cannot change the view). */
+  kept?:PrintSettings|null;
+  keep?:(print:Print)=>void;
   /** The published rota's own print sheet (server HTML), when there is one to print. */
   publishedSheet?:()=>void;
   /** View settings in display-only mode (Rows and columns, Properties, Colour by, List columns, Density) for this
@@ -343,9 +347,9 @@ const SCALES:[Print['scale'],string][]=[['fit_width','Fit width'],['fit_page','F
 const PAPERS:[Paper,string][]=[['a4','A4'],['a3','A3'],['letter','Letter'],['legal','Legal']];
 
 export function exportDialog(host:ExportHost){
-  const fresh=!session.last;
-  let presets:View[]=[],defaults:TableViewDefaults|undefined,presetId=session.last?.id||BUILT_INS[0].id;
-  let s:Print={...(session.last?.print||BUILT_INS[0].print)},sources:ExportSource[]=[],drawn='',serial=0,closed=false;
+  const opening=openingPrint(host.kept,session.last),fresh=!opening;
+  let presets:View[]=[],defaults:TableViewDefaults|undefined,presetId=opening?.id||BUILT_INS[0].id;
+  let s:Print={...(opening?.print||BUILT_INS[0].print)},sources:ExportSource[]=[],drawn='',serial=0,closed=false;
   const presetPrint=()=>BUILT_INS.find(b=>b.id===presetId)?.print||normalise(presets.find(v=>v.id===presetId)?.definition.print);
   const presetName=()=>BUILT_INS.find(b=>b.id===presetId)?.name||presets.find(v=>v.id===presetId)?.name||BUILT_INS[0].name;
   showDialog('Print or export','',(body,close,_tryClose,onClose)=>{
@@ -467,6 +471,7 @@ export function exportDialog(host:ExportHost){
     const run=async()=>{
       if(saving||go.disabled)return;saving=true;able();
       const print={...s},from=sources,page=pick,count=pages;
+      host.keep?.(print);
       try{
         // A draft's file says so in its name, as its page says "Draft, not published"; the CSV's columns stay as they are.
         const src=from[0],name=`${src.title} ${src.period}${src.draft?' (draft, not published)':''}`;

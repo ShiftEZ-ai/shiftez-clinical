@@ -61,3 +61,12 @@ export const listPresets=()=>get<PresetList>('/api/table-views?table='+PRINT_KEY
 
 /** Settings chosen in this session (any preset, changed or not): the next dialog opens with them. */
 export const session:{last:{id:string;print:Print}|null}={last:null};
+
+/** What a dialog opens with before the saved presets are read: the print settings last used from the saved view on
+ *  screen, else this session's; `null` leaves it to the defaults (startingPreset). The preset named is a built-in with
+ *  the same settings, else the session's, so the button says Changed only when they differ from it. */
+export function openingPrint(kept:PrintSettings|null|undefined,last:typeof session.last):{id:string;print:Print}|null{
+  if(!kept)return last;
+  const print=normalise(kept);
+  return {id:BUILT_INS.find(b=>samePrint(b.print,print))?.id||last?.id||BUILT_INS[0].id,print};
+}

@@ -9794,8 +9794,11 @@ class TableViewInput(Schema):
             unknown = self.definition.conditions.fields() - allowed
             if unknown:
                 raise ValueError(f"This list cannot filter on: {', '.join(sorted(unknown))}")
-        if (self.table_key == "schedule_print") != (self.definition.print is not None):
-            raise ValueError("Print settings belong to a schedule_print view and are required there")
+        if self.table_key == "schedule_print" and self.definition.print is None:
+            raise ValueError("A print preset needs its print settings")
+        # A Schedule view keeps the print settings last used from it; no other list prints.
+        if self.definition.print is not None and self.table_key not in ("schedule_print", "planner"):
+            raise ValueError("Print settings belong to a print preset or a Schedule view")
         if self.scope == "department":
             if self.definition.search_options and self.definition.search_options.reference and self.definition.search_options.reference.kind == 'people':
                 raise ValueError("A view shared with the department cannot filter by person")

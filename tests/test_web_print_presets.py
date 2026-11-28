@@ -1,6 +1,7 @@
 """Print presets ⇄ settings (apps/web/src/print_presets.ts) and the page plan (schedule_export.ts `plan`), run in Node
-from the compiled client: stored settings come back complete and valid, defaults resolve personal → department →
-Standard, and rows go to pages with repeated headers, kept groups and group breaks."""
+from the compiled client: stored settings come back complete and valid, a dialog opens with the saved view's last
+print, else the session's, else the defaults (personal → department → Standard), and rows go to pages with repeated
+headers, kept groups and group breaks."""
 import csv
 import io
 import json
@@ -63,6 +64,20 @@ def test_defaults_resolve_personal_then_department_then_standard(run):
 
 
 PLAN = 'return x.plan(input.m,input.budget,input.repeat,i=>input.breaks.includes(i));'
+
+
+def test_a_saved_view_print_comes_before_the_session_and_the_defaults(run):
+    opening = 'const o=p.openingPrint(input.kept,input.last);return o&&[o.id,o.print.paper,o.print.colour];'
+    session = {'id': 'mine', 'print': {'paper': 'legal'}}
+    # The settings last used from the view on screen win over this session's.
+    assert run(opening, {'kept': {'paper': 'a3', 'colour': 'greyscale'}, 'last': session}) == ['mine', 'a3', 'greyscale']
+    # Settings equal to a built-in name it, so the dialog does not call them changed.
+    notice = run('return p.BUILT_INS[1].print;')
+    assert run(opening, {'kept': notice, 'last': session})[0] == 'builtin:notice'
+    assert run(opening, {'kept': {'paper': 'a3'}, 'last': None})[0] == 'builtin:standard'
+    # No settings kept on the view: this session's, else nothing, so the personal and department defaults apply.
+    assert run(opening, {'kept': None, 'last': session}) == ['mine', 'legal', None]
+    assert run(opening, {'kept': None, 'last': None}) is None
 
 
 def test_fit_on_one_page_shrinks_until_the_drawn_height_fits(run):
