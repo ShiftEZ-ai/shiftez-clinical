@@ -374,6 +374,8 @@ and a desktop window narrowed below it gets the same rule at once.
   scope in its tip and the run's Review; a run still going is a Recent runs row with its stage and time, not Review. The result leads with one sentence, then four numbers (Must fix, Could improve, Open
   places, Score), then the one next step (the top must-fix cause, the rest counted with a link to the Fix list), then
   Discard and Apply. A rota check never takes the card: it is the footer's working item with its Cancel.
+  When Apply checks a proposal again and its safe-subset check reaches its time allowance, it says the check ran out of
+  time (`nothingAppliedWords`), never that none of the changes fit, and the partial line says so for those left out.
   Stop when (`stopFields` in `generation_options.ts`, the same component in Configuration › Timing) sits in
   Setup › Change: one line ("After 5 min, or 10 s without improvement") while every stop condition is the department's,
   the conditions under it (no improvement, within % of the best possible, a target score, Stop by — a time today, per

@@ -148,6 +148,9 @@ export const nothingApplied=(reply:Row|null|undefined)=>['content_conflict','unr
 export const applyNeedsReview=(reply:Row|null|undefined)=>!applyWrote(reply);
 export const APPLY_NOT_CONFIRMED=['Suggestions were not applied','The rota changed while this proposal was being reviewed. Review the updated proposal before trying again.'] as const;
 export const NOTHING_APPLIED=['Nothing was applied','None of its changes fit the rota as it is now. Run auto-schedule again for the current rota.'] as const;
+/** The safe-subset check reached its time allowance (`reconciliation_allowance_exhausted`): it never showed that none fit. */
+const OUT_OF_TIME=['Nothing was applied','The check ran out of time before it found which changes fit. Run auto-schedule again for the current rota.'] as const;
+export const nothingAppliedWords=(reply:Row|null|undefined):readonly [string,string]=>reply?.reconciliation?.reconciliation_allowance_exhausted?OUT_OF_TIME:NOTHING_APPLIED;
 
 /** What happened, said once: a tone (with its icon: colour is never the only signal), one sentence, then what is needed. */
 export function outcome(tone:'ok'|'warn'|'err'|'neutral',title:string,...next:Child[]):HTMLElement{
@@ -413,5 +416,6 @@ export function inputsChanged(job:Row,f:RunFacts,h:{person:(id:string)=>string;s
     return [p?h.person(p):'',c.shift_id?h.session(c.shift_id):''].filter(Boolean).join(' on ');}).filter(Boolean);
   return {kept,additions,removals,nodes:[outcome('warn','The rota changed during the run','The proposal was checked again against the latest rota.'),
     ...(list?[list]:[]),...(more?[more]:[]),
-    outcome(left?'warn':'ok',`${kept} of ${plural(total,'change')} still fit`,left?`${left} ${left===1?'is':'are'} left out${named.length?': '+named.join(', '):''}.`:'')]};
+    outcome(left?'warn':'ok',`${kept} of ${plural(total,'change')} still fit`,left?`${left} ${left===1?'is':'are'} left out${named.length?': '+named.join(', '):''}.`:'',
+      left&&rec.reconciliation_allowance_exhausted?`The check ran out of time, so ${left===1?'it was':'they were'} not applied and may still fit.`:'')]};
 }
