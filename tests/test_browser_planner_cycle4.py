@@ -1,5 +1,5 @@
 """Live QA cycle 4 (2026-11-06) planner fixes: a run's progress keeps moving while the page redraws (H-02), a run with
-nothing to apply says why (H-01), Month and Home's Review link draw the rota's window first (H-04), and Continue on a
+nothing to apply says why (H-01), Month and its Review link choose the data they need (H-04), and Continue on a
 phone keeps the running auto-schedule and shows its status (H-12)."""
 import contextlib
 import re
@@ -8,7 +8,7 @@ import pytest
 from playwright.sync_api import Error as PlaywrightError, expect
 
 from .browser_acceptance_support import shot
-from .test_browser import SCHEDULE_VIEWS, browser, choose_layout, choose_radio, close_popover, live_server, navigate, route_fetch, sign_in, view_settings  # noqa: F401
+from .test_browser import PAGE_LOAD_MS, SCHEDULE_VIEWS, browser, choose_layout, choose_radio, close_popover, live_server, navigate, route_fetch, sign_in, view_settings  # noqa: F401
 from .test_browser_autoschedule_live import STEP, rota, start_run
 from .test_browser_cp_sat import cp_server  # noqa: F401
 from .test_browser_phone_scope import notice
@@ -84,25 +84,29 @@ def test_a_run_with_nothing_to_apply_says_why(browser, live_server, h):
 
 @pytest.mark.parametrize('address', ['schedule/month/2026-10-01?edit={id}&review=proposal', 'schedule/month/2026-10-01?edit={id}'])
 def test_month_and_homes_review_link_draw_the_window_first(browser, live_server, h, address):
-    """H-04: Month (and Home's Review link, which opens Auto-schedule on Month) draw the rota's window from its parts
-    while its whole detail is still on its way, as Week does."""
+    """An ordinary Month stays on its window; Home's Review link needs the whole rota for its open panel."""
     w, _ = rota(h, [(4, 8, [h.seed['people'][0]]), (6, 8, [h.seed['people'][1]])], name='Windowed month')
     context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
     parts = []
     try:
         page.on('request', lambda r: parts.append(r.url) if '/parts?part=' in r.url else None)
-        held, release = hold(page, re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'\?view=schedule$'))
-        page.evaluate('a => location.hash = a', address.format(id=w['id']))  # navigate() waits for the whole page
-        view = page.locator('#schedule-view')
-        # The window, drawn and still (no dimming, no busy state, e7d1d6ba5); whole-rota work waits, Auto-schedule says so.
-        expect(view).to_have_attribute('data-reading', '', timeout=20000)
-        expect(page.locator('.planner-bar')).to_contain_text('Windowed month')
-        auto = page.get_by_role('button', name='Auto-schedule · loading the whole rota…', exact=True)
-        expect(auto).to_be_disabled()
-        assert any('part=shifts' in u for u in parts), parts
-        assert held, 'the whole rota was not asked for'
+        whole = re.compile(re.escape(live_server) + r'/api/workspaces/' + w['id'] + r'\?view=schedule$')
+        held, release = hold(page, whole)
+        if 'review=proposal' in address:
+            with page.expect_request(lambda r: bool(whole.match(r.url))):
+                page.evaluate('a => location.hash = a', address.format(id=w['id']))
+            expect(page.locator('#main .loading[aria-busy="true"]').first).to_be_attached()
+            assert not parts, parts
+        else:
+            navigate(page, address.format(id=w['id']))
+            expect(page.locator('.planner-bar')).to_contain_text('Windowed month')
+            assert any('part=shifts' in u for u in parts), parts
+            assert not held, 'Opening Month requested the whole rota'
+            with page.expect_request(lambda r: bool(whole.match(r.url))):
+                page.get_by_role('button', name='Auto-schedule', exact=True).click()
         release()
-        expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule', timeout=30000)
+        expect(page.locator('#auto-panel')).to_be_visible(timeout=PAGE_LOAD_MS)
+        expect(page.locator('#main')).to_have_attribute('data-loaded-view', 'schedule')
     finally:
         context.close()
 

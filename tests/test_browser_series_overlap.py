@@ -7,7 +7,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import form_submit, browser, live_server, sign_in, open_config, open_rota, navigate, view_settings, choose_layout, close_popover  # noqa: F401
+from .test_browser import form_submit, browser, live_server, sign_in, open_config, open_rota, navigate, view_settings, choose_layout, close_popover, wait_held  # noqa: F401
 from .test_series_overlap_api import candidate, preview, reviewed, save
 from .test_series_reconciliation import materialise
 from .test_browser_recurring_sessions import layout
@@ -115,7 +115,19 @@ def test_double_booking_journey_warns_live_saves_with_acknowledgement_marks_both
         # Resolve issues: cancel from the row; the rota is checked again by itself (no "Check rota" needed).
         navigate(page, f'schedule/issues?draft={workspace["id"]}&view=checks')
         row = page.locator('tr[data-row]').filter(has_text='is booked in both')
+        # The page is drawn again while the cancel is on its way, from a read made before it reached the server: the
+        # page then shown is read again once the cancel is saved (the first attempts kept the row).
+        held = []
+        page.route('**/api/commands', lambda route: held.append(route))
+        clicked = row.first.element_handle()
         row.first.get_by_role('button', name=re.compile('^Close the other session: ')).click()
+        wait_held(page, held)
+        page.evaluate("dispatchEvent(new CustomEvent('rota-recheck'))")
+        page.wait_for_function('row => !row.isConnected', arg=clicked)
+        expect(row).to_have_count(1)
+        for route in held:
+            route.continue_()
+        page.unroute('**/api/commands')
         expect(page.locator('tr[data-row]').filter(has_text='is booked in both')).to_have_count(0, timeout=15000)
         expect(page.get_by_role('button', name='Check rota', exact=True)).to_have_count(0)
         assert not overlaps(h, workspace)  # the page showed the command's reply

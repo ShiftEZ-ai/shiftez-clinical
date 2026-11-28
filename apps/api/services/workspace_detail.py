@@ -41,11 +41,22 @@ def compact(db, actor, workspace):
             'source_revision': fork.source_revision, 'source_content_revision': fork.source_content_revision,
             'parent_changed_since': max(0, (parent_revision or fork.source_revision) - fork.source_revision)}
     health = {**check['health'], 'fresh': bool(check['checked'] and check['fingerprint'] == current)}
-    return {'view': 'compact', 'workspace': metadata,
+    from .rota_summary import current_check
+    # The whole read's freshness test: reusable for these inputs and covering every session, not only a matching fingerprint.
+    # ponytail: a fresh check hydrates its stored coverage and every session id once per read; a coverage-count column is the upgrade if hosted timing shows it.
+    metadata['validation_current'] = health['fresh'] and current_check(db, workspace, current)
+    review_items, extra = check['review_items'], {}
+    if metadata.get('purpose') == 'integrated':
+        from .rota_summary import workspace_summary
+        # The same grouped review owner as the whole read, so group scope and Submit authority show on first paint.
+        combined = workspace_summary(db, actor, workspace)['fix_list']
+        review_items = combined['review_items']
+        extra = {'planning_context': combined['planning_context']}
+    return {'view': 'compact', 'workspace': metadata, **extra,
         'current_input_revision': org.input_revision, 'current_availability_revision': org.availability_revision,
         'current_fingerprint': current, 'health': health, 'summary': health.get('summary'),
         'review_progress': reviews.viewer_progress(db, actor, workspace, current_fingerprint=current),
-        'review_items': check['review_items'], 'reviewer_involved': reviews.contributed(db, workspace, actor.identity_id),
+        'review_items': review_items, 'reviewer_involved': reviews.contributed(db, workspace, actor.identity_id),
         'can_change_fixed': actor.permits('coordinator') and unrestricted(db, actor, access_record(db, workspace)),
         'can_redo': can_redo,
         'swap_id': db.scalar(select(m.SwapRequest.id).where(m.SwapRequest.workspace_id == workspace.id)),
@@ -61,7 +72,7 @@ def part(db, actor, workspace, query, settings):
     org = db.get(m.Organisation, actor.organisation_id)
     lo, hi = local_date_span(query.start, query.end, org.timezone)
     shifts = select(m.Shift).where(m.Shift.workspace_id == workspace.id, m.Shift.start < hi, m.Shift.end > lo)
-    coverage = []
+    coverage, wishes = [], []
     if query.part == 'shifts':
         from .series_conflicts import session_actions
         selected = list(db.scalars(shifts.order_by(m.Shift.start, m.Shift.id)))
@@ -80,6 +91,15 @@ def part(db, actor, workspace, query, settings):
         from .people import duty_ranks
         items = duty_ranks(db, actor.department_id, rows[query.offset:query.offset + limit], org.timezone)
         items = session_actions(db, actor, items)
+        from .wishes import planner_effects, snapshot_wishes
+        rota_wishes = snapshot_wishes(db, [workspace.department_id], workspace)
+        if rota_wishes:
+            planner_effects({'workspace': {'starts_on': workspace.starts_on, 'ends_on': workspace.ends_on},
+                             'wishes': rota_wishes, 'shifts': items}, org.timezone, outcomes=False)
+            if not query.offset:
+                start, end = query.start.isoformat(), query.end.isoformat()
+                wishes = [{k: v for k, v in row.items() if k != 'outcome_reasons'} for row in rota_wishes
+                          if row['first_day'] < end and row['last_day'] >= start]
     else:
         from .rota_summary import workspace_validation
         from .series_conflicts import finding_actions
@@ -111,4 +131,4 @@ def part(db, actor, workspace, query, settings):
         'start': query.start, 'end': query.end, 'items': items, 'total': total, 'offset': query.offset,
         'limit': limit, 'has_more': query.offset + len(items) < total,
         'coverage': coverage[query.offset:query.offset + limit], 'coverage_total': len(coverage),
-        'coverage_has_more': query.offset + limit < len(coverage)}
+        'coverage_has_more': query.offset + limit < len(coverage), 'wishes': wishes}

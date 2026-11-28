@@ -1,6 +1,6 @@
 """Exact-impact oracles and deterministic work guards for catalogue previews."""
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 
@@ -14,11 +14,12 @@ from apps.api.services import catalogue_preview as preview_service
 from apps.api.serialization import json_value
 from packages.contracts.schemas import Command
 from packages.domain.finding_identity import finding_index
-from packages.domain import finding_causes
+from packages.domain import finding_causes, validation
 from packages.domain.validation import check_contracts, evaluate
 from .clock_support import freeze_clock
 from .test_backend_reads_scale import read_department
-from .test_catalogue_preview import preview, state
+from .test_backend_scale import measure
+from .test_catalogue_preview import apply, preview, state
 from .test_contact_preview_perf import change, person
 from .test_finding_causes import cause_data, cause_snapshot, quota, type_definition, uid
 
@@ -127,7 +128,7 @@ def test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries
     projecting_catalogue = False
 
     def sql_read(conn, cursor, statement, parameters, context, executemany):
-        if reading and statement.lstrip().upper().startswith('SELECT'):
+        if reading and statement.lstrip().upper().startswith(('SELECT', 'WITH')):
             reads[reading[-1]].append(statement)
             if projecting_catalogue:
                 catalogue_reads[reading[-1]] += 1
@@ -244,6 +245,66 @@ def test_phase_batched_inputs_match_fresh_snapshots_on_postgresql(h, monkeypatch
     test_phase_batched_inputs_match_fresh_snapshots_and_reduce_catalogue_queries(h, monkeypatch, published, operation)
 
 
+def test_hours_reuse_keeps_counted_and_focal_intervals_distinct():
+    start = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    early = ({}, {}, start, start + timedelta(hours=4))
+    late = ({}, {}, start + timedelta(days=1), start + timedelta(days=1, hours=6))
+    data = {'organisation': {'week_start': 0}}
+    rule = {'kind': 'max_hours', 'window': 'day'}
+    cache = {}
+    observations = validation._max_hours_observations
+    assert [hours for _, _, hours in observations(data, rule, [early], [early], 'UTC', cache)] == [4]
+    assert [hours for _, _, hours in observations(data, rule, [early, late], [late], 'UTC', cache)] == [6]
+    assert [hours for _, _, hours in observations(data, rule, [early, late], [early], 'UTC', cache)] == [4]
+
+
+@pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
+def test_create_impact_reuses_workload_calculations_at_department_scale(scale_harness, monkeypatch, backend):
+    freeze_clock(monkeypatch, datetime(2026, 10, 15, 12, tzinfo=timezone.utc))
+    h = scale_harness(backend)
+    read_department(h)
+    h.client('admin')
+    evaluate_preview = preview_service.evaluate_preview
+    workload_actual = validation.workload_actual
+    prepared_checks = []
+    hours = 0
+
+    def count(rule, *args):
+        nonlocal hours
+        hours += rule['kind'] == 'max_hours'
+        return workload_actual(rule, *args)
+
+    def capture(prepared):
+        prepared_checks.append(prepared)
+        return evaluate_preview(prepared)
+
+    monkeypatch.setattr(validation, 'workload_actual', count)
+    monkeypatch.setattr(preview_service, 'evaluate_preview', capture)
+    for catalogue, value in (
+            ('people', {'display_name': 'Fictional new person'}),
+            ('categories', {'name': 'Fictional new rank', 'starts_on': '2020-01-01'})):
+        command = {'kind': 'catalogue.create', 'payload': {'catalogue': catalogue,
+                   'value': value, 'reason': 'Preview a synthetic catalogue addition'}}
+        unchanged = state(h)
+        hours = 0
+        result, _ = measure(h, f'{catalogue} impact preview', lambda: preview(h, command))
+        reused_hours = hours
+        assert state(h) == unchanged
+        prepared = prepared_checks.pop()
+        [workspace] = prepared['workspaces']
+        assert len(workspace['before']['focus_ids']) == 768
+        assert 'input_manifest' not in workspace['before'] and 'input_manifest' not in workspace['after']
+        assert workspace['saved']['fingerprint'] == result['impacts'][0]['saved_draft_validation']['fingerprint']
+
+        hours = 0
+        assert result == explained_oracle(prepared)
+        assert 0 < reused_hours < hours, (catalogue, reused_hours, hours)
+        print(catalogue, {'reused_hours_calculations': reused_hours, 'original_hours_calculations': hours})
+
+        committed, _ = measure(h, f'{catalogue} save', lambda: apply(h, command, result['source_fingerprint']))
+        assert committed['record']['id']
+
+
 def spread_department(h):
     """The standard department with its duty rows spread across forty forward rotas."""
     engine = h.app.state.engine
@@ -266,8 +327,30 @@ def spread_department(h):
         return first.id
 
 
+def _first_json_difference(expected, actual, path=()):
+    if type(expected) is not type(actual):
+        return path
+    if isinstance(expected, dict):
+        for key in sorted(expected.keys() | actual.keys()):
+            if key not in expected or key not in actual:
+                return (*path, key)
+            difference = _first_json_difference(expected[key], actual[key], (*path, key))
+            if difference is not None:
+                return difference
+    elif isinstance(expected, list):
+        for index, (left, right) in enumerate(zip(expected, actual)):
+            difference = _first_json_difference(left, right, (*path, index))
+            if difference is not None:
+                return difference
+        if len(expected) != len(actual):
+            return (*path, min(len(expected), len(actual)))
+    elif json.dumps(expected) != json.dumps(actual):
+        return path
+    return None
+
+
 @pytest.mark.parametrize('backend', ['h', pytest.param('pg', marks=pytest.mark.postgres)])
-def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypatch, backend):
+def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypatch, tmp_path, backend):
     from apps.api.catalogue_snapshot_sources import capture_catalogue_sources, capture_issued_sources, catalogue_source_reader
 
     freeze_clock(monkeypatch, datetime(2026, 10, 15, 12, tzinfo=timezone.utc))
@@ -319,7 +402,7 @@ def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypa
             mandatory_rules=operational)
         encoded = json.dumps((snapshot, getattr(snapshot, 'read_quality', None)),
                              sort_keys=True, separators=(',', ':')).encode()
-        return hashlib.sha256(encoded).hexdigest(), snapshot.get('applied_planning_population'), len(snapshot['wishes'])
+        return encoded, snapshot.get('applied_planning_population'), len(snapshot['wishes'])
 
     for case, command in cases.items():
         with transaction(engine, write=True) as db:
@@ -334,8 +417,13 @@ def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypa
                                                      captured_at=m.now(), issued_sources=issued, before_baselines={})
                 proposed = snapshots.snapshot_inputs(db, db.get(m.Organisation, actor.organisation_id))
                 assert proposed['organisation']['input_revision'] > revision
-                expected = {(w.id, operational): snapshot_bytes(db, w, proposed, operational=operational)
-                            for w in workspaces for operational in (True, False)}
+                expected = {}
+                for index, w in enumerate(workspaces):
+                    for operational in (True, False):
+                        encoded, population, wishes = snapshot_bytes(db, w, proposed, operational=operational)
+                        oracle = tmp_path / f'{index}-{operational}.json'
+                        oracle.write_bytes(encoded)
+                        expected[w.id, operational] = hashlib.sha256(encoded).hexdigest(), population, wishes, oracle
             finally:
                 trial.rollback()
             assert db.get(m.Organisation, actor.organisation_id).input_revision == revision
@@ -344,7 +432,10 @@ def test_trial_source_snapshot_bytes_at_department_scale(scale_harness, monkeypa
             shared = snapshots.snapshot_inputs(db, detached_org)
             assert shared['organisation']['input_revision'] == proposed['organisation']['input_revision']
             for (ident, operational), value in expected.items():
-                assert snapshot_bytes(db, db.get(m.Workspace, ident), shared, operational=operational) == value, case
+                encoded, population, wishes = snapshot_bytes(db, db.get(m.Workspace, ident), shared, operational=operational)
+                assert (hashlib.sha256(encoded).hexdigest(), population, wishes) == value[:3], (
+                    case, ident, operational, 'first differing JSON path',
+                    _first_json_difference(json.loads(value[3].read_bytes()), json.loads(encoded)))
         if case == 'link':
             assert old_person in expected[first, True][1]
         # A superseded publication must not masquerade as an unissued settled rota and close these wish days.

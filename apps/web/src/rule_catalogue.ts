@@ -86,7 +86,10 @@ const movedDrafts=new Map<string,Draft>();
  *  redraw that would correct a kept reply waits while there are unsent edits, so it would never come. */
 const ask=<T>(path:string)=>drafts.size?background<T>(path):get<T>(path);
 /** A draft made on another version of this rule (replaced or proposed meanwhile) stops being its draft. */
-function settle(e:Entry){const d=drafts.get(e.id);if(!d||sameBase(e,d)&&!e.proposed)return;discardDraft(e.id);movedDrafts.set(e.id,d);}
+function settle(e:Entry){const d=drafts.get(e.id);if(!d||sameBase(e,d)&&(!e.proposed||withdrawn.has(String(e.proposed.id))))return;discardDraft(e.id);movedDrafts.set(e.id,d);}
+/** Proposals this tab withdrew by Undo: a read begun before the Undo still carries one, and must not set aside the draft
+ *  the Undo brought back. */
+const withdrawn=new Set<string>();
 /** Says the rule changed under an unsent draft and shows that draft against the rule as it is now. */
 export function movedNote(e:Entry,names:Namer,redraw:()=>void):HTMLElement|''{
   const d=movedDrafts.get(e.id);if(!d)return '';
@@ -123,11 +126,11 @@ export const discardDraft=(id:string)=>{drafts.delete(id);draftEntries.delete(id
 /** A proposal's draft as it was proposed (by proposal id): Undo of the proposal (it withdraws it) brings the draft back,
  *  unless the rule has a new draft by then. shortcut: in memory for this tab only, like the drafts themselves. */
 const proposedDrafts=new Map<string,{e:Entry;d:Draft}>();
-onSessionReset(()=>{proposedDrafts.clear();pendingLines.clear();schema=null;});
+onSessionReset(()=>{proposedDrafts.clear();withdrawn.clear();pendingLines.clear();schema=null;});
 export const rememberProposed=(id:string,e:Entry,d:Draft)=>{proposedDrafts.set(id,{e,d});};
 export function restoreProposedDrafts(done:Undone){
   for(const x of done){const id=x.kind==='policy.decline'?String(x.result?.record?.id||''):'',kept=id&&proposedDrafts.get(id);
-    if(!kept)continue;proposedDrafts.delete(id);if(!drafts.has(kept.e.id))keepDraft(kept.e,kept.d);}
+    if(!kept)continue;proposedDrafts.delete(id);withdrawn.add(id);if(!drafts.has(kept.e.id))keepDraft(kept.e,kept.d);}
 }
 /** What a draft changes: lines added, removed or changed, on/off (a rule in force), settings and Balance between people. */
 export function changesIn(e:Entry,d:Draft):number{
@@ -775,8 +778,10 @@ function rulePage(ctx:Context,target:HTMLElement,data:Catalogue,e:Entry,o:Option
   // A revised rule's retirement brings back the version(s) it replaced (the server's merged_ids), as on app.ts's rule sheet.
   const merged=(live?.definition?.merged_ids||[]).length;
   const retire=live&&grants(ctx.me.roles,'policy.retire')?button('Retire rule',()=>confirmAction(`Retire ${e.name}`,
-    merged?`This version stops applying and the ${merged===1?'version':plural(merged,'rule')} it replaced ${merged===1?'applies':'apply'} again, as approved. Published rotas keep the rules they were approved under.`
-      :'It stops applying to rotas being planned. Published rotas keep the rules they were approved under.',async reason=>{
+    [safetyRetirement(live)?SAFETY_RETIREMENT_NOTICE:'',
+      merged?`This version stops applying and the ${merged===1?'version':plural(merged,'rule')} it replaced ${merged===1?'applies':'apply'} again, as approved.`
+        :'It stops applying to rotas being planned.',
+      'Published rotas keep the rules they were approved under.'].filter(Boolean).join(' '),async reason=>{
       const r=await command<{restored_ids?:string[];approval?:Row}>('policy.retire',{reason},live.id,live.revision);
       // A first of several approvals: the rule stays active; the toast says who else must approve and offers withdrawal.
       if(notifyWaiting([r],ctx.me.identity_id,refresh)){await refresh();return;}
@@ -846,7 +851,7 @@ type LeadPlan=Check&{lines:RuleLine[];legacy_lead_conversion:Row|null;difference
  *  Duty type leadership changed meanwhile: the preview reloads and the proposal waits for another look. */
 function convertLeads(e:Entry,names:Namer,refresh:()=>Promise<void>){
   const on=field('Effective from','date',departmentToday(),{required:true});
-  const shown=el('div',{role:'status','aria-live':'polite'});
+  const shown=el('div',{role:'status','aria-live':'polite','aria-label':'Conversion preview'});
   let plan:LeadPlan|null=null,asked=0,error='';
   const load=async()=>{const n=++asked,day=on.input.value;plan=null;error='';shown.replaceChildren(working('Checking…'));
     if(!day){shown.replaceChildren();return;}
@@ -1988,6 +1993,17 @@ export function safetyLine(rule:Row|undefined,lineId:string):boolean{
   if(!entry?.mixed_safety)return safetyRule(r);
   const line=((rule!.lines||[]) as RuleLine[]).find(l=>l.id===lineId);
   return !line||setsSafety(entry,line);
+}
+export const SAFETY_RETIREMENT_NOTICE='Retiring a safety rule needs approval from at least two different people because it can reduce protection.';
+
+export function safetyRetirement(policy:Row):boolean{
+  const definition=policy.definition,rule=definition?.rule;
+  if(!safetyRule(rule))return false;
+  const entry=catalogueEntryOf(rule);
+  if(!entry)return rule.kind!=='spread_evenly'||definition.severity!=='advisory';
+  return (rule.lines||[]).some((line:RuleLine)=>Object.entries(line.numbers||{}).some(([key,number])=>
+    (entry.numbers[key]||[]).some(slot=>!slot.advisory&&NEVER_OVERRIDDEN.includes(slot.kind)
+      &&(slot.kind!=='spread_evenly'||number?.level==='mandatory'))));
 }
 /** The ⋯ button holding them (one shared menu). */
 export function personFixMenu(ctx:Context,t:RelaxTarget&{policy?:Row},o:{findDuty?:()=>void;openLine?:()=>void}):HTMLButtonElement{

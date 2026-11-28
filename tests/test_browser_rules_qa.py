@@ -6,7 +6,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, navigate, sign_in  # noqa: F401
+from .test_browser import browser, holding, live_server, navigate, sign_in  # noqa: F401
 from .test_browser_rule_catalogue import bar_action, catalogue_rule, flag, line, selection
 from .test_rule_catalogue_conflicts import lines_for
 
@@ -66,19 +66,28 @@ def test_the_check_says_which_numbers_give_way_and_remove_lines_asks_twice(brows
         for row, number in zip(saved[1:], ('min', 'max'))
     }
     context, page = sign_in(browser, live_server, 'coordinator')
+    check = '**/api/rules/catalogue/duties_per_month/check'
     try:
-        navigate(page, 'rules/duties_per_month')
-        main = page.locator('#main')
-        everyone = main.locator(f'tr[data-line="{saved[0]["id"]}"]')
-        expect(everyone.locator('.rc-overlap')).to_have_count(0)
-        expect(everyone).not_to_contain_text('no longer applies')
-        expect(main.locator('.rc-checkbar')).to_be_empty()
-        everyone.locator('input.bulk-check').check()
-        remove = selection(page).get_by_role('button', name='Remove lines')
-        remove.click()  # armed: the first press asks
-        expect(main.locator('tr[data-row]')).to_have_count(3)
-        remove.click()
-        expect(main.locator('tr[data-row]')).to_have_count(2)
+        with holding(page) as held:
+            held.hold(check)
+            with page.expect_request(check):
+                navigate(page, 'rules/duties_per_month')
+            main = page.locator('#main')
+            everyone = main.locator(f'tr[data-line="{saved[0]["id"]}"]')
+            everyone.locator('input.bulk-check').check()
+            remove = selection(page).get_by_role('button', name='Remove lines')
+            first = remove.element_handle()
+            remove.click()  # armed: the first press asks
+            expect(main.locator('tr[data-row]')).to_have_count(3)
+            # The check answers between the two presses and draws the bar again: Remove lines stays armed.
+            held.release(check)
+            page.wait_for_function('b => !b.isConnected', arg=first)
+            expect(everyone.locator('.rc-overlap')).to_have_count(0)
+            expect(everyone).not_to_contain_text('no longer applies')
+            expect(main.locator('.rc-checkbar')).to_be_empty()
+            expect(remove).to_have_attribute('aria-label', 'Confirm? Remove lines')
+            remove.click()
+            expect(main.locator('tr[data-row]')).to_have_count(2)
     finally:
         context.close()
 

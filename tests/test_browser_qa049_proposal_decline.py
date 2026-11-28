@@ -160,20 +160,26 @@ def test_a_retry_during_current_effect_release_cannot_start_a_new_check(browser,
     try:
         page.route(re.compile(rf".*/api/policies/{proposed['id']}/review$"), lambda route: held.append(route))
         navigate(page, 'rules/days_in_a_row')
+        page.clock.pause_at(page.evaluate('Date.now()') + 1000)
+        # Make the busy indicator observe its full minimum hold even after the skeleton has offered Retry.
+        page.evaluate("Object.defineProperty(performance, 'now', {value: () => 300, configurable: true})")
         page.locator('#main').get_by_role('button', name='Review and approve', exact=True).click()
         panel = page.locator('.rc-line-panel')
         approve = panel.locator('.rc-lp-foot .button.primary')
         wait_held(page, held)
+        page.clock.run_for(15000)
         retry = panel.get_by_role('button', name='Retry', exact=True)
         expect(retry).to_be_visible(timeout=20000)
         retry_handle = retry.element_handle()
         assert retry_handle is not None
-        page.evaluate("Object.defineProperty(performance, 'now', {value: () => 300, configurable: true})")
         with page.expect_response(lambda r: r.url == held[0].request.url):
             held[0].fulfill(json=answer('first answer'))
+        # A response event can arrive before the app parses the body and retires the first Retry.
+        expect(retry).to_have_count(0)
         retry_handle.evaluate('button => button.click()')
         expect(approve).to_be_disabled()
         expect(approve).to_have_attribute('aria-busy', 'true')
+        page.clock.run_for(400)
         expect(panel.get_by_text('first answer', exact=True)).to_be_visible()
         assert len(held) == 1
     finally:

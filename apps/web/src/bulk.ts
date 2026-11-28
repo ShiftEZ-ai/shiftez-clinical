@@ -1,4 +1,4 @@
-import {el,icon,notify,popover,menu,opens,menuItem,button,showDialog,plural,note,select,latestReading,type IconName,type Choice} from './dom.js';
+import {el,checkTarget,icon,notify,popover,menu,opens,menuItem,button,showDialog,plural,note,select,latestReading,type IconName,type Choice} from './dom.js';
 import {request,onSessionReset,sessionChanged} from './api.js';
 import {selectionBar} from './selection_bar.js';
 import {setTriState,triStateOf} from './check_tree.js';
@@ -165,7 +165,7 @@ export function bulkSelection(noun:[string,string],actions:(ids:string[])=>BulkA
   const sel=selectionBar({label:'Bulk actions'}),bar=sel.root;
   const all=el('input',{type:'checkbox',class:'bulk-check','aria-label':`Select all ${noun[1]} shown`}) as HTMLInputElement;
   const caret=opens(el('button',{type:'button',class:'dt-check-menu','aria-label':'Selection options','data-tip':'Selection options'},icon('chevronDown')),'menu');
-  const head=el('span',{class:'dt-check-head'},all,caret);
+  const head=el('span',{class:'dt-check-head'},checkTarget(all),caret);
   const banner=el('div',{class:'dt-select-banner',role:'status','aria-live':'polite',hidden:true});
   const held=()=>!!o.held?.();
   // Unknown matches are no matches: a list still resolving shows every row, but none of them is "matching" yet.
@@ -205,7 +205,7 @@ export function bulkSelection(noun:[string,string],actions:(ids:string[])=>BulkA
     const total=e?Math.max(0,e.count+e.include.size-e.exclude.size):ids.length,any=ids.length>0||!!e&&total>0,acts=any&&!held()?actions(ids):[];
     // A selection nothing can be done to says so (e.g. a coordinator ticking leave that an approver decides), not an empty bar.
     const words=held()?'Waiting for the filter to be worked out':acts.length?[allMatching?'all matching':'',detail?.(ids)||''].filter(Boolean).join(' · '):'Nothing you can do to these together';
-    sel.show(any?{count:total,noun,detail:words||undefined,clear,actions:acts.map(a=>({...a,run:()=>a.run(ids,clear,whole)}))}:null);
+    sel.show(any?{count:total,noun,detail:words||undefined,clear,key:[total,...ids].join(),actions:acts.map(a=>({...a,run:()=>a.run(ids,clear,whole)}))}:null);
     // Gmail: every row shown is ticked and more match → offer them all; all ticked → say so, with Clear. A list paged on
     // the server asks the resolver how many match ("Counting…").
     const page=shown.length>0&&shown.every(id=>selected.has(id));

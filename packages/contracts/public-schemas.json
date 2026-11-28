@@ -21893,6 +21893,19 @@
         },
         "title": "Approvals",
         "type": "array"
+      },
+      "planning_context": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Planning Context"
       }
     },
     "required": [
@@ -22031,6 +22044,14 @@
       "coverage_has_more": {
         "title": "Coverage Has More",
         "type": "boolean"
+      },
+      "wishes": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Wishes",
+        "type": "array"
       }
     },
     "required": [
@@ -37817,6 +37838,19 @@
       },
       "configuration": {
         "$ref": "#/$defs/LeaveBalanceConfiguration"
+      },
+      "default_starts_on_min": {
+        "anyOf": [
+          {
+            "format": "date",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Default Starts On Min"
       }
     },
     "required": [
