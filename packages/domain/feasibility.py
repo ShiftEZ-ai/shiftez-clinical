@@ -223,9 +223,10 @@ def check(snapshot, *, progress=None, cancelled=None):
             if (expected != actual or result['status'] == 'requirements_conflict' and not result.get('diagnostics')
                     or context is not None and (context.get('complete') is not True or context.get('limit_exceeded'))):
                 comparison.update(comparison_complete=False, no_new_problems=False)
-        # A changed quota window can load different external context; that is not a same-input comparison.
+        # Fair share history is projected for each rule set. Other input differences, including
+        # external rows loaded for a changed quota window, can still make the comparison incomplete.
         non_rules = lambda data: {k: v for k, v in data.items() if k not in {
-            'policies', 'scheduling_facts', 'quota_context', 'fingerprint', 'input_manifest'}}
+            'policies', 'scheduling_facts', 'quota_context', 'fingerprint', 'input_manifest', 'fairness_history'}}
         if not evaluations_complete or non_rules(snapshot['baseline']) != non_rules(snapshot['proposed']):
             comparison.update(comparison_complete=False, no_new_problems=False)
     feasible = proposed == 'candidate_feasible'
