@@ -5872,6 +5872,7 @@ export type SystemStatusFiles = {
 export type TableViewDefaultInput = {
   "table_key": string;
   "scope"?: "personal" | "department";
+  "screen"?: "desktop" | "phone";
   "view_id"?: string | null;
   "clear"?: boolean;
 };
@@ -5881,6 +5882,8 @@ export type TableViewDefaults = {
   "department_set"?: boolean;
   "personal_view_id"?: string | null;
   "personal_set"?: boolean;
+  "phone_view_id"?: string | null;
+  "phone_set"?: boolean;
 };
 
 export type TableViewDefinition = {

@@ -102,21 +102,28 @@ def referenced_view(db, actor, view_id, table_key):
     return row
 
 
-def default_is_set(row, view, actor):
-    return bool(row and (row.built_in or visible(view, actor, row.table_key)
+def default_is_set(row, built_in, view, actor):
+    return bool(row and (built_in or visible(view, actor, row.table_key)
                         and (row.owner_id is not None or view.scope == "department")))
+
+
+def phone_choice(row):
+    """A personal row's phone choice: its own once split, else the row's one choice (set before the split)."""
+    return (row.phone_view_id, row.phone_built_in) if row.phone_split else (row.view_id, row.built_in)
 
 
 def list_defaults(db, actor, table_key):
     result = s.TableViewDefaults().model_dump()
-    rows = db.execute(select(m.TableViewDefault, m.TableView).outerjoin(
-        m.TableView, m.TableView.id == m.TableViewDefault.view_id).where(
+    rows = list(db.scalars(select(m.TableViewDefault).where(
         m.TableViewDefault.department_id == actor.department_id, m.TableViewDefault.table_key == table_key,
-        (m.TableViewDefault.owner_id.is_(None)) | (m.TableViewDefault.owner_id == actor.identity_id)))
-    for row, view in rows:
-        scope = "department" if row.owner_id is None else "personal"
-        result[scope + "_set"] = default_is_set(row, view, actor)
-        result[scope + "_view_id"] = row.view_id if result[scope + "_set"] else None
+        (m.TableViewDefault.owner_id.is_(None)) | (m.TableViewDefault.owner_id == actor.identity_id))))
+    choices = [("department" if row.owner_id is None else "personal", row, row.view_id, row.built_in) for row in rows]
+    choices += [("phone", row, *phone_choice(row)) for row in rows if row.owner_id is not None]
+    ids = {view_id for *_, view_id, _ in choices if view_id}
+    views = {view.id: view for view in db.scalars(select(m.TableView).where(m.TableView.id.in_(ids)))} if ids else {}
+    for name, row, view_id, built_in in choices:
+        result[name + "_set"] = default_is_set(row, built_in, views.get(view_id), actor)
+        result[name + "_view_id"] = view_id if result[name + "_set"] else None
     return result
 
 
@@ -147,8 +154,9 @@ def set_default(db, actor, command):
         require(row is not None, "STALE_REVISION", "The default choice changed; reload and reconcile", 409)
         expected(row, command.expected_revision)
     defaults = list_defaults(db, actor, value.table_key)
-    previous = {"table_key": value.table_key, "scope": value.scope,
-                "view_id": defaults[value.scope + "_view_id"], "clear": not defaults[value.scope + "_set"]}
+    choice = "phone" if value.screen == "phone" else value.scope
+    previous = {"table_key": value.table_key, "scope": value.scope, "screen": value.screen,
+                "view_id": defaults[choice + "_view_id"], "clear": not defaults[choice + "_set"]}
     if value.view_id is not None:
         view = referenced_view(db, actor, value.view_id, value.table_key)
         require(value.scope != "department" or view.scope == "department", "VIEW_SCOPE_MISMATCH",
@@ -158,11 +166,17 @@ def set_default(db, actor, command):
         db.add(row)
     else:
         row.revision += 1
-    row.view_id = value.view_id
-    row.built_in = not value.clear and value.view_id is None
+    if owner_id is not None and not row.phone_split:
+        # The first choice for one size keeps the other size's: the phone holds what the one choice gave it.
+        row.phone_view_id, row.phone_built_in, row.phone_split = row.view_id, bool(row.built_in), True
+    built_in = not value.clear and value.view_id is None
+    if value.screen == "phone":
+        row.phone_view_id, row.phone_built_in = value.view_id, built_in
+    else:
+        row.view_id, row.built_in = value.view_id, built_in
     row.updated_at = m.now()
     db.flush()
-    return {"default": {**record(row), "scope": value.scope, "set": not value.clear},
+    return {"default": {**record(row), "scope": value.scope, "screen": value.screen, "set": not value.clear},
             "previous_default": previous, "defaults": list_defaults(db, actor, value.table_key)}
 
 

@@ -83,6 +83,8 @@ def test_time_axes_and_absent_dimensions_remain_valid():
     {'table_key': 'people'}, {'table_key': 'people', 'view_id': 'invalid'},
     {'table_key': 'People!', 'view_id': None}, {'table_key': 'people', 'scope': 'organisation', 'view_id': None},
     {'table_key': 'people', 'clear': True, 'view_id': str(uuid.uuid4())},
+    {'table_key': 'people', 'scope': 'department', 'screen': 'phone', 'view_id': None},
+    {'table_key': 'people', 'screen': 'tablet', 'view_id': None},
 ])
 def test_default_choice_rejects_ambiguous_or_invalid_inputs(payload):
     with pytest.raises(ValidationError):
@@ -92,6 +94,9 @@ def test_default_choice_rejects_ambiguous_or_invalid_inputs(payload):
 def test_default_choice_and_print_types_are_generated():
     assert s.TableViewDefaultInput(table_key='people', view_id=None).clear is False
     assert s.TableViewDefaultInput(table_key='people', clear=True).view_id is None
+    assert s.TableViewDefaultInput(table_key='people', view_id=None).screen == 'desktop'
+    assert s.TableViewDefaultInput(table_key='people', screen='phone', view_id=None).scope == 'personal'
+    assert s.TableViewDefaults().model_dump()['phone_set'] is False
     typescript, _ = render()
     for name in ('PrintSettings', 'TableViewDefaultInput', 'TableViewDefaults'):
         assert 'export type ' + name + ' = ' in typescript

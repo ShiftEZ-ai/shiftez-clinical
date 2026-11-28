@@ -63001,6 +63001,15 @@
         "title": "Scope",
         "type": "string"
       },
+      "screen": {
+        "default": "desktop",
+        "enum": [
+          "desktop",
+          "phone"
+        ],
+        "title": "Screen",
+        "type": "string"
+      },
       "view_id": {
         "anyOf": [
           {
@@ -63063,6 +63072,24 @@
       "personal_set": {
         "default": false,
         "title": "Personal Set",
+        "type": "boolean"
+      },
+      "phone_view_id": {
+        "anyOf": [
+          {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Phone View Id"
+      },
+      "phone_set": {
+        "default": false,
+        "title": "Phone Set",
         "type": "boolean"
       }
     },

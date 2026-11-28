@@ -3,6 +3,7 @@
  *  place that reads, saves and resolves them; schedule_export.ts draws the dialog and the pages. */
 import {PRINT_IMAGE_DPI,PRINT_IMAGE_DPI_DEFAULT,type PrintSettings,type TableViewDefaults} from './generated.js';
 import {get} from './api.js';
+import {ownDefault} from './table_view.js';
 
 /** `wrap` (the retired Long names choice, DL-014) may still be stored: it is read and ignored, and never written. */
 export type Print=Required<Omit<PrintSettings,'wrap'>>;
@@ -47,12 +48,13 @@ export function normalise(p?:PrintSettings|null):Print{
 export const samePrint=(a:PrintSettings,b:PrintSettings)=>{const x=normalise(a),y=normalise(b);
   return (Object.keys(x) as (keyof Print)[]).every(k=>k==='include'?x.include.join()===y.include.join():x[k]===y[k]);};
 
-/** The preset a dialog opens with: this session's last settings, else the personal default, else the department's,
+/** The preset a dialog opens with: this session's last settings, else the personal default for this screen size, else the department's,
  *  else the built-in Standard. A default set to `null` (`*_set` true) explicitly chooses Standard. */
 export function startingPreset(views:Preset[],defaults:TableViewDefaults|undefined):{id:string;print:Print}{
   const pick=(set:boolean|undefined,id:string|null|undefined)=>{if(!set)return null;const v=id&&views.find(x=>x.id===id);
     return v?{id:v.id,print:normalise(v.definition.print)}:id?null:{id:BUILT_INS[0].id,print:BUILT_INS[0].print};};
-  return pick(defaults?.personal_set,defaults?.personal_view_id)||pick(defaults?.department_set,defaults?.department_view_id)||{id:BUILT_INS[0].id,print:BUILT_INS[0].print};
+  const own=ownDefault(defaults||{});
+  return pick(own.set,own.id)||pick(defaults?.department_set,defaults?.department_view_id)||{id:BUILT_INS[0].id,print:BUILT_INS[0].print};
 }
 
 // ---- Persistence: the saved-views API (create, update, rename, delete and share go through table_view.ts's menu) ----

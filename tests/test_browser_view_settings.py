@@ -680,7 +680,7 @@ def test_list_default_views_personal_then_department(browser, live_server, h):
         assert defaulted.value.status == 200, defaulted.value.text()
         with page.expect_response(lambda r: r.url.endswith("/api/commands") and r.request.method == "POST"
                                   and (r.request.post_data_json or {}).get("kind") == "table_view.set_default"
-                                  and (r.request.post_data_json or {}).get("payload") == {"table_key": "people", "scope": "personal", "view_id": None, "clear": False}) as undone:
+                                  and (r.request.post_data_json or {}).get("payload") == {"table_key": "people", "scope": "personal", "screen": "desktop", "view_id": None, "clear": False}) as undone:
             page.get_by_role("button", name="Undo", exact=True).click()
         assert undone.value.status == 200, undone.value.text()
         expect(page.get_by_role("status").get_by_text("Undone. The previous values are back.", exact=True)).to_be_visible()
@@ -701,5 +701,40 @@ def test_list_default_views_personal_then_department(browser, live_server, h):
         bar = page.locator(".dt-toolbar").first
         expect(bar.locator(".dt-saved .dt-tool-label")).to_have_text("Team list")
         expect(toolbar(bar, "Saved views").get_by_role("menuitem", name="Set as department default")).to_have_count(0)
+    finally:
+        context.close()
+
+
+def test_a_person_keeps_one_default_view_for_a_desktop_and_one_for_a_phone(browser, live_server, h):
+    """Set as my default on a phone sets the phone's default only, and the menu names which size it is for; a desktop
+    still opens the one chosen there."""
+    desk, pocket = (h.command("coordinator", "table_view.create", {"table_key": "people", "name": name, "scope": "personal",
+                                                                    "definition": {}})["view"] for name in ("Desk columns", "Pocket columns"))
+    h.command("coordinator", "table_view.set_default", {"table_key": "people", "scope": "personal", "view_id": desk["id"]})
+    context, page = sign_in(browser, live_server, "coordinator", {"width": 390, "height": 844})
+    try:
+        navigate(page, "people")
+        bar = page.locator(".dt-toolbar").first
+        expect(bar.locator(".dt-saved .dt-tool-label")).to_have_text("Default view")  # the desktop's default is not the phone's
+        toolbar(bar, "Saved views").get_by_role("menuitemradio", name="Pocket columns", exact=True).click()
+        with page.expect_response(lambda r: r.url.endswith("/api/commands") and r.request.method == "POST"
+                                  and (r.request.post_data_json or {}).get("kind") == "table_view.set_default"
+                                  and (r.request.post_data_json or {}).get("payload") == {"table_key": "people", "scope": "personal", "screen": "phone", "view_id": pocket["id"]}) as defaulted:
+            toolbar(bar, "Saved views").get_by_role("menuitem", name="Set as my default", exact=True).click()
+        assert defaulted.value.status == 200, defaulted.value.text()
+        expect(page.get_by_role("status").get_by_text("This list now opens with this view for you on a phone.", exact=True)).to_be_visible()
+        expect(toolbar(bar, "Saved views").get_by_role("menuitemradio", name="Pocket columns Phone default", exact=True)).to_be_visible()
+        page.reload()
+        expect(bar.locator(".dt-saved .dt-tool-label")).to_have_text("Pocket columns")
+    finally:
+        context.close()
+    defaults = h.get("coordinator", "/api/table-views?table=people")["defaults"]
+    assert (defaults["personal_view_id"], defaults["phone_view_id"]) == (desk["id"], pocket["id"])
+    context, page = sign_in(browser, live_server, "coordinator")
+    try:
+        navigate(page, "people")
+        bar = page.locator(".dt-toolbar").first
+        expect(bar.locator(".dt-saved .dt-tool-label")).to_have_text("Desk columns")
+        expect(toolbar(bar, "Saved views").get_by_role("menuitemradio", name="Desk columns Desktop default", exact=True)).to_be_visible()
     finally:
         context.close()

@@ -60,6 +60,13 @@ def test_defaults_resolve_personal_then_department_then_standard(run):
                                                    'department_view_id': 'a'}}) == ['builtin:standard', 'a4']
     # A default no longer visible follows the next level.
     assert run(pick, {'views': views, 'defaults': {'personal_set': True, 'personal_view_id': 'gone'}}) == ['builtin:standard', 'a4']
+    # A person keeps one default per screen size: a phone starts with the phone's, a desktop with the desktop's.
+    sized = {'personal_set': True, 'personal_view_id': 'b', 'phone_set': True, 'phone_view_id': 'a'}
+    assert run(pick, {'views': views, 'defaults': sized}) == ['b', 'legal']
+    on_phone = 'globalThis.matchMedia=()=>({matches:true,addEventListener(){},removeEventListener(){}});' + pick
+    assert run(on_phone, {'views': views, 'defaults': sized}) == ['a', 'a3']
+    assert run(on_phone, {'views': views, 'defaults': {**sized, 'phone_set': False, 'department_set': True,
+                                                        'department_view_id': 'b'}}) == ['b', 'legal']
 
 
 PLAN = 'return x.plan(input.m,input.budget,input.repeat,i=>input.breaks.includes(i));'

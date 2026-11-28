@@ -9810,6 +9810,8 @@ class TableViewInput(Schema):
 class TableViewDefaultInput(Schema):
     table_key: ViewTableKey
     scope: ViewScope = "personal"
+    # A person keeps one default per screen size; the department's is the same on every screen.
+    screen: Literal["desktop", "phone"] = "desktop"
     view_id: ID | None = None
     clear: bool = False
 
@@ -9817,6 +9819,8 @@ class TableViewDefaultInput(Schema):
     def valid_choice(self):
         if self.clear and self.view_id is not None:
             raise ValueError("Clearing a default cannot select a view")
+        if self.scope == "department" and self.screen == "phone":
+            raise ValueError("The department default is the same on every screen")
         if not self.clear and "view_id" not in self.model_fields_set:
             raise ValueError("Select a saved view or null for the built-in default")
         return self
@@ -9827,6 +9831,9 @@ class TableViewDefaults(Schema):
     department_set: bool = False
     personal_view_id: ID | None = None
     personal_set: bool = False
+    # The viewer's own default on a phone (personal_* is the desktop one).
+    phone_view_id: ID | None = None
+    phone_set: bool = False
 
 
 class PlannerViewInput(Schema):
