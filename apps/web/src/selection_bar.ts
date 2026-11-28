@@ -10,8 +10,8 @@ export interface SelectionAction{label:string;icon:IconName;run:()=>unknown;tip?
 export interface SelectionState{count:number;noun:[string,string];
   /** The line under "selected" (e.g. "lines in Duties per week", "issues · On leave or away"); the noun when not given. */
   detail?:string;
-  /** What is selected, for a page that draws a new bar on every redraw (the Schedule): with the bar's `id`, an open
-   *  ⋯ More moves to the new bar drawn for the same key (D-057). */
+  /** What is selected (e.g. its ids). Drawn again for the same key, an armed action stays armed; for a page that draws
+   *  a new bar on every redraw (the Schedule), with the bar's `id`, an open ⋯ More moves to the new bar (D-057). */
   key?:string;actions:SelectionAction[];clear:()=>void}
 
 const run=(a:SelectionAction)=>{try{const r=a.run();if(r instanceof Promise)r.catch(reportError);}catch(e){reportError(e);}};
@@ -47,7 +47,7 @@ export function selectionBar(o:{label?:string;id?:string}={}){
     root.style.setProperty('--sel-left',`${r.left+r.width/2}px`);root.style.setProperty('--sel-max',`${Math.max(0,r.width-16)}px`);fit();};
   // Never wider than its list and never scrolled sideways: when the actions do not fit (a phone), the secondary ones
   // go into ⋯ More, last first, and then "selected" gives way to the count alone.
-  let state:SelectionState|null=null,folded=-1;
+  let state:SelectionState|null=null,folded=-1,drawnKey:string|undefined;
   const fit=()=>{if(!state||root.hidden||!root.isConnected)return;
     const over=()=>root.scrollWidth>root.clientWidth+1,foldable=state.actions.filter(a=>!a.more&&!a.danger&&!a.primary).length;
     for(let n=0;n<=foldable+1;n++){if(n!==folded)draw(state,n);if(!over())return;}};
@@ -55,7 +55,7 @@ export function selectionBar(o:{label?:string;id?:string}={}){
   let unwatch=()=>{},watched:Element|null=null;
   function show(s:SelectionState|null){
     root.hidden=!s||!s.count;state=s&&s.count?s:null;folded=-1;
-    if(!s||!s.count){extra=[];root.replaceChildren();return;}
+    if(!s||!s.count){extra=[];drawnKey=undefined;root.replaceChildren();return;}
     entry.clear=s.clear;if(root.isConnected)live.add(entry);
     draw(s,0);
     const host=root.parentElement;if(host&&host!==watched){unwatch();unwatch=observeSize(host,()=>place());watched=host;}
@@ -63,6 +63,11 @@ export function selectionBar(o:{label?:string;id?:string}={}){
   }
   function draw(s:SelectionState,fold:number){
     folded=fold;
+    // An armed action drawn again for the same selection (a check answering between the two presses) stays armed: its
+    // second press acts, as in a redrawn menu (dom.ts menu keep). A press elsewhere or leaving it has disarmed it already.
+    // Read before the redraw: Chromium blurs a focused button as it is removed, and the blur disarms it.
+    const was=s.key!==undefined&&s.key===drawnKey?root.querySelector<HTMLElement>('.sel-act.armed'):null,focused=!!was&&was===document.activeElement,from=was?.dataset.armedFrom;
+    drawnKey=s.key;
     const keep=o.id&&s.key?`#${CSS.escape(o.id)}[data-selection-key="${CSS.escape(s.key)}"] .sel-more`:
       `.selection-bar[data-bar="${mark}"] .sel-more`;
     if(s.key)root.dataset.selectionKey=s.key;else delete root.dataset.selectionKey;
@@ -85,6 +90,8 @@ export function selectionBar(o:{label?:string;id?:string}={}){
       el('span',{class:'sel-sep','aria-hidden':'true'}),...inline.map(act),...(more?[more]:[]),
       ...(danger.length?[el('span',{class:'sel-sep','aria-hidden':'true'}),...danger.map(act)]:[]),
       el('span',{class:'sel-sep','aria-hidden':'true'}),clear);
+    const again=from&&[...root.querySelectorAll<HTMLElement>('.sel-act')].find(b=>b.getAttribute('aria-label')===from);
+    if(again){again.click();if(focused)again.focus();}
   }
   return {root,show,place};
 }

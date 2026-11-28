@@ -3,7 +3,7 @@ import {sidePanel} from './side_panel.js';
 /* Rules in context on the schedule: what applies to whatever you point at, which rule wins, where something deviates
  * from the general rule, and a highlight of everything one rule applies to. The server decides every match
  * (GET /api/workspaces/{id}/rule-map, the same evaluator the checks use); this file only maps ids to the screen. */
-import {el,icon,plural,overflowMore,hoverCard,refreshHoverCard,notify,reportError,button,guard,labelOf,formatDate,formatTime,note,announce,toLocal,tabs,legend,segmented,menu,menuSource,opens,type Legend,type Child,type MenuEntry,legendAt} from './dom.js';
+import {el,icon,plural,overflowMore,hoverCard,refreshHoverCard,notify,reportError,button,guard,labelOf,formatDate,formatTime,note,announce,toLocal,tabs,legend,segmented,menu,menuSource,awaitAdoption,opens,type Legend,type Child,type MenuEntry,legendAt} from './dom.js';
 import {availabilityPanel} from './rota_availability.js';
 import {personLink,fullNameOf} from './person_label.js';
 import {rotaSentences,unexplainedLine,type ExplainedRule,type Conflict} from './rules_explained.js';
@@ -344,7 +344,7 @@ function markSelection(){
   const sel=selectionOf(),keys=new Set(sel.map(keyOfTarget));
   const mark=(n:HTMLElement,on:boolean)=>{n.classList.toggle('rk-selected',on);if(GRID_ROLES.has(n.getAttribute('role')||''))on?n.setAttribute('aria-selected','true'):n.removeAttribute('aria-selected');};
   for(const n of main.querySelectorAll<HTMLElement>('.rk-selected'))mark(n,false);
-  for(const n of main.querySelectorAll<HTMLElement>('[data-rk-pin]'))if(keys.has(keyOfTarget(targetOf(n))))mark(n,true);
+  if(keys.size)for(const n of main.querySelectorAll<HTMLElement>('[data-rk-pin]'))if(keys.has(keyOfTarget(targetOf(n))))mark(n,true);
   for(const t of sel)if(t.kind==='session'&&t.shift)for(const n of main.querySelectorAll<HTMLElement>(`[data-session~="${CSS.escape(t.shift)}"]`))mark(n,true);
 }
 /** Select mode (the panel's Select toggle, for touch): every tap adds to or takes from the selection. */
@@ -385,6 +385,23 @@ function lit(r:MapRule,t:Target){
   if(t.kind==='assignment')return hits(r,t)!==null;
   return hits(r,t)!==null;
 }
+/** A place's hover card and selection, wired on its first pointer, focus, click or key (SI-50): a sweep over thousands of
+ *  places sets only their Tab stops and marks. Listened for in the capture phase on the view, so every place under the
+ *  event is wired before its own handlers and the shared hover card (dom.ts, on the document) read it. */
+function wireAt(e:Event){
+  const view=e.currentTarget as HTMLElement;
+  for(let n=e.target instanceof Element?e.target.closest<HTMLElement>('[data-rk]'):null;n&&view.contains(n);n=n.parentElement?.closest<HTMLElement>('[data-rk]')??null)wire(n);
+}
+function wire(n:HTMLElement){
+  if(wired.has(n))return;wired.add(n);
+  const t=targetOf(n);
+  if(!n.dataset.rkCard)hoverCard(n,()=>[el('div',{class:'hc-head'},el('span',{class:'hc-badge rk-badge'},icon('rules')),el('div',{},el('strong',{},t.label),t.sub?el('small',{},t.sub):'')),...ruleSummary(t)],400);
+  if(n.dataset.rkPin){
+    // Ctrl, ⌘ or Shift adds it to (or takes it from) the selection; Shift+Enter on the keyboard.
+    n.addEventListener('click',e=>{const inner=(e.target as Element).closest('button,a,input,select,label,.pchip,.team-box');if(inner&&inner!==n)return;pin(t,undefined,'',addsToSelection(e));});
+    n.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target===n){e.preventDefault();pin(t,undefined,'',e.shiftKey||(selecting&&!!selectionOf().length));}});
+  }
+}
 function decorate(){
   if(!main||!main.isConnected)return;
   observer?.disconnect();
@@ -394,22 +411,17 @@ function decorate(){
     const nodes=[...main.querySelectorAll<HTMLElement>('[data-rk]')];
     const ok=ready();
     for(const n of nodes){
-      const t=targetOf(n);
-      if(!wired.has(n)){wired.add(n);
-        if(!n.dataset.rkCard)hoverCard(n,()=>[el('div',{class:'hc-head'},el('span',{class:'hc-badge rk-badge'},icon('rules')),el('div',{},el('strong',{},t.label),t.sub?el('small',{},t.sub):'')),...ruleSummary(t)],400);
-        if(n.dataset.rkPin){
-          // In a Schedule grid it joins the roving set (planner_week.ts roving owns the one stop; arrows reach it): never a
-          // Tab stop of its own, which roving, settled already and watching child lists only, would not take back (S-17).
-          if(n.dataset.rkPin!=='mouse'&&!n.matches('button,a,[tabindex]'))n.tabIndex=n.closest('[role=grid]')?-1:0;
-          n.classList.add('rk-pinnable');
-          // Ctrl, ⌘ or Shift adds it to (or takes it from) the selection; Shift+Enter on the keyboard.
-          n.addEventListener('click',e=>{const inner=(e.target as Element).closest('button,a,input,select,label,.pchip,.team-box');if(inner&&inner!==n)return;pin(t,undefined,'',addsToSelection(e));});
-          n.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target===n){e.preventDefault();pin(t,undefined,'',e.shiftKey||(selecting&&!!selectionOf().length));}});
-        }
+      // In a Schedule grid it joins the roving set (planner_week.ts roving owns the one stop; arrows reach it): never a
+      // Tab stop of its own, which roving, settled already and watching child lists only, would not take back (S-17).
+      if(n.dataset.rkPin&&!n.classList.contains('rk-pinnable')){
+        if(n.dataset.rkPin!=='mouse'&&!n.matches('button,a,[tabindex]'))n.tabIndex=n.closest('[role=grid]')?-1:0;
+        n.classList.add('rk-pinnable');
       }
-      // Markers: something here deviates from the general rule.
-      n.querySelector(':scope>.rk-mark')?.remove();
-      if(ok&&t.kind!=='rota'&&!n.dataset.rkQuiet){
+      // Markers: something here deviates from the general rule. Drawn where the old one was (a list row's first cell).
+      const slot=n.matches('button')?n:n.querySelector<HTMLElement>(':scope>.rk-mark-slot')||n;
+      slot.querySelector(':scope>.rk-mark')?.remove();
+      const t=ok&&!n.dataset.rkQuiet?targetOf(n):null;
+      if(t&&t.kind!=='rota'){
         const marks=markersAt(t);
         if(marks.length){
           const words=marks.map(m=>`${markerWhat[m.kind]||'Exception'}: ${m.text}${m.by?' · '+markerWho(m):''}`);
@@ -417,7 +429,7 @@ function decorate(){
           const mark=el('span',{class:'rk-mark',role:'img','aria-label':marks.length===1?words[0]:`${marks.length} exceptions: ${words.join('; ')}`,'data-tip':tip},icon('fork'));
           // Drawn as an entry of the key of the view it sits in (dom.ts legendAt; every mark has one).
           const key=legendAt(n);if(key)exceptionMark(key,mark);
-          (n.matches('button')?n:n.querySelector(':scope>.rk-mark-slot')||n).append(mark);
+          slot.append(mark);
           // A button's name comes from its own label, so the exception is said there too.
           if(n.matches('button')){const base=n.dataset.rkLabel??n.getAttribute('aria-label');if(base!==null){n.dataset.rkLabel=base;n.setAttribute('aria-label',`${base}. ${marks.length===1?words[0]:marks.length+' exceptions'}`);}}
         }
@@ -807,6 +819,8 @@ function ruleRow(i:Item,t:Target,redraw:()=>void,key?:Legend,marked=false):HTMLE
   if(open)li.append(ruleDetail(i,t,redraw));
   return li;
 }
+/** The popover key of a rule row's ⋯ menu (awaitAdoption in mountRules). */
+const RULE_MORE='rule-more';
 /** The opened row (CONTRACT §10): a few short sentences (where the number comes from, what changed here with who, when,
  *  why and its review, what it overrides), then Fix when it fails and ⋯ for the rest (the shared menu). Readers who
  *  can't change it, and phones, get Open rule only. A chosen change opens its short form below. */
@@ -820,7 +834,7 @@ function ruleDetail(i:Item,t:Target,redraw:()=>void):HTMLElement{
   // D-057: a live redraw (the sentences or rule map arriving) rebuilds this row; the open ⋯ moves to its new button and
   // reads that draw's items (menuSource), never closes under the person or acts on the previous draw's rule.
   menuSource(more,()=>ruleMenu(i,t,policy,redraw));
-  more.addEventListener('click',()=>menu(more,'More actions',()=>ruleMenu(i,t,policy,redraw),{keep:`[data-rk-row="${CSS.escape(r.id)}"] .rk-detail .rk-more`}));
+  more.addEventListener('click',()=>menu(more,'More actions',()=>ruleMenu(i,t,policy,redraw),{key:RULE_MORE,keep:`[data-rk-row="${CSS.escape(r.id)}"] .rk-detail .rk-more`}));
   acts.append(more);
   const form=openAct===r.id+':rota'?rotaOnly(r):openAct===r.id+':exc'?exceptionAct(r,t,policy):null;
   if(form?.tagName==='FORM'){
@@ -992,7 +1006,11 @@ export function mountRules(ctx:Context,data:WorkspaceData,bodyWrap:HTMLElement,m
   let queued=0;
   observer=new MutationObserver(()=>{if(!queued)queued=requestAnimationFrame(()=>{queued=0;decorate();});});
   observer.observe(mainCol,{childList:true,subtree:true});
+  for(const type of ['pointerover','focusin','click','keydown'])mainCol.addEventListener(type,wireAt,true);
   requestAnimationFrame(decorate);
+  // A rota whose check changed (a check landing) shows its panel's rows only once its rule map is read again: an open
+  // row menu waits for its row's new button (awaitAdoption) instead of closing when the page swaps in.
+  const adopt=!keep&&pinned&&!ready()?awaitAdoption(RULE_MORE):()=>{};
   if(keep){host.append(keep);if(focused)requestAnimationFrame(()=>{if(keep.isConnected&&document.activeElement===document.body)focused.focus({preventScroll:true});});}
   else drawPanel();
   // The map is read when it is first needed (a highlight to show, a pinned panel, or the first hover or focus on the
@@ -1006,7 +1024,7 @@ export function mountRules(ctx:Context,data:WorkspaceData,bodyWrap:HTMLElement,m
   function load(){return loadRuleMap(data).then(()=>{if(dataNow!==data)return;
     if(pending){lock={workspace:data.workspace.id,rule:pending};const r=map!.rules.find(x=>x.id===pending);pending='';
       if(r){pin({kind:'rota',label:'Rules in this rota'});openRules=new Set([r.id]);}else{lock=null;notify('That rule does not apply to this rota.','info');}}
-    decorate();refreshHoverCard();if(pinned&&(!keep||panelOf.get(keep)!==pinned))drawPanel();}).catch(e=>{if(pinned)drawPanel();console.warn('Rule map unavailable',e);});}
+    decorate();refreshHoverCard();if(pinned&&(!keep||panelOf.get(keep)!==pinned))drawPanel();}).catch(e=>{if(pinned)drawPanel();console.warn('Rule map unavailable',e);}).finally(adopt);}
 }
 /** The "Why?" list for one person on one session, from the exact per-session check (shift_rules), with the same
  *  rows and change actions as the pinned panel. */

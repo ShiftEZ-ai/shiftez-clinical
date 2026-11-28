@@ -2,7 +2,7 @@
 import re
 import pytest
 from playwright.sync_api import expect
-from .test_browser import session_action, browser, live_server, sign_in, navigate, save_dialog, pick_view, open_session  # noqa: F401
+from .test_browser import session_action, browser, live_server, sign_in, navigate, save_dialog, pick_view, open_session, reconnect, wait_held  # noqa: F401
 
 pytestmark = pytest.mark.browser
 
@@ -25,7 +25,24 @@ def test_segment_editor_preview_and_staffing_option_never_autosave(browser,live_
         save_dialog(form,'Save draft session')
         assert h.detail(w)['shifts'][0]['participants'][0]['fixed']
         open_session(page)
-        session_action(page, 'Find staffing or replacement options')
+        # A refresh already reading when More opens redraws the session panel under the open menu: the menu moves to the
+        # new panel's button for the same session and its item still acts.
+        held=[]
+        draft=re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+        page.route(draft,lambda route:held.append(route))
+        reconnect(page)
+        wait_held(page,held)
+        more=page.locator('.wk-panel').get_by_role('button',name='More session actions',exact=True)
+        more.evaluate("b => { b.dataset.drawnBefore = '' }")
+        more.click()
+        item=page.get_by_role('menuitem',name='Find staffing or replacement options',exact=True)
+        expect(item).to_be_visible()
+        for route in held:
+            route.continue_()
+        page.unroute(draft)
+        expect(page.locator('.wk-panel [data-drawn-before]')).to_have_count(0)
+        expect(more).to_have_attribute('aria-expanded','true')
+        item.click()
         form=page.locator('.dock-panel')
         expect(form.get_by_label('Proposed reserved start',exact=True)).to_have_attribute('readonly', '')
         expect(form.get_by_label('Proposed reserved end',exact=True)).to_have_attribute('readonly', '')

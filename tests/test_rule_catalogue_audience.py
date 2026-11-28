@@ -1,4 +1,5 @@
 """Shared proof/reach never carries a reader's private draft choices or authority."""
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from threading import Barrier, Event, Lock
@@ -161,6 +162,8 @@ def test_different_rights_have_separate_bodies_in_both_read_orders(h, monkeypatc
     workspace = h.command('coordinator', 'workspace.create', {
         'name': 'Planner-only source', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
         'visibility': 'private', 'purpose': 'sandbox'})['workspace']
+    # The isolated database and fixed clock can still produce another test's in-process cache key.
+    monkeypatch.setattr(rule_catalogue, '_catalogue_cache', OrderedDict())
     builds = []
     original = rule_catalogue._catalogue_uncached
 

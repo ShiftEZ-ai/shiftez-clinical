@@ -1838,7 +1838,10 @@ async function drawPage(live=false){
   // the section left is inert, never the nav (an inert nav ignored every pointer click until the read finished).
   // Moving the page detaches its scrollers, which resets their native positions: put them back at once (not only when
   // the rebuilt page mounts), so a background redraw does not show the list at its top meanwhile.
-  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);staleShown(body).inert=waited;restoreTableScroll(main);restoreRulesScroll(main);}else body.append(sk!);}
+  // Moving it also dropped the focus to the document (WCAG 2.4.3): its control keeps it while the page reads, so a key
+  // pressed meanwhile (Tab, Alt M to the messages and back) starts from that control, not from the top of the page.
+  if(keep)main.removeAttribute('data-loaded-view');else{main.append(body);if(previous.length){body.append(...previous);
+    if(active?.isConnected&&document.activeElement===document.body)active.focus({preventScroll:true});staleShown(body).inert=waited;restoreTableScroll(main);restoreRulesScroll(main);}else body.append(sk!);}
   // maintenance: a read meeting rules being rebuilt (api.ts projectionReady): the old content gives way to the page's skeleton.
   let waiting=sk;const updating=()=>{if(serial!==renderSerial||waiting||keep)return;waiting=pageSkeleton();body.inert=false;body.replaceChildren(waiting);};
   window.addEventListener('projection-updating',updating);

@@ -53,6 +53,17 @@ function loadingSection(label:string,build:(target:HTMLElement)=>Promise<void>):
   };
   void run();return box;
 }
+/** The newest copy of each part that reads again after its own change (`key`), for the person it shows. */
+const liveParts=new Map<string,{id:string;draw:()=>void}>();
+/** A loading section in `box` that reads again after its own change. The panel is rebuilt on every page refresh, and a
+ *  change can finish after that (a review dialog left open, a read still in flight): it then reads the live copy again,
+ *  never only the replaced one. */
+function redrawnSection(box:HTMLElement,key:string,p:Row,label:string,build:(target:HTMLElement,redraw:()=>void)=>Promise<void>):HTMLElement{
+  const draw=()=>{box.replaceChildren(loadingSection(label,t=>build(t,redraw)));};
+  const here=()=>{if(alive(box))draw();};
+  const redraw=()=>{const live=liveParts.get(key);(alive(box)||live?.id!==p.id?here:live.draw)();};
+  liveParts.set(key,{id:p.id,draw:here});draw();return box;
+}
 
 export function personProfilePanels(ctx:Context,p:Row,parts:ProfileParts):PersonPanel[]{
   const full=holdsLists(ctx.catalogues),mine=self(ctx,p),own=mine&&!full;
@@ -85,8 +96,7 @@ export function personProfilePanels(ctx:Context,p:Row,parts:ProfileParts):Person
       ...(wishes?[loadingSection('Wishes',async t=>{t.append(await wishesPanel(ctx,undefined,p.id));})]:[]))] as PersonPanel]:[]),
     ...(parts.rules?[['rules','Rules',parts.rules] as PersonPanel]:[]),
     // Quotas, targets and overtime offers: reviewed records on the person (the department's readers, and their own).
-    ...(permits(ctx,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR)||mine?[['facts','Quotas',()=>{const box=el('div',{});
-      const draw=()=>{box.replaceChildren(loadingSection('Quotas & offers',t=>personFacts(ctx,p,t,draw)));};draw();return box;}] as PersonPanel]:[]),
+    ...(permits(ctx,CAPABILITY.ADMIN,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD,CAPABILITY.AUDITOR)||mine?[['facts','Quotas',()=>redrawnSection(el('div',{}),'facts',p,'Quotas & offers',(t,redraw)=>personFacts(ctx,p,t,redraw))] as PersonPanel]:[]),
     ...(grants(ctx.me.roles,'audit.read')?[['history','History',()=>personHistory(ctx,p,parts.feed,permits(ctx,CAPABILITY.ADMIN)||linked)] as PersonPanel]:[]),
     ...(access?[['access','Access',()=>personAccess(ctx,p,linked)] as PersonPanel]:[]),
   ];
@@ -303,8 +313,7 @@ const device=(s:{device_label:string|null})=>!s.device_label||s.device_label.sta
 /** Access: the sign-in account, the last sign-in, and every session and device, with Sign out per session and for all
  *  (each a recorded command; the button asks again in red before it acts). */
 function personAccess(ctx:Context,p:Row,mine:boolean):HTMLElement{
-  const box=el('div',{class:'ph'});
-  const draw=()=>box.replaceChildren(loadingSection('Access',async t=>{
+  return redrawnSection(el('div',{class:'ph'}),'access',p,'Access',async(t,draw)=>{
     const [a,s]=await Promise.all([absent(get<PersonAccounts>(personPath(p,'accounts')),{person_id:p.id,accounts:[]}),absent(get<PersonSessions>(personPath(p,'sessions')),NO_SESSIONS)]);
     const accounts=a.accounts,last=accounts.map(x=>x.last_sign_in_at).filter(Boolean).sort().at(-1) as string|undefined,latest=s.sessions[0];
     const card=(label:string,value:string,note_:string,tone='')=>el('div',{class:'ov-stat'},el('span',{class:'ov-stat-label'},label),el('strong',{class:'truncate','data-tip':value},value),el('small',{class:'pr-note '+tone},note_));
@@ -328,8 +337,7 @@ function personAccess(ctx:Context,p:Row,mine:boolean):HTMLElement{
           {key:'status',label:'Status',text:r=>status(r),cell:r=>el('span',{class:'muted'},status(r))}],
         rowButtons:r=>r.can_revoke&&!r.current?[signOut(r)]:[]}).root:emptyLine('No sessions yet.'),
       s.total>s.sessions.length?el('p',{class:'muted'},`Newest ${s.sessions.length} of ${s.total}.`):''));
-  }));
-  draw();return box;
+  });
 }
 
 const showDay=(ctx:Context,day:string,id:string)=>ctx.navigate(`schedule/week/${day}?edit=none&person=${encodeURIComponent(id)}`);
