@@ -33,3 +33,20 @@ def test_label_parts_use_the_particle_and_spoken_names_keep_the_full_name(client
                   "known:m.personName('missing','Dr Nico Miller',{parts:['short'],honorific:'none'})};})()")
     got = run(client_modules, 'person_label.js', expression)
     assert got == {'short': 'Dr K. Al Cooper · R2', 'bare': 'K. Al Cooper', 'code': 'ZZQ', 'comma': 'Dr Keiko Al Cooper, 0000', 'spokenCode': 'ZZQ, Dr Keiko Al Cooper', 'spokenFull': 'Dr Keiko Al Cooper · R2', 'known': 'N. Miller'}
+
+
+def test_only_labels_that_clash_in_a_view_expand_first_to_given_and_family_then_to_the_full_name(client_modules):
+    expression = ("(()=>{const P=(id,n)=>({id,revision:1,display_name:n});"
+                  "const a=P('a','Dr Keiko Al Cooper'),b=P('b','Dr Kopofiku Al Cooper'),c=P('c','Keiko Iris Al Cooper'),"
+                  "d=P('d','Keiko Nico Al Cooper'),e=P('e','Nico Miller');"
+                  "const view=m.distinctNames([a,b,c,d,e,e,undefined],{parts:['short']}),alone=m.distinctNames([a,e],{parts:['short']}),"
+                  "full=m.distinctNames([a,b],{parts:['full']});"
+                  "return {view:[a,b,c,d,e].map(view),alone:[a,b,e].map(alone),full:[a,b].map(full),nobody:view(undefined)};})()")
+    got = run(client_modules, 'person_label.js', expression)
+    # a and b share "Dr K. Al Cooper": given and family name tell them apart. c and d still share "Keiko Al Cooper"
+    # after that, so they say their full names. e is listed twice but is one person, so it never clashes with itself.
+    assert got['view'] == ['Dr Keiko Al Cooper', 'Dr Kopofiku Al Cooper', 'Keiko Iris Al Cooper', 'Keiko Nico Al Cooper', 'N. Miller']
+    # Only people in the view count: b outside it keeps the short label, as does a without b.
+    assert got['alone'] == ['Dr K. Al Cooper', 'Dr K. Al Cooper', 'N. Miller']
+    assert got['full'] == ['Dr Keiko Al Cooper', 'Dr Kopofiku Al Cooper']  # a label without the short part is unchanged
+    assert got['nobody'] == 'Unavailable record'

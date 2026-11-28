@@ -202,3 +202,30 @@ def test_name_pills_are_clean_unless_the_label_adds_the_rank(browser, live_serve
         expect(page.locator('#schedule-view .p-rank')).to_have_count(0)  # once, in the label, never a second prefix
     finally:
         context.close()
+
+
+def test_grid_expands_only_the_short_labels_that_clash_and_keeps_the_full_name_as_the_tip(browser, live_server, h):
+    """Two people who share a short label in one view ("Dr F. Lewis") are told apart. Their given and family name still
+    clash ("Dr Fictional Lewis"), so each row says the full name. A colleague with a unique label keeps it, and every
+    row's tip is the full name. The grid and print share this rule (person_label.ts distinctNames)."""
+    from .test_browser_qa_planner import clinic, settled
+    from .test_browser import pick_view
+    clash, unique = 'Dr Fictional Avery Lewis', 'Dr Fictional Avery Example'
+    first, second, other = ((lambda c: (c.get('record') or c)['id'])(h.configure('people', {'display_name': n})) for n in (FULL, clash, unique))
+    typ = clinic(h)
+    w = h.workspace('Fictional clashing labels')
+    w = h.shift(w, people=[first, other], typ=typ)['workspace']
+    w = h.shift(w, '2026-10-05T08:00:00+03:00', '2026-10-05T12:00:00+03:00', people=[second], typ=typ)['workspace']
+    h.lifecycle(w, 'validate')
+    h.command('coordinator', 'table_view.create', {'table_key': 'planner', 'name': 'Fictional short labels',
+        'definition': {'planner': {'mode': 'timeline', 'range': 'week', 'label': {'parts': ['short'], 'separator': 'dot', 'honorific': 'dr'}}}})
+    context, page = sign_in(browser, live_server, 'coordinator', viewport={'width': 1440, 'height': 900})
+    try:
+        navigate(page, 'planner'); settled(page)
+        pick_view(page, 'Fictional short labels'); settled(page)
+        name = lambda pid: page.locator(f'#schedule-view .pg-row[data-row-person="{pid}"] .pg-name strong')
+        for pid, full, shown in ((first, FULL, FULL), (second, clash, clash), (other, unique, 'Dr F. Example')):
+            expect(name(pid)).to_have_text(shown)
+            expect(name(pid)).to_have_attribute('title', full)
+    finally:
+        context.close()

@@ -1005,6 +1005,10 @@ and a desktop window narrowed below it gets the same rule at once.
   additions and published-change joiners are the same pill with a modifier class, never a hand-drawn name; published
   chips carry the person (data-person), so a person's highlight rings them too
   (`tests/test_web_ssot_guards.py`).
+- Clashing labels (People × Days, the Timeline, print): when people shown in one view would carry the same label,
+  only they widen its short part, first to given and family name, then to the full name where that still clashes
+  (`distinctNames` in `person_label.ts`, one rule for the grids and print); everyone else keeps the view's label, and
+  each row's tip keeps the full name.
 - Tags (Configuration › Tags): one chip per tag everywhere (`tagRef` in `tags.ts`): "#Name" in the tag's palette hue
   with its member count; hover lists the members, click opens them with "Open tag". Pickers that choose people,
   clinics, places, duty types or programmes offer the tags labelling that kind under "Tags".

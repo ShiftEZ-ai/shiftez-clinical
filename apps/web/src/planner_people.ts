@@ -1,7 +1,7 @@
 import {type Legend,tagChip,rankColour,colourOf,legend,MARKS,el,icon,popover,hoverCard,formatDate,formatTime,toLocal,labelOf,empty,button,CAPABILITY,hostLegend,readFailed} from './dom.js';
 import {SEVERITY_WORDS,LEVEL_WORDS} from './issue_marker.js';
 import type {LiveHost} from './autoschedule_live.js';
-import {fullNameOf} from './person_label.js';
+import {fullNameOf,distinctNames} from './person_label.js';
 import {get,onSessionReset,sessionChanged} from './api.js';
 import {addDays,isWeekend,LAYER_DEFAULTS} from './planner_logic.js';
 import {dutyColour,attachMenu,weekView,coverOf,openPlaces,openAssignment,scheduleWidths,colourRule,type WeekHooks,markOpen,markWeekend,markToday,roving} from './planner_week.js';
@@ -134,7 +134,8 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     const personById=new Map(ctx.catalogues.people.map(p=>[p.id,p]));
     let people=ctx.catalogues.people.filter(p=>byPerson.has(p.id)||(!filtered&&p.active!==false));
     if(q)people=people.filter(p=>findsPerson(p,q,hooks.code));
-    const hours=new Map(people.map(p=>[p.id,hoursOf(p.id)]));
+    // The view's names: only people whose labels clash among the rows shown expand (person_label.ts distinctNames).
+    const hours=new Map(people.map(p=>[p.id,hoursOf(p.id)])),named=distinctNames(people);
     people.sort((a,b)=>state.sort==='name'?fullNameOf(a).localeCompare(fullNameOf(b)):state.sort==='name-desc'?fullNameOf(b).localeCompare(fullNameOf(a)):state.sort==='hours-asc'?hours.get(a.id)!-hours.get(b.id)!:hours.get(b.id)!-hours.get(a.id)!);
     const groups=new Map<string,Row[]>(),groupName=new Map<string,string>();
     // Supervision teams (CA-03) come from each assignment's recorded supervisor on that same session (planner_teams.ts
@@ -193,7 +194,7 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
         const tags=((person.tags||[]) as string[]).slice(0,2).map(t=>{const c=tagChip(t);c.dataset.lgSelf='';return c;});
         // Colour by person: the dot is that hue's mark (Colour by person reads no session).
         const dot=weekView.colourBy==='person'?el('span',{class:'person-dot','aria-hidden':'true'}):null;dot?.classList.add('duty-'+colours.seenChip({} as Row,person.id,dot));
-        const row=el('div',{class:'pg-row person-group',role:'row','data-row-person':person.id},attachMenu(tag(el('div',{class:'pg-name',role:'rowheader'},el('strong',{class:'truncate'},dot,hooks.name(person)),
+        const row=el('div',{class:'pg-row person-group',role:'row','data-row-person':person.id},attachMenu(tag(el('div',{class:'pg-name',role:'rowheader'},el('strong',{class:'truncate',title:fullNameOf(person)},dot,named(person)),
           el('small',{class:'truncate'},breaches.has(person.id)?breachMark(breaches.get(person.id)!):'',hooks.code(person),...tags)),{kind:'person',person:person.id,label:fullNameOf(person),sub:[rankOf(person.id),hooks.code(person)].join(' · '),days,shifts:mine.map(x=>x.shift.id)},{pin:true}),hooks.menu,{person_id:person.id,day:days[0]},'Actions for '+fullNameOf(person)));
         const onDay=new Map<string,typeof mine>();for(const x of mine){const d=dayOf(x.shift);onDay.set(d,[...(onDay.get(d)||[]),x]);}
         for(const d of days){
