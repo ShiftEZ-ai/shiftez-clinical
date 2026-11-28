@@ -498,7 +498,14 @@ def repair_minima(snapshot, result, time_budget, *, cancelled=None, deterministi
     options = GenerationOptions.model_validate(snapshot.get('generation_options', snapshot.get('generation_defaults')) or {})
     seconds = min(time_budget, options.diagnostic_seconds)
     deadline = time.monotonic() + seconds
-    candidate = overlay(snapshot, result, range(len(result['additions'])), range(len(result['removals'])))
+    selected = set(selected_session_ids(snapshot))
+    editable = {shift['id'] for shift in snapshot['shifts']
+                if shift['id'] in selected and not shift['locked'] and not inactive(shift)}
+    incumbent = _proposal_placements(snapshot, result)
+    if snapshot['workspace'].get('base_publication_id') or not any(
+            (sid, pid) not in incumbent for sid in editable for pid in short_people):
+        return result
+    candidate = overlay(snapshot, result, range(len(result['additions'])), range(len(result['removals'])), transient=True)
     # Retain the complete incumbent, including its leads, supervision and overtime.
     for shift in candidate['shifts']:
         for participant in shift['participants']:

@@ -31,7 +31,7 @@ def participant(row):
     return value
 
 
-def overlay(data, result, additions, removals):
+def overlay(data, result, additions, removals, *, transient=False):
     value = copy.deepcopy(data)
     removed = {result['removals'][i]['assignment_id'] for i in removals}
     changes = defaultdict(list)
@@ -44,12 +44,14 @@ def overlay(data, result, additions, removals):
         if row['id'] not in touched:
             continue
         row['participants'] = [p for p in row['participants'] if p['id'] not in removed] + changes[row['id']]
-        row['revision'] += 1
+        if not transient:
+            row['revision'] += 1
         if row.get('series_id'):
             row['series_modified'] = True
-    value['workspace']['content_revision'] += 1
-    value['input_manifest'] = manifest(value)
-    value['fingerprint'] = value['input_manifest']['token']
+    if not transient:
+        value['workspace']['content_revision'] += 1
+        value['input_manifest'] = manifest(value)
+        value['fingerprint'] = value['input_manifest']['token']
     return value
 
 
