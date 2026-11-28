@@ -136,10 +136,23 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
 
 ## Environments
 - **ci**: per change, on the runner; synthetic data only.
-- **dev**: integrates green builds of `main` through the dev admission gate. Synthetic data and test accounts only
-  (names ending "(test)").
+- **dev**: integrates green builds of `main` through the dev admission gate. Synthetic data and test accounts
+  (names ending "(test)"), plus at most one real department under the rules below.
 - **staging**: tagged release candidates only; the owner's testing and the speed gates run there. Its own synthetic
-  data, identities and keys, never a copy of another environment.
+  data, identities and keys, never a copy of another environment, plus at most one real department under the rules
+  below.
+- **Real department on dev and staging** (the owner's decision, so he can test on real data):
+  - It is loaded only through the app's own import and commands, into its own department. It is never loaded by a
+    database copy, and its source stays read-only.
+  - Every page and API read needs a sign-in, and there is no self-registration. Only named accounts with their own
+    secret hold a role in it. Test, shared and known-password accounts never get a role in it.
+  - Automated runs use only synthetic departments: CI, speed gates, QA journeys and candidate sessions.
+  - Nothing from it leaves the server. No CI artifact, log, trace, screenshot, HAR, issue, PR, commit, comment or
+    board text carries its data.
+  - The environment's backup job and rotation (§ Backup and restore) cover it, and its archives stay on that
+    environment's server.
+  - The leaver workflow (`person.anonymise`) applies to its people. Removing the department is destructive work on
+    real data and needs the owner's yes.
 - **production**: only with the owner's yes, after he has tested the release candidate on staging; real accounts
   only. The production administrator account is created by the owner.
 - Configuration and secrets are per environment. Secrets live only on the servers, never in the repository, its
