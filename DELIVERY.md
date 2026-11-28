@@ -142,10 +142,12 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   data, identities and keys, never a copy of another environment, plus at most one real department under the rules
   below.
 - **Real department on dev and staging** (the owner's decision, so he can test on real data):
-  - It is loaded only through the app's own import and commands, into its own department. It is never loaded by a
-    database copy, and its source stays read-only.
+  - It runs in its own installation of the environment's image, with its own database, organisation, keys and
+    sign-ins, started by the institution bootstrap. It never joins the synthetic installation.
+  - It is loaded only through the app's own import and commands. It is never loaded by a database copy, and its
+    source stays read-only.
   - Every page and API read needs a sign-in, and there is no self-registration. Only named accounts with their own
-    secret hold a role in it. Test, shared and known-password accounts never get a role in it.
+    secret hold a role in it. Test, shared and known-password accounts never exist in it.
   - Automated runs use only synthetic departments: CI, speed gates, QA journeys and candidate sessions.
   - Nothing from it leaves the server. No CI artifact, log, trace, screenshot, HAR, issue, PR, commit, comment or
     board text carries its data.
