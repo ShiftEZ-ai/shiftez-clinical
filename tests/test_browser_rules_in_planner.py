@@ -536,6 +536,7 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
     from datetime import date
     from apps.api import models as m
     from apps.api.db import transaction
+    from .test_browser import reconnect, wait_held
     a, b, _ = h.seed['people']
     review = h.seed['services'][1]
     with transaction(h.app.state.engine, write=True) as db:
@@ -578,6 +579,35 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
             expect(page.locator('.hovercard')).to_have_count(0)
             return count
         review_session = chip(lambda s: review in s['service_ids'])
+        # The rota is checked again under a resting pointer: the planner redraws its chips once it has read the checked
+        # rota, and the card comes back on the new chip for the same person and session, reading the rule map again,
+        # without the mouse moving.
+        review_session.hover()
+        expect(page.locator('.hovercard .rk-hc-head strong')).to_have_text(re.compile(r'^(\d+|No) rules? appl'))
+        drafts, maps = [], []
+        draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+        rule_map = re.compile(rf".*/api/workspaces/{w['id']}/rule-map$")
+        page.route(draft, lambda route: drafts.append(route))
+        page.route(rule_map, lambda route: maps.append(route))
+        now = h.detail(w)['workspace']
+        checked = now['validation']['evaluated_at']
+        h.lifecycle(now, 'validate')
+        assert h.detail(w)['workspace']['validation']['evaluated_at'] != checked
+        reconnect(page)
+        wait_held(page, drafts)
+        review_session.evaluate("b => { b.dataset.drawnBefore = '' }")
+        for route in drafts:
+            route.continue_()
+        page.unroute(draft)
+        wait_held(page, maps)
+        expect(page.locator('[data-drawn-before]')).to_have_count(0)
+        expect(review_session).to_have_attribute('aria-describedby', re.compile(r'hover-help-'))
+        for route in maps:
+            route.continue_()
+        page.unroute(rule_map)
+        expect(page.locator('.hovercard .rk-hc-head strong')).to_have_text(re.compile(r'^(\d+|No) rules? appl'))
+        page.mouse.move(0, 0)
+        expect(page.locator('.hovercard')).to_have_count(0)
         assert rules_on(review_session) == rules_on(chip(lambda s: review not in s['service_ids'] and s['start'][:10] == '2026-10-05')) + 1
         pick_view(page, 'Week')
         # The leave buffer: only Staff 01's Tuesday place (the day before the leave), not Monday's, not Staff 02's.

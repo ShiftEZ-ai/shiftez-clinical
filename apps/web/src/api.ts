@@ -132,12 +132,16 @@ async function sent<T>(path:string, options:RequestOptions, renewed:boolean, ans
     const own=(v:{code?:string})=>v.code==='value_error'||v.code==='assertion_error';
     const details=list.map(v=>own(v)?plainWords(v.message):detailWords(v)).filter(Boolean).join('; ');
     const said=list.length&&list.every(own)&&details?details:`${error.message}${details?' '+details:''}`;
-    // ME-16: a write refused for its stale CSRF token (a tab left open over a new sign-in) renews the session's tokens and
-    // is sent once more with the same body (its idempotency key too). Still refused: sign in again, the page is kept.
-    if(!question&&response.status===403&&error.code==='CSRF_FAILED'&&options.method&&!['GET','HEAD'].includes(options.method)&&!path.startsWith('/auth/')&&!signingOut){
-      if(!renewed&&await refreshSession()){requireSession(generation);return request<T>(path,options,true);}
+    // ME-16: a stale token on a write or a POST question renews once and sends the same request within its original deadline.
+    if(response.status===403&&error.code==='CSRF_FAILED'&&!readMethod(options.method)&&!path.startsWith('/auth/')&&!signingOut){
+      if(!renewed){
+        const fresh=await refreshSession(options.signal);
+        requireSession(generation);left();
+        if(fresh)return sent<T>(path,options,true,answered);
+      }
       window.dispatchEvent(new CustomEvent('session-expired',{detail:{code:error.code}}));
-      throw new ApiError(error.code,'Your sign-in needs renewing. Sign in again to save; what you entered stays on the page.',response.status,error.details);}
+      throw new ApiError(error.code,question?'Your sign-in needs renewing. Sign in again to continue the check.'
+        :'Your sign-in needs renewing. Sign in again to save; what you entered stays on the page.',response.status,error.details);}
     if(!signingOut&&(response.status===401 || (response.status===403 && ['/api/me','/api/pulse'].includes(path))))window.dispatchEvent(new CustomEvent('session-expired',{detail:{code:error.code}}));
     throw new ApiError(error.code,(reading&&READ_PLAIN[error.code])||PLAIN[error.code]||`${refusalText(said,error.details)}${error.code==='INTERNAL_ERROR'&&payload.correlation_id?` Reference: ${payload.correlation_id}`:''}`,response.status,error.details);
   }
@@ -814,7 +818,7 @@ export const oidcChoose=(continuation:string,department_id:string)=>request<OIDC
 export const oidcCancel=(continuation:string)=>request<{cancelled:boolean}>('/auth/oidc/cancel',{method:'POST',body:JSON.stringify({continuation} satisfies OIDCContinuation)});
 /** Rotates the session's token pair (same session and deadline). Raw fetch: a refusal here is not a sign-out; the
  *  next ordinary read says so if the session really ended. */
-export async function refreshSession(){try{return (await fetch('/auth/refresh',{method:'POST',headers:{'X-CSRF-Token':csrf(),Accept:'application/json'},credentials:'same-origin',cache:'no-store'})).ok;}catch{return false;/* the next read reports it */}}
+export async function refreshSession(signal?:AbortSignal|null){try{return (await fetch('/auth/refresh',{method:'POST',signal,headers:{'X-CSRF-Token':csrf(),Accept:'application/json'},credentials:'same-origin',cache:'no-store'})).ok;}catch{return false;/* the next read reports it */}}
 /** maintenance: how long a sign-out waits for the server before it says it could not (the session may still be valid). */
 export const SIGN_OUT_TIMEOUT_MS=20_000;
 /** The server's word on a sign-out: ended (2xx, or 401 because the session had already gone), else not known to have ended. */
