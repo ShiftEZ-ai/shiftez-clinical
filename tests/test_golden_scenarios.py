@@ -79,6 +79,37 @@ def test_golden_replayed_activation_still_rejects_changed_content(budget_h):
                          work=lambda: pytest.fail('Replayed activation created another check'))
 
 
+def test_golden_fixed_usual_assignee_can_be_promoted_in_place(golden_harness):
+    from apps.worker.main import process_one
+    from scripts.golden_scenarios import compile_scenario
+
+    spec = next(spec for spec in load_pack() if spec['id'] == 'A-LEAD-01')
+    with golden_harness() as h:
+        compiled = compile_scenario(h.command, spec, read=h.get, committed=h.committed,
+            work=lambda: process_one(h.app.state.engine, solver_workers=1))
+        workspace = h.refresh_draft_baseline(h.detail(compiled['workspace'])['workspace'])
+        [shift] = [row for row in h.detail(workspace)['shifts'] if row.get('series_id') == compiled['ids']['lead_series']]
+        [original] = shift['participants']
+        job = h.command('coordinator', 'job.create', {'kind': 'generation', 'workspace_id': workspace['id'],
+            'generation_options': {'mode': compiled['generation_options']['mode']}, 'session_ids': [shift['id']]},
+            revision=workspace['revision'])['job']
+        while process_one(h.app.state.engine, solver_workers=1):
+            pass
+        proposal = h.get('coordinator', '/api/jobs/' + job['id'])['job']['result']
+        assert proposal['status'] == 'candidate_feasible'
+        [addition] = proposal['additions']
+        [removal] = proposal['removals']
+        assert addition['participant']['id'] == removal['assignment_id'] == original['id']
+        payload = {'workspace_id': workspace['id'], 'job_id': job['id'], 'reason': 'Apply reviewed team lead'}
+        for selection in ({'addition_indexes': []}, {'removal_indexes': []}):
+            reply = h.command('coordinator', 'generation.apply', {**payload, **selection},
+                              revision=workspace['revision'], status=422)
+            assert reply['error']['code'] == 'INCOMPLETE_REPLACEMENT'
+        workspace = h.command('coordinator', 'generation.apply', payload, revision=workspace['revision'])['workspace']
+        [applied] = [row for row in h.detail(workspace)['shifts'] if row['id'] == shift['id']]
+        assert applied['participants'] == [{**original, 'team_lead': True, 'revision': original['revision'] + 1}]
+
+
 def test_golden_configuration_reaches_api_generation_snapshots(golden_harness):
     import copy
     from scripts.golden_scenarios import compile_scenario

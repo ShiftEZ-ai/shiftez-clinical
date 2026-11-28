@@ -76,7 +76,7 @@ def prepare(db, actor, command):
     from .jobs import require_application_toolchain, require_latest_run
     require(result.get('status') in {'candidate_feasible', 'candidate_with_gaps', 'unknown_time_limit'},
             'NO_CANDIDATE', 'This job did not produce an applicable proposal')
-    require_application_toolchain(job)
+    promotions = require_application_toolchain(job)
     require_latest_run(db, job)
     def indexes(kind, requested):
         rows = result.get(kind, [])
@@ -85,6 +85,10 @@ def prepare(db, actor, command):
         return selected
     ai, ri = indexes('additions', value.addition_indexes), indexes('removals', value.removal_indexes)
     require(ai or ri, 'NO_ADDITIONS', 'Choose at least one suggestion to apply')
+    selected_additions, selected_removals = set(ai), set(ri)
+    require(all((addition in selected_additions) == (removal in selected_removals)
+                for addition, removal in promotions.values()),
+            'INCOMPLETE_REPLACEMENT', 'Select both parts of the team lead change', 422)
     before = workspace_content(db, workspace)
     current = domain_snapshot(db, workspace, own_shifts=before['shifts'])
     captured = deepcopy(current)
@@ -105,7 +109,8 @@ def prepare(db, actor, command):
     population = union_population(current, [{'population_recorded': True, 'population_people': contribution}])
     population_changed = current.get('applied_planning_population') != population
     current['applied_planning_population'] = population
-    assignment_ids = {i: str(uuid5(NAMESPACE_URL, job.id + ':' + str(i))) for i in ai}
+    promotion_ids = {addition: ident for ident, (addition, _) in promotions.items()}
+    assignment_ids = {i: promotion_ids.get(i) or str(uuid5(NAMESPACE_URL, job.id + ':' + str(i))) for i in ai}
     normalized = result
     if assignment_ids:
         additions = list(result['additions'])

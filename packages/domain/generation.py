@@ -65,6 +65,11 @@ def keep_assignment(data, shift, participant):
         data.get('generation_options', {}).get('mode') == 'fill_gaps')
 
 
+def can_promote_usual_assignee(data, shift, participant):
+    return (usual_assignee_fixed(shift, participant['person_id'])
+            and not participant.get('team_lead') and not protects_existing(data, shift, participant))
+
+
 def replacement_summary(data, removals):
     replacements = [{**r, 'person_name': data['people'].get(r['person_id'], {}).get('display_name', '')}
                     for r in removals]
@@ -688,7 +693,9 @@ class Recheck:
 def pair_attached(data, shifts, added, removals, period):
     """Pair each trainee with the consultant they are attached to when both are on a session (required first), where
     the rota check allows it. Only work this run may change: its own additions, or unfixed draft assignments."""
-    mine = {id(r['participant']): r for r in added}
+    removed_ids = {r['assignment_id'] for r in removals}
+    # An edit retaining the same ID names a lead on a fixed booking.
+    mine = {id(r['participant']): r for r in added if r['participant']['id'] not in removed_ids}
     draft_safety = data.get('_draft_type_safety', {})
     for shift in shifts:
         if shift['locked']:
@@ -962,15 +969,19 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
                 continue
             a, b = aware(shift['start']), aware(shift['end'])
             options = sorted((p for p in shift['participants'] if not p.get('team_lead')
-                              and (id(p) in mine or not p.get('fixed', bool(shift.get('series_id'))) and not protects_existing(data, shift, p) and not period.get('base_publication_id'))
+                              and (id(p) in mine or not period.get('base_publication_id')
+                                   and (can_promote_usual_assignee(data, shift, p)
+                                        or not p.get('fixed', bool(shift.get('series_id')))
+                                        and not protects_existing(data, shift, p)))
                               and lead_qualified(data, p['person_id'], shift, lead, a, b)),
                              key=lambda p: lead_rank(shift, p['person_id']))
             for p in options:
                 if interrupted() or not needs_leads(shift):
                     break
-                promoted = {**p, 'team_lead': True} if id(p) in mine else {
-                    **p, 'id': str(uuid.uuid5(uuid.NAMESPACE_URL, data['fingerprint'] + shift['id'] + p['person_id'] + ':lead')),
-                    'team_lead': True, 'fixed': False}
+                promoted = {**p, 'team_lead': True}
+                if id(p) not in mine and not can_promote_usual_assignee(data, shift, p):
+                    promoted.update(id=str(uuid.uuid5(uuid.NAMESPACE_URL,
+                        data['fingerprint'] + shift['id'] + p['person_id'] + ':lead')), fixed=False)
                 index = shift['participants'].index(p)
                 shift['participants'][index] = promoted
                 result = recheck.trial([shift], [p['person_id']])

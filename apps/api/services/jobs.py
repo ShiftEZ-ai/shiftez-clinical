@@ -19,7 +19,7 @@ from .planning import draft, changed, chunks, assignment_source
 from .generation_resume import (clear_generation_resume, generation_created_at, resume_current, resume_expired,
                                 RESUMABLE_GENERATION_RESULTS, has_generation_checkpoint, generation_resume_available,
                                 generation_resume_days, generation_admitted)
-from packages.domain.generation import assignment_fixed, keep_assignment
+from packages.domain.generation import assignment_fixed, can_promote_usual_assignee, keep_assignment
 from packages.domain.generation_scope import population_allows, selected_session_ids
 from apps.api.workspace_baselines import baseline_reference, generation_manifest
 from .generation_scope import require_generation_sessions_in_scope
@@ -721,7 +721,7 @@ def apply_generation(db, actor, command):
     require(plan['actor_id'] == actor.identity_id and plan['department_id'] == actor.department_id
             and plan['workspace_id'] == workspace.id, 'RECONCILIATION_CONTEXT', 'Reconcile in the current department', 409)
     receipt = plan['receipt']
-    require_application_toolchain(job)
+    promotions = require_application_toolchain(job)
     require_latest_run(db, job)
     before = workspace_content(db, workspace)
     from apps.api.snapshots import preparation_stamp
@@ -762,6 +762,9 @@ def apply_generation(db, actor, command):
     additions, addition_indexes = chosen(job.result.get('additions', []), receipt['addition_indexes'])
     require(bool(additions or removals), "NO_ADDITIONS", "Choose at least one suggestion to apply")
     removed = {r["assignment_id"] for r in removals}
+    selected_additions, selected_removals = set(addition_indexes), set(removal_indexes)
+    promoted = {ident for ident, (addition, removal) in promotions.items()
+                if addition in selected_additions and removal in selected_removals}
     unselected_replacements = {(r["shift_id"], r["person_id"]) for r in job.result.get("removals", [])
                                if r["assignment_id"] not in removed}
     require(not any((a["shift_id"], a["participant"]["person_id"]) in unselected_replacements for a in additions),
@@ -780,12 +783,17 @@ def apply_generation(db, actor, command):
         require(shift is not None and shift.workspace_id == workspace.id and not shift.locked
                 and not shift.cancelled and not workspace.base_publication_id
                 and assignment is not None and assignment.shift_id == shift.id
-                and not assignment_fixed(original_shifts[shift.id], {'fixed': assignment.fixed, 'person_id': assignment.person_id}),
+                and (assignment.id in promoted or not assignment_fixed(original_shifts[shift.id],
+                     {'fixed': assignment.fixed, 'person_id': assignment.person_id})),
                 'STALE_INPUTS', 'A proposed replacement is no longer editable', 409)
-        db.delete(assignment)
+        if assignment.id in promoted:
+            assignment.team_lead = True
+            assignment.revision += 1
+        else:
+            db.delete(assignment)
     db.flush()
     rows = []
-    for addition in additions:
+    for index, addition in zip(addition_indexes, additions):
         shift = shifts.get(addition["shift_id"])
         require(shift is not None and shift.workspace_id == workspace.id and not shift.locked and not shift.cancelled,
                 "STALE_INPUTS", "Candidate session is no longer editable", 409)
@@ -795,10 +803,12 @@ def apply_generation(db, actor, command):
         require(not inactive(proposed_shifts[shift.id])
                 and series_candidate_allowed(job.input_snapshot, original_shifts[shift.id], p['person_id']),
                 'STALE_INPUTS', 'This recurring session does not permit the proposed replacement', 409)
+        if p.get('id') in promoted:
+            continue
         parsed = s.ParticipantInput.model_validate({k: p[k] for k in s.ParticipantInput.model_fields if k in p})
         fields = parsed.model_dump()
         fields["segments"] = json_value(fields["segments"])
-        rows.append({'id': plan['assignment_ids'][addition_indexes[len(rows)]],
+        rows.append({'id': plan['assignment_ids'][index],
                      'shift_id': shift.id, **fields, **assignment_source(actor, 'auto_schedule', job.id)})
     # One reviewed edit per changed session, including additions without a removal.
     for shift in shifts.values():
@@ -1044,6 +1054,30 @@ def require_latest_run(db, job):
             'A newer auto-schedule run exists for this rota; review and apply that one', 409)
 
 
+def recurring_lead_promotions(snapshot, result):
+    """Recognize a paired edit that keeps the usual assignee and changes only their lead flag."""
+    from packages.domain.proposal_reconciliation import participant
+    removals = {(r['shift_id'], r['assignment_id'], r['person_id']): i
+                for i, r in enumerate(result.get('removals', []))}
+    candidates = {}
+    for i, addition in enumerate(result.get('additions', [])):
+        p = addition['participant']
+        key = addition['shift_id'], p.get('id'), p['person_id']
+        if p.get('team_lead') and key in removals:
+            candidates[key] = i, p
+    if not candidates or snapshot['workspace'].get('base_publication_id'):
+        return {}
+    promotions = {}
+    for shift in snapshot['shifts']:
+        for old in shift['participants']:
+            key = shift['id'], old['id'], old['person_id']
+            if key in candidates and can_promote_usual_assignee(snapshot, shift, old):
+                i, proposed = candidates[key]
+                if participant(proposed) == participant({**old, 'team_lead': True}):
+                    promotions[old['id']] = i, removals[key]
+    return promotions
+
+
 def require_application_toolchain(job):
     require(isinstance(job.input_snapshot.get('shifts'), list)
             and isinstance(job.input_snapshot.get('focus_ids'), list)
@@ -1053,6 +1087,7 @@ def require_application_toolchain(job):
     require(error is None, 'STALE_SCHEDULER',
             error or 'The scheduler changed; generate a fresh proposal before applying', 409)
 
+    promotions = recurring_lead_promotions(job.input_snapshot, job.result)
     if job.input_snapshot.get('generation_scope') is not None:
         selected = set(selected_session_ids(job.input_snapshot))
         source = {r['id']: r for r in job.input_snapshot['shifts']}
@@ -1062,7 +1097,7 @@ def require_application_toolchain(job):
             require(shift is not None and shift['id'] == removal.get('shift_id') and shift['id'] in selected
                     and not shift['locked'] and not shift.get('cancelled')
                     and not job.input_snapshot['workspace'].get('base_publication_id')
-                    and not keep_assignment(job.input_snapshot, shift, participant),
+                    and (participant['id'] in promotions or not keep_assignment(job.input_snapshot, shift, participant)),
                     'PROTECTED_ASSIGNMENT', 'The proposal changes protected work; generate a fresh candidate', 409)
         proposed_removed = {r.get('assignment_id') for r in job.result.get('removals', [])}
         for addition in job.result.get('additions', []):
@@ -1075,6 +1110,7 @@ def require_application_toolchain(job):
             require(all(p['person_id'] != participant.person_id or p['id'] in proposed_removed
                         for p in shift['participants']), 'PROTECTED_ASSIGNMENT',
                     'The proposal overwrites an existing assignment; generate a fresh candidate', 409)
+    return promotions
 
 
 def dismiss_job(db, actor, command):

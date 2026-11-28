@@ -1,13 +1,17 @@
 """Executed leadership witnesses: counts bind separately from continuity."""
 import copy
 
+from packages.domain.generation import generate as greedy
 from packages.domain.validation import evaluate, finding_observations
 from tests.golden_checks import disabled, feasible, place, shift, solve
 
 
 def check_leadership(data, ids, spec):
     expected = spec['expect']
-    sid, rid = ids['lead_shift'], ids['lead']
+    [recurring] = [row for row in data['shifts'] if row.get('series_id') == ids['lead_series']]
+    sid, rid = recurring['id'], ids['lead']
+    [fixed] = recurring['participants']
+    assert fixed['fixed'] and not fixed['team_lead'] and fixed['person_id'] == ids[expected['boundary_min']['fixed_assignee']]
     at = copy.deepcopy(data)
     place(at, sid, [ids['p0'], ids['p1']])
     duty = shift(at, sid)
@@ -48,6 +52,11 @@ def check_leadership(data, ids, spec):
         draft = feasible(data, solve(data, seed))
         flags = [p for p in shift(draft, sid)['participants'] if p.get('team_lead')]
         assert len(flags) == 1 and flags[0]['person_id'] in {ids['p0'], ids['p1']}
+        assert shift(draft, sid)['participants'] == [{**fixed, 'team_lead': True}]
+    proposal = greedy(data, 5)
+    assert 'required_cover_repair' not in proposal
+    draft = feasible(data, proposal)
+    assert shift(draft, sid)['participants'] == [{**fixed, 'team_lead': True}]
 
     concurrent = expected['concurrent_leaders']
     members = [ids[key] for key in concurrent['duties']]
