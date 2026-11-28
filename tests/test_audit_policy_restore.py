@@ -9,16 +9,18 @@ from apps.api.db import transaction
 from apps.api.services import policies
 from packages.domain.conditions import active_rules
 from packages.domain.validation import evaluate
+from .governance_support import retire_rule, retirement_vote
 from .test_bulk_reverse_transitions import REASON, proposal, transition
 
 
 def retire(h, enabled, vehicle):
     approved = transition(h, "approver", "policy.activate", proposal(h, active=enabled))["record"]
     if vehicle == "undo":
+        retirement_vote(h, approved, REASON["reason"])
         applied = h.command("approver", "bulk.apply", {"item_kind": "policy.retire", "items": [
             {"target_id": approved["id"], "expected_revision": approved["revision"], "payload": REASON}], **REASON})
         return approved, applied["items"][0]["record"], applied["undo"]
-    return approved, transition(h, "approver", "policy.retire", approved)["record"], None
+    return approved, retire_rule(h, approved, REASON["reason"])["record"], None
 
 
 def restore(h, vehicle, retired, undo, status=200):
@@ -112,6 +114,7 @@ def test_group_retirement_restores_predecessor_switch_and_history(h, vehicle, en
     approved = transition(h, "approver", "policy.activate", proposal(h, active=enabled))["record"]
     group = proposal(h, definition={**approved["definition"], "merged_ids": [approved["id"], approved["id"]]})
     group = transition(h, "approver", "policy.activate", group)["record"]
+    retirement_vote(h, group, REASON["reason"])
     if vehicle == "bulk":
         result = h.command("approver", "bulk.apply", {"item_kind": "policy.retire", "items": [
             {"target_id": group["id"], "expected_revision": group["revision"], "payload": REASON}], **REASON})
@@ -139,6 +142,7 @@ def test_group_retirement_without_approved_history_is_atomic(h, monkeypatch, veh
     approved = transition(h, "approver", "policy.activate", proposal(h, name="Legacy predecessor", active=False))["record"]
     group = proposal(h, name="Grouped rule", definition={**approved["definition"], "merged_ids": [approved["id"]]})
     group = transition(h, "approver", "policy.activate", group)["record"]
+    retirement_vote(h, group, REASON["reason"])
     original = policies.history_version
 
     def retained(db, actor, kind, ident, revision=None):

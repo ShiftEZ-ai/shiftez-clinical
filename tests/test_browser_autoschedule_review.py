@@ -588,6 +588,11 @@ def test_assignment_hover_card_leads_with_facts_and_one_rules_line(browser, live
     try:
         open_rota(page, w['id'])
         chips = page.locator('.pchip:not(.gap)')
+        chips.first.click()
+        session = page.locator('.wk-panel')
+        expect(session).to_be_visible()
+        session.get_by_role('button', name='Close panel', exact=True).click()
+        reads.clear()
         chips.first.hover()
         card = page.get_by_role('tooltip')
         expect(card).to_contain_text('h this week')

@@ -2,7 +2,7 @@ import {get,command,request,ApiError,rotaMeta} from './api.js';
 import {weekdayOptions,el,button,note,select,area,check,showDialog,table,notify,field,formDialog,multi,toLocal,icon,plural,formatDate,formatTime} from './dom.js';
 import type {Row} from './types.js';
 import {conditionBuilder,scopeAsConditions} from './conditions.js';
-import {ruleConditionFields,type Context} from './forms.js';
+import {ruleConditionFields,safetyRule,type Context} from './forms.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
 import {clock} from './loading.js';
 import {waitingWord,checkCodeLabel,proposalProtection} from './rule_check_api.js';
@@ -190,7 +190,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       if(canCheck){controls.append(budget.wrap);actions.append(button('Check all affected rotas',async()=>{await Promise.all(work.filter(w=>{const j=results.get(w.id);return !j||!['queued','running'].includes(j.status);}).map(run));await load();}));}
       actions.append(button('Refresh checks',load));controls.append(actions);
     }
-    // Older active copies of the same rule (e.g. one per week) are retired when this one is activated, so it never applies twice.
+    // The approval response distinguishes copies replaced now from safety retirements still waiting.
     const replacing=replaces.length?multi(`Retire the ${replaces.length} older active cop${replaces.length===1?'y':'ies'} this rule replaces`,
       replaces.map(r=>({value:r.id,label:`${r.name} · ${r.starts_on}${r.ends_on?' – '+r.ends_on:''}`})),replaces.map(r=>r.id)):null;
     replacing?.wrap.classList.add('span-2');
@@ -206,10 +206,11 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       const retire=replacing?.values()||[];
       const decision={reason:reason.input.value,check_job_ids:[...results.values()].map(j=>j.id),acknowledge_unresolved:acknowledgement.input.checked,replaces_ids:retire};
       refusal.hidden=true;refusal.replaceChildren();
+      let result:Row;
       try{
-        if(factFamily)await command(factFamily+'.activate',decision,policy.id,policy.revision);
-        else if(lines.length>1)await command('policy.activate_many',{...decision,items:lines.map(p=>({policy_id:p.id,expected_revision:p.revision}))});
-        else await command('policy.activate',decision,policy.id,policy.revision);
+        if(factFamily)result=await command(factFamily+'.activate',decision,policy.id,policy.revision);
+        else if(lines.length>1)result=await command('policy.activate_many',{...decision,items:lines.map(p=>({policy_id:p.id,expected_revision:p.revision}))});
+        else result=await command('policy.activate',decision,policy.id,policy.revision);
       }catch(e){
         if(!(e instanceof ApiError)||!e.code.startsWith('RULE_'))throw e;
         const target=work.find(w=>w.id===(e.details as Row|undefined)?.workspace_id),rota=target?.name||'this rota';
@@ -222,16 +223,20 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
         return;
       }
       // Confirm straight away; the page refresh that follows can take a few seconds on large rule sets.
-      close();notify(factFamily?'Change approved.':`${lines.length>1?lines.length+' lines':'Rule'} activated${retire.length?`; ${retire.length} older cop${retire.length===1?'y':'ies'} retired`:''}.`);await refresh();
+      const retired=(result.replaced||[]).filter((row:Row)=>retire.includes(row.id)).length;
+      const waiting=result.pending_retirements?.length||0;
+      close();notify(factFamily?'Change approved.':`${lines.length>1?lines.length+' lines':'Rule'} activated${retired?`; ${retired} older cop${retired===1?'y':'ies'} retired`:''}${waiting?`; ${waiting} retirement${waiting===1?'':'s'} waiting for approval`:''}.`);await refresh();
     },'primary'),
       // The other decision, with the same reason: the proposal is declined (kept in history, audited); nothing turns on.
       lines.length===1&&!factFamily?button('Decline',async()=>{if(!reason.input.reportValidity())return;
         await command('policy.decline',{reason:reason.input.value},policy.id,policy.revision);close();notify('Proposal declined.');await refresh();},'secondary'):'',unchecked));  // the button and what it has not checked, in one row
     let protectionRead:AbortController|undefined;
     let protectionPending=false,protectionFailed=false,needsReviewer=false;
+    const isProposer=(p:Row)=>p.created_by===context?.me.identity_id;
+    const ownsProposal=lines.some(p=>p.status==='proposed'&&isProposer(p));
     const stopProtection=()=>{protectionRead?.abort();protectionRead=undefined;};
     onClose(stopProtection);
-    const activationBlocked=()=>protectionPending||protectionFailed||needsReviewer||!gate.hidden;
+    const activationBlocked=()=>protectionPending||(protectionFailed&&ownsProposal)||needsReviewer||!gate.hidden;
     const updateActivation=()=>{
       if(!activate)return;
       activate.disabled=activationBlocked();
@@ -244,7 +249,7 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
       const selected=replacing?.values()||[];
       // As policy.activate_many does, associate explicit replacements with the first proposal.
       const proposed=lines.filter(p=>p.status==='proposed'&&(p===policy&&selected.length||
-        p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id));
+        p.definition?.replaces_id||p.definition?.merged_ids?.length||p.definition?.calendar_entry_id||safetyRule(p.definition?.rule)));
       protection.hidden=true;needsReviewer=false;protectionFailed=false;protectionPending=proposed.length>0;
       protectionStatus.textContent=protectionPending?'Checking safety protection…':'';
       protectionRetry.hidden=true;
@@ -256,8 +261,9 @@ export async function ruleReview(given:Partial<Row>|Row[],canCheck:boolean,canAp
         if(protectionRead!==read)return;
         const weakened=new Set(reviews.filter(r=>r.weakens_safety).map(r=>r.policy_id));
         protection.hidden=!weakened.size;
-        needsReviewer=proposed.some(p=>weakened.has(p.id)&&p.created_by===context?.me.identity_id);
-        protectionStatus.replaceChildren();
+        needsReviewer=proposed.some(p=>weakened.has(p.id)&&isProposer(p));
+        protectionStatus.textContent=reviews.some(r=>r.pending_retirement_ids?.length)
+          ?'Selected safety rules stay active pending retirement approval.':'';
       }catch(error){
         if(protectionRead!==read)return;
         protectionFailed=true;

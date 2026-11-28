@@ -1,4 +1,5 @@
 """Shared proof/reach never carries a reader's private draft choices or authority."""
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from threading import Barrier, Event, Lock
@@ -6,6 +7,7 @@ from threading import Barrier, Event, Lock
 import pytest
 from sqlalchemy import select
 
+from .governance_support import retire_rule
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services import rule_catalogue
@@ -55,8 +57,7 @@ def test_coordinator_counts_refresh_after_policy_edits(h):
     before = h.get('coordinator', path)['rules_in_force']
     policy = h.policy({'kind': 'minimum_cover', 'minimum': 1})
     assert h.get('coordinator', path)['rules_in_force'] == before + 1
-    h.command('approver', 'policy.retire', {'reason': 'Synthetic count invalidation'},
-              policy['id'], policy['revision'])
+    retire_rule(h, policy, 'Synthetic count invalidation')
     assert h.get('coordinator', path)['rules_in_force'] == before
 
 
@@ -161,6 +162,8 @@ def test_different_rights_have_separate_bodies_in_both_read_orders(h, monkeypatc
     workspace = h.command('coordinator', 'workspace.create', {
         'name': 'Planner-only source', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
         'visibility': 'private', 'purpose': 'sandbox'})['workspace']
+    # The isolated database and fixed clock can still produce another test's in-process cache key.
+    monkeypatch.setattr(rule_catalogue, '_catalogue_cache', OrderedDict())
     builds = []
     original = rule_catalogue._catalogue_uncached
 

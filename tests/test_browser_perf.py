@@ -171,7 +171,7 @@ def test_resolve_queue_reads_each_sessions_findings_once(browser, live_server, h
         context.close()
 
 
-DAY = """async (findingCount) => {
+DAY = """async ([findingCount, inspect]) => {
   const m = await window.importBundle('schedule.js');
   const day = '2026-10-05', hours = Array.from({length: 20}, (_, i) => String(7 + (i % 12)).padStart(2, '0'));
   const people = Array.from({length: 150}, (_, i) => ({id: 'p' + i, display_name: 'Person ' + i}));
@@ -189,6 +189,18 @@ DAY = """async (findingCount) => {
     editable: true, fresh: true, selected: new Set(), onSelect: () => {}, refresh: async () => {}, tallies: true};
   const period = {days: [day], page: 0, has_previous: false, has_next: false, unit: 'day'};
   const draw = () => m.dayTimeline(ctx, data, shifts, period, () => {}, hooks, () => {}, document.createElement('div'));
+  if (inspect) {
+    let sessionReads = 0, severityReads = 0;
+    for (const finding of findings) {
+      const {shift_id, severity} = finding;
+      Object.defineProperty(finding, 'shift_id', {get: () => { sessionReads++; return shift_id; }});
+      Object.defineProperty(finding, 'severity', {get: () => { severityReads++; return severity; }});
+    }
+    const {root} = draw();
+    const issueCounts = [...root.querySelectorAll('.sd-bar[aria-label]')].map(
+      bar => Number(bar.getAttribute('aria-label').match(/([0-9]+) issues?/)?.[1] || 0));
+    return {sessionReads, severityReads, issueCounts};
+  }
   draw();  // warm up
   const t = performance.now();
   for (let k = 0; k < 5; k++) draw();
@@ -198,15 +210,19 @@ DAY = """async (findingCount) => {
 
 def test_day_view_reads_each_sessions_findings_once(browser, live_server, h):
     """RESP-REVIEW: the Day view indexes the check's findings by session once per draw; before, each of the day's
-    sessions scanned every finding several times (its errors, each person's team check, its issue count)."""
+    sessions scanned every finding several times (its errors, each person's team check, its issue count). The counted
+    draw reads each finding's session once and the severity only of findings on the day's 20 sessions (1,200 of 30,000);
+    each bar still says its 20 blocking findings."""
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'people')
-        none = page.evaluate(DAY, 0)
-        many = page.evaluate(DAY, 30000)
+        none = page.evaluate(DAY, [0, False])
+        many = page.evaluate(DAY, [30000, False])
         print('day draw', {'no findings': none, '30,000 findings': many})
         slack = 3 if os.environ.get('CI') else 2
         assert many['ms'] <= none['ms'] * slack + 10, (none, many)
+        checked = page.evaluate(DAY, [30000, True])
+        assert checked == {'sessionReads': 30000, 'severityReads': 1200, 'issueCounts': [20] * 20}
     finally:
         context.close()
 

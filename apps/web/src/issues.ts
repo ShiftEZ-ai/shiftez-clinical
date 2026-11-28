@@ -45,6 +45,7 @@ type Preview={plan:Row[];plan_hash:string;replaceable:number;open:number;keys:Se
 
 export async function issuesPage(target:HTMLElement,workspaceId:string,h:IssuesHooks){
   if(!workspaceId){target.append(note('Open a draft rota first: the issues belong to one draft.','warning'));return;}
+  target.setAttribute('data-issues',workspaceId);  // the page shown for this rota, found again by reload
   const data=await rotaWhole(workspaceId);
   let w=data.workspace;const zone=h.zone(),canEdit=h.editable(w);
   let fresh=!!w.validation&&w.validation.fingerprint===data.current_fingerprint;
@@ -52,7 +53,7 @@ export async function issuesPage(target:HTMLElement,workspaceId:string,h:IssuesH
   checkNotice.classList.add('actions');
   checkNotice.hidden=fresh;
   if(canEdit)checkNotice.append(button('Check rota',async()=>{await command('workspace.validate',{reason:'Refresh issues'},w.id,w.revision);
-    if(!target.isConnected)return;target.replaceChildren();await issuesPage(target,workspaceId,h);},'secondary small'));
+    await reload();},'secondary small'));
   target.append(checkNotice);
   const waiting=canEdit?await h.proposal?.(data).catch(()=>null):null;if(waiting)target.append(waiting);
   const shifts=new Map(data.shifts.map(s=>[s.id,s]));
@@ -195,7 +196,10 @@ export async function issuesPage(target:HTMLElement,workspaceId:string,h:IssuesH
       week_from:day(win.start||f.start),week_to:day(win.end||f.end||win.start||f.start),workspace_id:w.id,workspace_name:w.name,workspace_revision:w.revision,policy:p},{openLine:()=>h.openRule!(f.rule_id,f.person_id)});}
   const redraw=()=>{table.refresh();synced();};
   // A draft edit is checked again by the server; a change elsewhere leaves this check stale, which the page then says.
-  async function reload(){if(!target.isConnected)return;target.replaceChildren();await issuesPage(target,workspaceId,h);}
+  // A redraw of the page (a refresh, a live update) that read the rota before this change was sent may have replaced it
+  // meanwhile: the Issues page now shown for this rota is the one read again, so it never keeps what the change cleared.
+  async function reload(){const shown=target.isConnected?target:document.querySelector<HTMLElement>(`#main [data-issues="${CSS.escape(workspaceId)}"]`);
+    if(!shown)return;shown.replaceChildren();await issuesPage(shown,workspaceId,h);}
   // A redraw replaces the rows: a focused checkbox or button hands focus to the same one (same name) in the new rows.
   const keepFocus=()=>{const a=document.activeElement as HTMLElement|null,name=a&&table.root.contains(a)?a.getAttribute('aria-label'):null;redraw();
     if(name&&!a!.isConnected)[...table.root.querySelectorAll<HTMLElement>('[aria-label]')].find(n=>n.getAttribute('aria-label')===name)?.focus({preventScroll:true});};

@@ -6,7 +6,7 @@ import uuid
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services.job_reads import full_job_result
-from .governance_support import identity
+from .governance_support import identity, retire_rule
 from .test_availability_patterns import pattern
 from .test_staff_wishes import wish
 
@@ -130,7 +130,7 @@ def test_declined_policy_restore_only_returns_to_proposed_and_preserves_independ
     own = transition(h, "proposing_approver", "policy.restore_proposal", own)["record"]
     assert transition(h, "proposing_approver", "policy.activate", own, status=403)["error"]["code"] == "SELF_APPROVAL"
     active = transition(h, "approver", "policy.activate", restored)["record"]
-    retired = transition(h, "approver", "policy.retire", active)["record"]
+    retired = retire_rule(h, active, REASON["reason"])["record"]
     assert transition(h, "approver", "policy.restore_proposal", retired, status=409)["error"]["code"] == "WORKFLOW_STATE"
 
 
@@ -394,7 +394,7 @@ def test_receipt_bound_undo_restores_replaced_catalogue_rule_enabled_flag(h, kin
 @pytest.mark.parametrize("enabled", [False, True])
 def test_ordinary_policy_restore_keeps_the_approved_switch(h, enabled):
     original = transition(h, "approver", "policy.activate", proposal(h, active=enabled))["record"]
-    retired = transition(h, "approver", "policy.retire", original)["record"]
+    retired = retire_rule(h, original, REASON["reason"])["record"]
     transition(h, "approver", "policy.restore", retired, status=422, payload={**REASON, "active": False})
     restored = transition(h, "approver", "policy.restore", retired)["record"]
     assert restored["status"] == "active" and restored["active"] is enabled

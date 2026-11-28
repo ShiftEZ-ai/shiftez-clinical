@@ -281,11 +281,15 @@ export function dayTimeline(ctx:Context,data:WorkspaceData,visible:Row[],period:
   const props=propertiesOf(weekView.props,'bar'),on=(k:PropKey)=>props.some(p=>p.key===k&&p.on),colours=colourRule(ctx,period.days,key);
   const words=new Set([...ITEM_DRAWS.bar].filter(k=>!['label','supervisor','lead','people'].includes(k)));
   const peopleAfter=(parts:ReturnType<typeof itemParts>)=>{const at=props.findIndex(p=>p.key==='people');return parts.filter(x=>props.findIndex(p=>p.key===x.key)<at).length;};
-  // The check's findings by session, once per draw (each of the day's sessions read them several times: ~360,000 steps).
-  const ofShift=new Map<string,Row[]>();for(const f of (data.workspace.validation?.findings||[]) as Row[])if(f.shift_id){const l=ofShift.get(f.shift_id);if(l)l.push(f);else ofShift.set(f.shift_id,[f]);}
   const people=new Map(ctx.catalogues.people.map(p=>[p.id,p])),locations=new Map((ctx.catalogues.locations||[]).map(l=>[l.id,l])),services=new Map((ctx.catalogues.services||[]).map(s=>[s.id,s]));
   const minute=(iso:string)=>{const l=toLocal(iso,zone);return (l.slice(0,10)<day?-1440:l.slice(0,10)>day?1440:0)+Number(l.slice(11,13))*60+Number(l.slice(14,16));};
   const shifts=visible.filter(s=>touchesDay(s,day,zone)&&(!weekView.onlyOpen||gapOf(data,s))&&(!window||minute(s.end)>clock(window.start)&&minute(s.start)<clock(window.end))).sort((a,b)=>String(a.start).localeCompare(String(b.start)));
+  // Bars and their team cards only use blocking findings on the sessions drawn here.
+  const errorsByShift=new Map<string,Row[]>(shifts.map(s=>[s.id,[]]));
+  for(const finding of (data.workspace.validation?.findings||[]) as Row[]){
+    const errors=errorsByShift.get(finding.shift_id);
+    if(errors&&finding.severity==='error')errors.push(finding);
+  }
   const first=Math.min(...shifts.map(s=>Math.max(0,minute(s.start)))),last=Math.max(...shifts.map(s=>Math.min(2880,minute(s.end))));
   const fitFrom=shifts.length?Math.max(0,Math.floor(first/60)*60-60):420,fitTo=shifts.length?Math.min(2880,Math.ceil(last/60)*60+60):fitFrom+1440;
   const fitSpan=Math.max(360,fitTo-fitFrom),from=window?clock(window.start):fitFrom,span=window?clock(window.end)-from:Math.ceil(fitSpan/(fitSpan>720?120:60))*(fitSpan>720?120:60);
@@ -314,10 +318,10 @@ export function dayTimeline(ctx:Context,data:WorkspaceData,visible:Row[],period:
       const tl=(p:Row)=>on('lead')&&p.team_lead?' '+MARKS.lead[0]:'',nameOf=(id:string)=>hooks.name(people.get(id))||'named supervisor';
       const drawn=drawnPeople(s),hidden=drawn.hidden.length;  // a person display's others: counted (Search › Show)
       // Teams as one-line team boxes (team_view.ts) where the bar is tall enough; the half bars of an overlay say them in words.
-      const errs=(pid:string)=>(ofShift.get(s.id)||[]).filter(f=>f.person_id===pid&&f.severity==='error');
+      const sessionErrs=errorsByShift.get(s.id)!;
+      const errs=(pid:string)=>sessionErrs.filter(f=>f.person_id===pid);
       const day0=toLocal(s.start,zone).slice(0,10),rank=(id:string)=>rankOn(ctx.catalogues,id,day0);
       const teams=on('people')&&showPairs('bar')?teamGroups(drawn.shown,s.participants as Row[]).map(t=>({t,problem:teamProblem(t,s.participants as Row[],errs)})).filter(x=>x.t.length>1||x.problem):[];
-      const sessionErrs=(ofShift.get(s.id)||[]).filter(f=>f.severity==='error');
       // Every rule problem here is one a drawn team says: no "Needs role" badge repeating it.
       const told=!overlay&&teams.some(x=>x.problem)&&sessionErrs.length>0&&sessionErrs.every(f=>BOX_CODES.has(String(f.code)));
       const boxed=overlay?[]:teams,inBox=new Set(boxed.flatMap(x=>x.t.map(e=>e.p))),rest=drawn.shown.filter(p=>!inBox.has(p));
@@ -338,6 +342,7 @@ export function dayTimeline(ctx:Context,data:WorkspaceData,visible:Row[],period:
         ...boxed.map(x=>teamView(x.t,{density:'row',presentational:true,key,nameOf:id=>people.has(id)?hooks.name(people.get(id)):'Named supervisor',fullName:id=>fullNameOf(people.get(id))||'Named supervisor',rankOf:rank,problem:x.problem,layout:teamLayout()})),
         issues?(()=>{const g=issueGlyph('error',issues);g.classList.add('sd-issue');return key.mark(g,'issue',issueGlyph('error'),'Must fix: breaks a rule or double-booked',2);})():null,
         open?key.mark(badge('+'+open,'warn'),'open',badge('+1','warn'),'Open places',3):gap<0&&!told?badge('Needs role','warn'):null,change?key.mark(badge(change,'info'),'diff',badge('Changed','info'),'Differs from published',3):null);
+      if(layer==='draft')bar.dataset.session=s.id;
       // The bar is its layer (fill or dashed), its colour (Colour by, colourRule), and the TL, pairs and closed it says.
       const hue=colours.seen(s,bar);bar.classList.add('duty-'+hue);
       key.mark(bar,'l:'+layer,el('span',{class:`sd-bar key ${layer==='draft'?'draft':''} duty-${hue}`,'aria-hidden':'true'}),layer==='draft'?'Draft':'Published',0);
@@ -371,9 +376,10 @@ export type Overlaps={starts_on:string;ends_on:string;publications:Row[];drafts:
 export type OverlapValue={choice:'start_after'|'replace_from'|'amend';starts_on:string;publication_id?:string};
 const lastDay=(exclusive:string)=>addDays(exclusive,-1);
 /** The three ways to place a rota beside a published one, as a radio group. One component for New draft, the footer's
- *  overlap pill and Publish…. Unavailable options stay visible with the server's reason. `keep`: the choice already
- *  made, kept when the group is drawn again for new dates (if it is still available). */
-export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendText='How should the draft fit?',keep=''){
+ *  overlap pill and Publish…. Unavailable options stay visible with the server's reason. `keep` (an earlier group's
+ *  kept()): the choice already made, kept when the group is drawn again for new dates (if it is still available), with
+ *  the takeover date the person chose while the same published rota still allows it. */
+export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendText='How should the draft fit?',keep:OverlapValue|null=null){
   const fmt=(d:string)=>formatDate(d,zone),pub=o.publications.find(p=>p.relation==='conflict')||o.publications[0];
   const name=pub?.name||'The published rota';
   const all=[pub?.starts_on,o.starts_on].filter(Boolean).sort()[0],stop=[pub?(pub.effective_until||pub.ends_on):'',o.ends_on].sort().at(-1)!;
@@ -382,8 +388,9 @@ export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendTex
   const mini=(label:string,...tracks:HTMLElement[][])=>el('span',{class:'sd-mini',role:'img','aria-label':label},...tracks.map(t=>el('span',{class:'sd-mini-track'},...t)),
     el('span',{class:'sd-mini-axis','aria-hidden':'true'},...[all,stop].map((d,i)=>{const n=el('span',{},fmt(i?lastDay(d):d));n.style.setProperty(i?'right':'left','0');return n;})));
   const group='ov-'+Math.random().toString(36).slice(2,8);
-  const opts=o.options;const preferred=opts.find(x=>x.choice===keep&&x.available)||opts.find(x=>x.default&&x.available)||opts.find(x=>x.available);
-  let date:HTMLInputElement|null=null;
+  const opts=o.options;const preferred=opts.find(x=>x.choice===keep?.choice&&x.available)||opts.find(x=>x.default&&x.available)||opts.find(x=>x.available);
+  // `chosen`: the takeover date is the person's, not the server's suggestion (which follows the dates).
+  let date:HTMLInputElement|null=null,chosen=false;
   const describe=(x:Row)=>{
     // Not available (the published rota covers every day): no range to state; the server's reason says why.
     if(x.choice==='start_after'&&!x.available)return {title:'Start after it',text:'',mini:null};
@@ -396,12 +403,14 @@ export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendTex
     const d=describe(x),input=el('input',{type:'radio',name:group,value:x.choice,disabled:!x.available}) as HTMLInputElement;input.checked=x===preferred;
     const body=el('span',{class:'sd-option-body'},el('strong',{},d.title,x.default?badge('Default'):null),d.text?el('span',{},d.text):null);
     if(x.choice==='replace_from'&&x.available){
-      date=el('input',{type:'date',value:x.starts_on,min:x.earliest,max:x.latest,'aria-label':'Takes over from'}) as HTMLInputElement;
+      const mine=keep?.choice==='replace_from'&&keep.publication_id===x.publication_id&&keep.starts_on&&keep.starts_on>=x.earliest&&keep.starts_on<=x.latest?keep.starts_on:'';
+      chosen=!!mine;
+      date=el('input',{type:'date',value:mine||x.starts_on,min:x.earliest,max:x.latest,'aria-label':'Takes over from'}) as HTMLInputElement;
       const words=el('span',{}),track=el('span',{});
       const draw=()=>{const v=date!.value||x.starts_on;words.textContent=`${name} stays in force until ${fmt(lastDay(v))}; this draft takes over from ${fmt(v)}.`;
         track.replaceChildren(mini(`${name} in force until ${fmt(lastDay(v))}, replaced from ${fmt(v)}; draft from ${fmt(v)}`,
           [seg('sd-mini-pub',pub.starts_on,v,name),seg('sd-mini-gone',v,pub.effective_until||pub.ends_on,'Replaced')],[seg('sd-mini-draft',v,x.ends_on,'Draft')]));};
-      date.addEventListener('input',()=>{input.checked=true;sync();draw();onChange();});draw();
+      date.addEventListener('input',()=>{chosen=true;input.checked=true;sync();draw();onChange();});draw();
       body.append(el('label',{class:'field sd-date'},el('span',{},'Takes over from'),dateInput(date)),words,track);
     }else if(d.mini)body.append(d.mini);
     if(!x.available&&x.why)body.append(el('small',{class:'muted'},x.why));
@@ -418,5 +427,7 @@ export function overlapChoice(o:Overlaps,zone:string,onChange:()=>void,legendTex
     return {choice:i.x.choice,starts_on:i.x.choice==='replace_from'&&date?.value?date.value:i.x.starts_on,publication_id:i.x.publication_id};};
   /** The primary button repeats the choice ("Create draft from 2 Nov"). */
   const verb=(prefix:string)=>{const v=value();return !v?prefix:v.choice==='amend'?'Change the published rota':`${prefix} from ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(v.starts_on+'T12:00:00Z'))}`;};
-  return {root,value,verb,needed:o.publications.some(p=>p.relation==='conflict')};
+  /** What a redraw of the group for new dates keeps (its `keep`): the choice, and the takeover date only when chosen. */
+  const kept=():OverlapValue|null=>{const v=value();return v&&{...v,starts_on:v.choice==='replace_from'&&chosen&&date?.value||''};};
+  return {root,value,kept,verb,needed:o.publications.some(p=>p.relation==='conflict')};
 }

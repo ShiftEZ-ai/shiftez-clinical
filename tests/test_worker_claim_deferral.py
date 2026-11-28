@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from apps.api import models as m
@@ -12,6 +13,29 @@ from apps.api.settings import Settings
 from apps.worker import main as worker
 from tests.clock_support import freeze_clock
 from tests.test_worker_write_timeouts import generation_job, simulated_clock
+
+
+def test_guarded_claim_reports_a_zero_row_sqlite_update(h, caplog):
+    workspace = h.workspace()
+    job_id = h.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'validation'},
+                       revision=workspace['revision'])['job']['id']
+    engine = h.app.state.engine
+    row = select(m.Job.__table__).where(m.Job.id == job_id)
+    with transaction(engine, write=True) as db:
+        # SQLite accepts a timestamp without fractional seconds. Its ORM read binds
+        # the value back with fractional seconds, which does not match the stored text.
+        db.execute(text('UPDATE jobs SET started_at = :stamp, heartbeat_at = :stamp WHERE id = :id'),
+                   {'stamp': '2026-10-04 08:00:00', 'id': job_id})
+        before = db.execute(row).one()
+    assert (before.status, before.attempts, before.worker_id) == ('queued', 0, None)
+
+    with caplog.at_level(logging.WARNING, logger='rota.worker'):
+        assert worker.claim_pending(engine, kinds={'validation'}) is None
+
+    warning, = (record for record in caplog.records if record.message == 'job_claim_guard_mismatch')
+    assert (warning.job_id, warning.job_kind, warning.attempts) == (job_id, 'validation', 0)
+    with transaction(engine) as db:
+        assert db.execute(row).one() == before
 
 
 @pytest.mark.parametrize('queued_seconds,threshold,waits', [(19, 20, False), (20, 20, True), (21, 20, True),

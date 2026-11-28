@@ -50,7 +50,7 @@ def test_bell_shows_the_capped_number():
 
 
 def test_configuration_nav_is_never_inert_while_a_section_loads():
-    render = body('renderPage')
+    render = body('drawPage')
     assert 'body.inert=waited' not in render
     assert 'staleShown(body).inert=waited' in render
     assert re.search(r"const staleShown=\(kept:HTMLElement\)=>kept\.querySelector<HTMLElement>\('\.config-pane'\)\|\|kept;", APP)

@@ -149,6 +149,14 @@ def test_the_grid_keeps_its_scroll_across_a_redraw(browser, live_server, h, view
         # Put back once the redrawn grid has its height (its fitting runs a frame later): a state, waited for, within a
         # pixel's rounding (the browser may hold a fractional position).
         page.wait_for_function("at => Math.abs((document.querySelector('.planner-main .wk-scroller')?.scrollTop ?? -9) - at) <= 1", arg=at)
+        # Content growing above the place put back (a row the fitting makes taller) and shrinking again moves nothing: the
+        # grid has no scroll anchoring, which moved it under the put-back and so ended it (first attempts lost it there).
+        moved = page.locator('.planner-main .wk-scroller').evaluate("""g => new Promise(done => {
+          const frames = (n, then) => n ? requestAnimationFrame(() => frames(n - 1, then)) : then();
+          const above = document.createElement('div'); above.style.setProperty('height', '80px'); g.prepend(above);
+          frames(2, () => { const grown = g.scrollTop; above.remove(); frames(2, () => done([grown, g.scrollTop])); });
+        })""")
+        assert all(abs(top - at) <= 1 for top in moved), moved
         # A slower reflow (a loaded runner's fitting lands frames later) collapses the grid, clamping it to the top, and
         # then gives its height back: the scroll is put back again, however many frames later it comes (a size hook).
         clamped = page.locator('.planner-main .wk-scroller').evaluate("""g => new Promise(done => {

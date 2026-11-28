@@ -1,9 +1,9 @@
-"""Messages (toasts): placed above the bars of whatever they sit in, out of a docked panel's way, each dismissible, and
-Ctrl/⌘ Z runs the newest Undo (frontend audit X-16, X-17, G-22; owner decision OD-8)."""
+"""Messages (toasts): placed above the bars of whatever they sit in, out of any side panel's way, each dismissible,
+Ctrl/⌘ Z runs the newest Undo (frontend audit X-16, X-17, G-22; owner decision OD-8) and Alt M reaches it (issue 1408)."""
 import pytest
 from playwright.sync_api import expect
 
-from .test_browser import browser, live_server, sign_in, open_config, save_dialog  # noqa: F401
+from .test_browser import browser, live_server, sign_in, open_config, open_rota, open_scheduling, save_dialog  # noqa: F401
 from .test_browser_person_profile import open_person, person
 
 pytestmark = pytest.mark.browser
@@ -74,5 +74,64 @@ def test_messages_stay_clear_of_a_docked_panel(browser, live_server, h):
         page.wait_for_function("""() => {const t = document.querySelector('#toast-tray .toast'), p = document.querySelector('.dock-panel');
             return t && p && t.getBoundingClientRect().right <= p.getBoundingClientRect().left;}""")
         assert toast.bounding_box()['x'] + toast.bounding_box()['width'] <= panel.bounding_box()['x']
+    finally:
+        context.close()
+
+
+def test_messages_stay_clear_of_a_pages_own_side_panel(browser, live_server, h):
+    """Issue 1762: a page's own side panel (Auto-schedule) opening while an Undo message shows moves the message over
+    the page column too, so no button in the panel sits under a message."""
+    w = h.shift(h.workspace('Messages beside a panel'), people=[])['workspace']
+    context, page = sign_in(browser, live_server, 'admin', {'width': 1440, 'height': 1000})
+    try:
+        open_config(page, 'Department settings')
+        toast = save_sessions(page, 55)
+        toast.hover()  # its time left pauses while the pointer is over it (WCAG 2.2.1)
+        open_rota(page, w['id'])
+        open_scheduling(page)
+        toast.hover()
+        expect(toast).to_be_visible()
+        page.wait_for_function("""() => {const t = document.querySelector('#toast-tray .toast'), p = document.querySelector('#auto-panel');
+            return t && p && t.getBoundingClientRect().right <= p.getBoundingClientRect().left;}""")
+        assert page.evaluate("""() => [...document.querySelectorAll('#auto-panel button')].filter(b => b.getClientRects().length)
+            .every(b => {const r = b.getBoundingClientRect(); if (r.bottom <= 0 || r.top >= innerHeight) return true;
+                return !document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('#toast-tray');})""")
+    finally:
+        context.close()
+
+
+def test_alt_m_reaches_the_newest_undo_which_stays_while_focused_and_hands_focus_back(browser, live_server, h):
+    """Issue 1408 (WCAG 2.2 SC 2.1.1, 2.2.1, 2.4.3): one key from anywhere reaches the newest message's Undo, Escape goes
+    back, the message outlives its timeout while focus is in it, and Undo (a save: the message turns into a saving note)
+    or Dismiss pressed by keyboard hands focus back to the control it came from, not to the top of the document."""
+    before = h.get('admin', '/api/access')['sessions']['idle_minutes']
+    context, page = sign_in(browser, live_server, 'admin', {'width': 1440, 'height': 1000})
+    try:
+        open_config(page, 'Department settings')
+        toast = save_sessions(page, 50)
+        undo = toast.get_by_role('button', name='Undo', exact=True)
+        origin = page.get_by_role('button', name='Edit session settings', exact=True)
+        origin.focus()
+        page.keyboard.press('Alt+m')
+        expect(undo).to_be_focused()
+        page.keyboard.press('Escape')
+        expect(origin).to_be_focused()
+        page.keyboard.press('Alt+m')
+        expect(undo).to_be_focused()
+        # An Undo message closes after 10 s; with focus in it, it stays (the page's clock runs past that at once).
+        page.clock.fast_forward(11_000)
+        expect(undo).to_be_visible()
+        expect(undo).to_be_focused()
+        page.keyboard.press('Enter')
+        expect(origin).to_be_focused()
+        undone = page.locator('#toast-tray .toast').filter(has_text='Undone. The previous values are back.')
+        expect(undone).to_be_visible()
+        assert h.get('admin', '/api/access')['sessions']['idle_minutes'] == before
+        # A message with no action is reached at its Dismiss; dismissed by keyboard, focus goes back too.
+        page.keyboard.press('Alt+m')
+        expect(undone.get_by_role('button', name='Dismiss message', exact=True)).to_be_focused()
+        page.keyboard.press('Enter')
+        expect(undone).to_have_count(0)
+        expect(origin).to_be_focused()
     finally:
         context.close()
