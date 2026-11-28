@@ -18,6 +18,8 @@ def stage_label(name):
         stage = STAGE_ORDER[0]
     elif stage == 'diagnostic_minima':
         stage = STAGE_ORDER[1]
+    elif stage == 'diagnostic_minimum_depth':
+        return 'minimum quota shortfall'
     elif stage == 'desired_coverage':
         stage = STAGE_ORDER[2]
     return STAGE_LABELS.get(stage, stage.replace('_', ' '))

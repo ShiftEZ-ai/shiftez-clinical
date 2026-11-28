@@ -13,7 +13,7 @@ from packages.domain.validation import evaluate, finding_observations
 from tests.scheduler_departments import apply, _id
 
 
-def solve(data, seed, *, feasibility_only=False):
+def solve(data, seed, *, feasibility_only=False, diagnostic_proposal=False):
     """Vary both input order and the actual CP-SAT seed, with one worker."""
     data = copy.deepcopy(data)
     rng = Random(seed)
@@ -31,7 +31,7 @@ def solve(data, seed, *, feasibility_only=False):
 
     # Test-only injection: the production API does not expose a random-seed setting.
     with patch('packages.domain.cp_sat.cp_model.CpSolver', seeded_solver):
-        return generate(data, 5, workers=1, feasibility_only=feasibility_only)
+        return generate(data, 5, workers=1, feasibility_only=feasibility_only, diagnostic_proposal=diagnostic_proposal)
 
 
 def shift(data, id_):
@@ -294,6 +294,31 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
+def check_diagnostic_minima(data, ids, spec):
+    from packages.domain.cp_sat_score import SCORE_SCALE
+
+    expected = spec['expect']
+    initial = evaluate(data)
+    observations = finding_observations(initial)
+    assert {row['rule_id'] for row in observations if row['code'] == 'QUOTA_BELOW_MINIMUM'} == {
+        ids[key] for key in expected['binding_rules']}
+    for seed in expected['seed_robustness']['seeds']:
+        result = solve(data, seed, diagnostic_proposal=True)
+        assert result['status'] == 'candidate_with_gaps', result
+        validation = evaluate(apply(data, result))
+        errors = [row for row in finding_observations(validation) if row['severity'] == 'error']
+        assert len(errors) == expected['shortfall']['count']
+        assert all(row['code'] == 'QUOTA_BELOW_MINIMUM' for row in errors), errors
+        assert {row['person_id'] for row in errors} == {ids[expected['shortfall']['person']]}
+        assert -sum(row['detail']['difference'] for row in errors) == expected['shortfall']['depth']
+        objective = {row['name']: row for row in result['objectives']}
+        count, depth = objective['diagnostic_minima'], objective['diagnostic_minimum_depth']
+        assert count['tier'] < depth['tier'] and count['proven_optimal'] and depth['proven_optimal']
+        assert count['value'] == expected['shortfall']['count']
+        assert depth['value'] == expected['shortfall']['depth'] * SCORE_SCALE
+    return {'assertions': {'shortfall'}, 'bindings': {key: 1 for key in expected['binding_rules']}}
+
+
 def check_scenario(data, ids, spec):
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
@@ -311,5 +336,5 @@ def check_scenario(data, ids, spec):
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
-            'A-WEEKLY-LIMIT-01': check_weekly_limit,
+            'A-WEEKLY-LIMIT-01': check_weekly_limit, 'A-DIAGNOSTIC-MINIMA-01': check_diagnostic_minima,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)
