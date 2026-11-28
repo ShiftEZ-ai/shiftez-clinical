@@ -150,7 +150,7 @@ export const APPLY_NOT_CONFIRMED=['Suggestions were not applied','The rota chang
 export const NOTHING_APPLIED=['Nothing was applied','None of its changes fit the rota as it is now. Run auto-schedule again for the current rota.'] as const;
 /** The safe-subset check reached its time allowance (`reconciliation_allowance_exhausted`): it never showed that none fit. */
 const OUT_OF_TIME=['Nothing was applied','The check ran out of time before it found which changes fit. Run auto-schedule again for the current rota.'] as const;
-export const nothingAppliedWords=(reply:Row|null|undefined)=>reply?.reconciliation?.reconciliation_allowance_exhausted?OUT_OF_TIME:NOTHING_APPLIED;
+export const nothingAppliedWords=(reply:Row|null|undefined):readonly [string,string]=>reply?.reconciliation?.reconciliation_allowance_exhausted?OUT_OF_TIME:NOTHING_APPLIED;
 
 /** What happened, said once: a tone (with its icon: colour is never the only signal), one sentence, then what is needed. */
 export function outcome(tone:'ok'|'warn'|'err'|'neutral',title:string,...next:Child[]):HTMLElement{
