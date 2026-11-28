@@ -703,7 +703,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
     row.private_undo_note = None
     row.revision += 1
     submission_key = f"request:{row.id}"
-    if withdraw_approved_leave:
+    if withdraw_approved:
         # Cancel the obsolete submission notice even when the approved withdrawal must be sent.
         supersede_outbox(db, actor, submission_key)
     # A decision undone and made again is a new event (the revision tells them apart).
@@ -712,7 +712,7 @@ def decide_request(db, actor, command, *, batch=False, overtime_cache=None, appr
             **({'replace_action': row.details['replace_action'],
                 'publication_id': row.details['replace_action']['publication_id']}
                if row.kind == 'absence_report' and row.status == 'approved' else {})},
-           undo_of=submission_key if value.decision == "withdraw" and not withdraw_approved_leave else ())
+           undo_of=submission_key if value.decision == "withdraw" and not withdraw_approved else ())
     item = absence_report_record(row, actor, db)
     if self_approval is not None:
         item["self_approved"] = True
