@@ -179,6 +179,8 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
             identity = ('leave_conflict', level, finding['person_id'], safety[i])
         elif i in identities:
             identity = identities[i]
+        elif finding['code'] == 'QUOTA_STRUCTURAL_SHORTFALL':
+            identity = ('structural_shortfall', level, finding.get('person_id'), finding.get('rule_id'), safety[i])
         elif finding['code'].startswith('QUOTA_') and finding.get('person_id'):
             identity = ('quota', level, finding['person_id'], safety[i])
         else:
@@ -205,6 +207,8 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
                   else 'open_eligibility' if 'open_eligibility' in repairs
                   else 'adjust_rota' if level == 'must' and not safe and family != 'coverage'
                   else 'autoschedule_scoped' if family == 'quota' else 'open_line')
+        if family == 'structural_shortfall':
+            action = 'open_line'
         if any(row['code'] == 'TYPE_VERSION_CHANGED' for i in indices for row in observations[i]):
             action = 'refresh_sessions'
         if family == 'coverage' and action == 'autoschedule_scoped' and any(
