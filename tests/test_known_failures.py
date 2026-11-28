@@ -17,7 +17,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ci"))
 import make_known_failures as ratchet
-from quarantine_registry import decode_registry
+import quarantine_registry
+from quarantine_registry import decode_registry, utc_today
 
 RED = "tests/test_sample.py::test_red"
 GREEN = "tests/test_sample.py::test_green"
@@ -160,7 +161,8 @@ def test_empty_quarantine_verdict_matches_pre_quarantine_dev(monkeypatch, tmp_pa
         monkeypatch.setattr(sys, "argv", ["verifier", "--plan", "plan.json", "--reports", str(path),
                                          "--output", str(path), "--base-sha", PRE_QUARANTINE_DEV])
         monkeypatch.setattr(verifier, "git", lambda *args: git(*args).decode().strip())
-        monkeypatch.setattr(verifier, "datetime", PolicyClock)
+        if verifier is old:
+            monkeypatch.setattr(verifier, "datetime", PolicyClock)
         monkeypatch.setattr(verifier, "collect_reports", partial(collect_reports, first_attempt=verifier is ratchet))
         monkeypatch.setattr(verifier, "product_error_nodes", lambda *_, **__: set())
         verifier.main(**options)
@@ -594,7 +596,8 @@ def trusted_result(monkeypatch, tmp_path, capsys, historical_verdict_sources):
             patch.setitem(sys.modules, "make_known_failures", reader)
             patch.setattr(reader, "git", reader.git)
             patch.setattr(reader, "collect_reports", reader.collect_reports)
-            patch.setattr(reader, "datetime", PolicyClock)
+            if old:
+                patch.setattr(reader, "datetime", PolicyClock)
             patch.setattr(ratchet, "utc_today", lambda: TODAY)
             patch.setattr(trusted_ci, "utc_today", lambda: date(2026, 11, 19))
             patch.setattr(target, "git", git)
@@ -908,7 +911,7 @@ def test_canary_normalization_preserves_quarantine_xfail(tmp_path):
 @pytest.mark.parametrize("hosted", [False, True], ids=["local-xfail", "ci-hosted-raw-failure"])
 def test_real_quarantine_plugin_junit_reaches_trusted_verdict(tmp_path, trusted_result, hosted):
     shutil.copyfile(ROOT / "tests/quarantine.py", tmp_path / "quarantine.py")
-    today = datetime.now(timezone.utc).date()
+    today = utc_today()
     row = {**quarantine_row(), "added": "2000-01-01", "expires": today.isoformat()}
     (tmp_path / "quarantine.json").write_text(json.dumps([row]), encoding="utf-8")
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
@@ -1327,6 +1330,29 @@ def test_deleted_test_file_requires_a_removal_ledger_entry(tmp_path, monkeypatch
     path.write_text(json.dumps({"schema": 1, "removed": [{"file": "tests/test_removed.py", "node_count": 1,
                     "reason": "Replaced private fixtures", "synthetic_version_owed": True}]}))
     ratchet.preflight(ctx, smoke=False, limit=80, issue=0, expires_on="", removed_path=path)
+
+
+def test_known_failure_expiry_uses_the_pinned_date_in_preflight_and_evaluation(tmp_path, monkeypatch):
+    monkeypatch.setattr(quarantine_registry, "utc_calendar_date", lambda: date(2026, 1, 2))
+    monkeypatch.setattr(ratchet, "load_frozen_baseline", lambda _: (set(), "a" * 64))
+    monkeypatch.setattr(ratchet, "load_env_exceptions", lambda _: (set(), "b" * 64))
+    monkeypatch.setattr(ratchet, "load_root_evidence", lambda *args: ({"runs": ROOT_RUNS, "counts": {"cleanup": 10}}, ROOT_SEAL))
+    monkeypatch.setattr(ratchet, "git", lambda *args: "")
+    removed = tmp_path / "removed-tests.json"
+    removed.write_text(json.dumps({"schema": 1, "removed": []}))
+    known = listing(unstable=[RED])
+    known["unstable"][0]["expires_on"] = "2026-01-02"
+    ctx = {"bootstrap": False, "base": known, "current": known, "base_sha": "a" * 40}
+    args = {"smoke": False, "limit": 80, "issue": 0, "expires_on": "", "removed_path": removed}
+    monkeypatch.setenv("CI_ALLOWANCE_DATE", "2026-01-01")
+    ratchet.preflight(ctx, **args)
+    assert ratchet.evaluate(known, known, [{RED: "failed"}])
+
+    monkeypatch.setenv("CI_ALLOWANCE_DATE", "2026-01-02")
+    with pytest.raises(ValueError, match="Expired unstable entries"):
+        ratchet.preflight(ctx, **args)
+    with pytest.raises(ValueError, match="Expired unstable entries"):
+        ratchet.evaluate(known, known, [{RED: "failed"}])
 
 
 def test_bootstrap_class_is_checked_against_the_exported_baseline_file(tmp_path, monkeypatch):

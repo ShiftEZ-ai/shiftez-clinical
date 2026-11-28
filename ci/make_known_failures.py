@@ -1,7 +1,7 @@
 """Build and enforce a shrinking baseline from complete, source-bound hosted JUnits."""
 import argparse
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date
 from functools import partial
 import hashlib
 import importlib.util
@@ -154,7 +154,7 @@ def require_bootstrap_inputs(issue, expires_on, *, today=None):
         expiry = date.fromisoformat(expires_on)
     except ValueError:
         raise ValueError(message) from None
-    today = today or datetime.now(timezone.utc).date()
+    today = today or utc_today()
     if not 1 <= (expiry - today).days <= 90:
         raise ValueError(message)
 
@@ -173,7 +173,8 @@ def preflight(ctx, *, smoke, limit, issue, expires_on,
     if current:
         if len(current["unstable"]) > limit:
             raise ValueError("Unstable entry cap exceeded")
-        if any(date.fromisoformat(row["expires_on"]) <= datetime.now(timezone.utc).date() for row in current["unstable"]):
+        today = utc_today()
+        if any(date.fromisoformat(row["expires_on"]) <= today for row in current["unstable"]):
             raise ValueError("Expired unstable entries require a fix and removal from the allowance list")
     if base and current:
         require_class_ratchet(current, base)

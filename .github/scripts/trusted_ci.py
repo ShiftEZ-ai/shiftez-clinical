@@ -20,7 +20,7 @@ import working_policy as policy
 import canary_evidence as canaries
 import hardening
 import make_known_failures as maker
-from quarantine_registry import QUARANTINE, decode_registry, utc_today
+from quarantine_registry import ALLOWANCE_DATE_ENV, QUARANTINE, decode_registry, utc_today
 
 TRUSTED = Path(__file__).resolve().parents[2]
 PR_SMOKE = {"tests/test_domain.py", "tests/test_migration_ids.py", "tests/test_browser_schedule_smoke.py"}
@@ -180,6 +180,8 @@ def plan(base, measurement):
     result = {"schema": 1, "sha": candidate, "tree": candidate_tree, "base_sha": base,
               "replicas": replicas, "smoke": False, "inventory_sha256": hosted.digest(files),
               "duration_sha256": canaries.sha(durations), "suites": {}}
+    if ALLOWANCE_DATE_ENV in os.environ:
+        result["allowance_date"] = utc_today().isoformat()
     selected_files = None
     if event is not None and not context["bootstrap"]:
         trusted_sha = subprocess.check_output(["git", "-C", str(TRUSTED), "rev-parse", "HEAD"], text=True).strip()
@@ -203,6 +205,13 @@ def plan(base, measurement):
     return result
 
 
+def require_plan_allowance_date(plan):
+    # Older workflow revisions produced sealed plans without a date.
+    if "allowance_date" in plan and (ALLOWANCE_DATE_ENV not in os.environ
+                                     or plan["allowance_date"] != utc_today().isoformat()):
+        raise ValueError("Plan allowance date differs from Checks")
+
+
 def runner_plan(base, measurement, suite, shard, seal):
     path = os.getenv("CI_CHECKS_PLAN")
     # The first unit shard independently checks the entire plan on every PR.
@@ -217,6 +226,7 @@ def runner_plan(base, measurement, suite, shard, seal):
     candidate = policy.decode(Path(path).read_bytes())
     if hosted.digest(candidate) != seal:
         raise ValueError("Runner plan identity differs from the trusted plan")
+    require_plan_allowance_date(candidate)
     sha, tree = hosted.git("rev-parse", "HEAD", "HEAD^{tree}").splitlines()
     if (candidate["sha"], candidate["tree"], candidate["base_sha"]) != (sha, tree, base):
         raise ValueError("Checks plan differs from the shard candidate or base")

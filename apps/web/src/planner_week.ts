@@ -5,7 +5,7 @@ import {working,savingMark,failedMark,skeleton,elapsed,observeSize,say as sayPol
 import {fillOptions,assignFingerprint,askRegistry} from './candidates.js';
 import {dateMarks,dateMarkWords} from './date_sets.js';
 import {sidePanel,claimSlot,panelHead} from './side_panel.js';
-import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reasoned,pairWords,autoCode,type MarkKey,el,icon,hoverCard,hoverWithin,type HoverContent,popover,menuItem,type IconName,colourOf,formatDate,formatTime,formatDay,toLocal,labelOf,button,withIcon,note,notify,empty,emptyLine,panelHighlight,tabs,WEEKEND_DAYS,reasonForm,focusQuietly,reportError,type Legend,hostLegend,avatar} from './dom.js';
+import {select,plural,phoneQuery,typeColour,rankColour,legend,MARKS,markTag,reasoned,pairWords,autoCode,type MarkKey,el,icon,hoverCard,hoverWithin,keepHover,type HoverContent,popover,menuItem,type IconName,colourOf,formatDate,formatTime,formatDay,toLocal,labelOf,button,withIcon,note,notify,empty,emptyLine,panelHighlight,tabs,WEEKEND_DAYS,reasonForm,focusQuietly,reportError,type Legend,hostLegend,avatar} from './dom.js';
 import {get,request,command,onSessionReset,ApiError,serverChecking} from './api.js';
 import type {Context} from './forms.js';
 import {isWeekend,addDays,isClosed,closureText,rangeWords,absentFrom} from './planner_logic.js';
@@ -147,7 +147,7 @@ export type FillIssue={key:string;title:string;detail?:string;rule_id?:string;se
 type Panel={workspace:string;kind:'session'|'fill'|'person'|'help';shift?:string;assignment?:string;replace?:string;flash?:string;more?:boolean;q?:string;issue?:FillIssue;
   /** The session panel's tab (Session, Why or Rules) and what the Why tab looks at. */
   tab?:'session'|'why'|'rules';why?:WhyState;
-  /** The fill search took the focus when this panel first opened: a redraw (a live update, a finished check) never takes it again. */
+  /** The fill search's first focus is handled: the panel took it, or a linked replacement keeps it on the grid. */
   searched?:boolean;
   /** The revision this panel's own Assign saved: its result stays drawn while that revision is held, and the status slot
    *  says the whole-rota check behind it until that check settles. */
@@ -316,8 +316,9 @@ function highlightFocus(root:HTMLElement,workspace:string){
 export function toggleHelp(workspace:string,onOpen?:()=>void){panel=panel?.kind==='help'?null:{workspace,kind:'help'};if(panel)onOpen?.();redrawCurrent?.(undefined,true);}
 export const helpOpen=()=>panel?.kind==='help';
 /** Open a session's fill panel; with `replace`, to pick someone in place of that assignment; with `issue`, for that issue;
- *  with `q`, its search already set (one named person). */
-export function queueFill(workspace:string,shift:string,replace?:string,issue?:FillIssue,q?:string){panel={workspace,kind:'fill',shift,...(replace?{replace}:{}),...(issue?{issue}:{}),...(q?{q}:{})};}
+ *  with `q`, its search already set (one named person). A linked replacement focuses its person chip instead. */
+export function queueFill(workspace:string,shift:string,replace?:string,issue?:FillIssue,q?:string,focusSearch=true){
+  panel={workspace,kind:'fill',shift,...(replace?{replace}:{}),...(issue?{issue}:{}),...(q?{q}:{}),searched:!focusSearch};}
 export function closeWeekPanel(){stopAsking('panel');if(panel){panel=null;redrawCurrent?.(undefined,true);}}
 /** Resolve mode: step through every open place and blocking rule problem, in date order, one panel at a time. */
 export const resolve={active:false,workspace:'',current:'',skipped:new Set<string>(),
@@ -598,13 +599,6 @@ export function swipe(node:HTMLElement,period:Pick<Period,'page'|'has_previous'|
   node.addEventListener('pointercancel',()=>{swipeFrom=null;});
   return node;
 }
-/** Where a mouse rests: a redraw under it (a live refresh, a save) brings back the card it dropped (SI-49). */
-let pointer:{x:number;y:number}|null=null;
-if(typeof document!=='undefined'&&typeof document.addEventListener==='function')document.addEventListener('pointermove',e=>{pointer=e.pointerType==='mouse'?{x:e.clientX,y:e.clientY}:null;},{passive:true});
-function rehover(){
-  if(!pointer||document.querySelector('.hovercard'))return;
-  document.elementFromPoint(pointer.x,pointer.y)?.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,pointerType:'mouse',clientX:pointer.x,clientY:pointer.y}));
-}
 /** What changed since the grid was last drawn (per rota), so new names pop in and edited sessions pulse once. */
 let drawn:{workspace:string;shifts:Map<string,string>}|null=null;
 /** The grid is redrawn on every change: a control is found again by its class and name. */
@@ -625,9 +619,9 @@ export function plannerPanels(ctx:Context,data:WorkspaceData,period:Period,hooks
     const had=document.activeElement instanceof HTMLElement&&root.contains(document.activeElement)?document.activeElement:null;
     const active=document.activeElement instanceof HTMLElement?document.activeElement:null;
     if(opener)panelOpener=opener;else if(panel&&active&&active!==document.body&&!active.closest('.wk-panel'))panelOpener=focusKey(active);
-    const next=build&&!panelOnly?build():root,hovering=!!document.querySelector('.hovercard');
+    const back=keepHover(),next=build&&!panelOnly?build():root;
     // One period navigator (SSOT): the Schedule moves it into its toolbar, so a redrawn view drops its own copy.
-    if(next!==root){const fresh=next.querySelector('.wk-nav');if(fresh&&!root.querySelector('.wk-nav'))fresh.remove();root.replaceWith(next);if(hovering)requestAnimationFrame(rehover);}
+    if(next!==root){const fresh=next.querySelector('.wk-nav');if(fresh&&!root.querySelector('.wk-nav'))fresh.remove();root.replaceWith(next);requestAnimationFrame(back);}
     else drawPanels();
     // Keyboard users keep their place: focus moves into a panel that opened, back to what opened it when it closes,
     // or else to the same control in the new grid.
@@ -1608,9 +1602,12 @@ function sessionPanel(ctx:Context,data:WorkspaceData,shift:Row,state:Panel,hooks
   // One session panel (S-09): from a person or an open place, "Whole session" shows this panel's session mode.
   const details=state.kind==='session'?null:el('button',{type:'button',class:'link-button'},'Whole session');details?.addEventListener('click',()=>info.open({kind:'session',shift:shift.id}));
   const acts=state.kind==='session'?hooks.sessionActions?.(shift):undefined;
-  const more=acts?.more.length?el('button',{type:'button',class:'icon-button','aria-label':'More session actions','aria-haspopup':'menu','aria-expanded':'false','data-tip':'More session actions'},icon('dots')):null;
-  more?.addEventListener('click',()=>popover(more,(pop,close)=>pop.append(el('div',{class:'menu-list',role:'menu','aria-label':'More session actions'},
-    ...acts!.more.map(m=>menuItem(m.label,m.icon,()=>{close();info.close();m.run();})))),{label:'More session actions',placement:'above-start'}));
+  const more=acts?.more.length?el('button',{type:'button',class:'icon-button','aria-label':'More session actions','aria-haspopup':'menu','aria-expanded':'false','data-tip':'More session actions','data-panel-session':shift.id},icon('dots')):null;
+  // D-057: a redraw (a check landing, a save's refresh) replaces this panel; the open menu moves to the new panel's
+  // button for the same session and runs that draw's actions, and closes when the session's panel is gone.
+  const moreItems=()=>(acts?.more||[]).map(m=>({...m,run:()=>{info.close();m.run();}}));
+  if(more){menuSource(more,moreItems);
+    more.addEventListener('click',()=>openMenu(more,'More session actions',moreItems,{placement:'above-start',keep:`.wk-panel button[data-panel-session="${CSS.escape(shift.id)}"]`}));}
   // An accent edge says what opened the panel; the schedule rings the same session (the note shows when it does).
   // The shared panel head (SI-38): "Session 3 of 12" with ↑ ↓ through the sessions in view, in time order.
   const at=info.range.findIndex(s=>s.id===shift.id);

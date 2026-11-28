@@ -723,8 +723,9 @@ export async function workspaceForm(ctx:Context,base?:Row,preset?:{name:string;s
       const key=start.input.value+'|'+end.input.value;if(key===asked)return;asked=key;
       const o=await get<Overlaps>(`/api/schedule/overlaps?starts_on=${start.input.value}&ends_on=${shift(end.input.value,1)}`).catch(()=>null);
       if(key!==asked)return;
-      // Dates changed after a choice was made (or an answer for half-typed dates was drawn first): the choice stays.
-      choice=o&&o.publications.length?overlapChoice(o,ctx.me.organisation.timezone,label,undefined,choice?.value()?.choice):null;
+      // Dates changed after a choice was made (or an answer for half-typed dates was drawn first): the choice stays, with
+      // a takeover date the person chose.
+      choice=o&&o.publications.length?overlapChoice(o,ctx.me.organisation.timezone,label,undefined,choice?.kept()):null;
       suggest((o as {suggested_name?:string}|null)?.suggested_name);
       fit.replaceChildren(...(choice?[choice.root]:o?.drafts.length?[note(`Also being planned for these days: ${o.drafts.map(d=>d.name).join(', ')}. You can compare them side by side once this one is created.`,'info')]:[]),...gapNotes());label();
     };
@@ -971,6 +972,9 @@ export function shiftForm(ctx:Context,data:WorkspaceData,shift?:Row,like?:{shift
     if(shift)queueMicrotask(()=>{if(form.isConnected)sessionTabs(ctx,data,shift,form,person=>{addParticipant({id:'',revision:0,person_id:person,participation:'staff',start:shift.start,end:shift.end});notify('Added to this session. Check the impact below, then save.');});});
     // The save message offers Undo. When saving without someone, it also offers the fill panel.
     return async()=>{const next=assignNext;assignNext='';const result=await save();
+      // Saved: the panel holds nothing unsaved while the refresh runs, so the message's Assign (or any other way out)
+      // closes it and goes on at once instead of asking about changes the save already kept.
+      d.clean();
       const name=next&&fullNameOf(ctx.catalogues.people.find(p=>p.id===next)),saved=(result.shifts as Row[]|undefined)?.find(s=>s.id===result.shift_id);
       if(name&&saved&&ctx.fill)notify(shift?'Session saved.':'Session added.','success',undefined,undefined,{label:`Assign ${name} in the fill panel`,run:()=>ctx.fill!(ws.id,saved,name)});
       await ctx.refresh();};

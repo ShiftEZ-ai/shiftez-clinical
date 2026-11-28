@@ -111,8 +111,11 @@ def test_published_policy_versions_keep_as_of_order_lineage_and_bounded_hydratio
                 (13, False, [(c, 2)]), (13, True, [(c, 2), (a, 13)]), (15, True, [(c, 2)])]:
             actual = snapshots.policies_as_of(db, policies, first + timedelta(days=day), keep_catalogue_lineage=lineage)
             assert [(row['id'], row['revision']) for row in actual] == expected
-        # Nineteen immutable versions return only three current JSON rows per acquisition.
-        assert hydrated == [3, 3, 3, 3]
+        bindings = [{'source_policy_id': b, 'destinations': [{'kind': 'policy', 'id': a}]}]
+        actual = snapshots.policies_as_of(db, policies, first + timedelta(days=13), bindings=bindings)
+        assert [(row['id'], row['revision']) for row in actual] == [(c, 2), (a, 13)]
+        # The latest status is checked before a full version reaches the reader.
+        assert hydrated == [2, 1, 2, 1, 2]
 
 
 def test_supervisor_precheck_uses_canonical_dated_trainee_classification(backend, monkeypatch):

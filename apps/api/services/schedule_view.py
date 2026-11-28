@@ -44,11 +44,17 @@ def etag(*parts):
     return '"' + hashlib.sha256(json.dumps(parts, default=str, sort_keys=True).encode()).hexdigest()[:32] + '"'
 
 
+def can_read_duties(actor, *, team):
+    return team or actor.person_id is not None
+
+
 def sources(db, actor, start, end, drafts=True, exclude=()):
     """The sources meeting [start, end), light rows only (no sessions, no checks): current publications in force (staff:
     the ones they are on) and, for planners, rotas still being planned. Returns (timezone, [(source, row, version)])."""
     planner = actor.permits(*PERMISSIONS['schedule.read_team'])
     zone = schedule.zone_of(db, actor.department_id)
+    if not can_read_duties(actor, team=planner):
+        return zone, []
     pubs = [p for p in schedule.current_publications(db, [actor.department_id], start, end, light=True)
             if p.id not in exclude and p.workspace_id not in exclude]
     if not planner:
@@ -258,8 +264,8 @@ def operational_sources(db, actor, rows, zone, start, end, *, shifts=None, flagg
     if not pubs:
         return rows
     if shifts is None:
-        shifts = published_shifts(db, pubs, zone, start, end,
-                                 person_id=None if actor.permits(*PERMISSIONS['schedule.read_team']) else actor.person_id)
+        shifts = viewer_published_shifts(db, actor, pubs, zone, start, end,
+            team=actor.permits(*PERMISSIONS['schedule.read_team']))
     projections = project(db, actor, pubs, shifts, zone, start, end, flagged=flagged)
     return [({**source, 'operational': projections[source['id']]} if source['kind'] == 'published' else source, row, version)
             for source, row, version in rows]
@@ -279,10 +285,10 @@ def days(db, actor, start, end, if_none_match=None, collection_filter=None):
         return tag, None
     first, last = start.isoformat(), end.isoformat()
     result, allowed_by_source = {}, None
+    person = None if planner else actor.person_id
     if filtering['tree']:
-        person = None if planner else actor.person_id
-        shifts = published_shifts(db, [row for source, row, _ in rows if source['kind'] == 'published'],
-                                  zone, start, end, person_id=person)
+        shifts = viewer_published_shifts(db, actor, [row for source, row, _ in rows if source['kind'] == 'published'],
+                                         zone, start, end, team=planner)
         for source, row, _ in rows:
             if source['kind'] == 'draft':
                 workspace = db.get(m.Workspace, row.id)
@@ -294,7 +300,6 @@ def days(db, actor, start, end, if_none_match=None, collection_filter=None):
         for shift in _filter_shifts(shifts, filtering, collection_filter):
             allowed_by_source.setdefault(shift.get('publication_id') or shift['workspace_id'], set()).add(shift['id'])
     for source, row, version in rows:
-        person = None if planner else actor.person_id
         key = (source['id'], version, zone)
         found = _summaries.get(key)
         if found is None:
@@ -308,6 +313,12 @@ def days(db, actor, start, end, if_none_match=None, collection_filter=None):
                 result.setdefault(d, []).append({"source": source["id"], **counts})
     return tag, {"starts_on": first, "ends_on": last, "timezone": zone, "sources": [s for s, _, _ in rows],
                  "days": dict(sorted(result.items())), "events": events, "date_set_markers": markers}
+
+
+def viewer_published_shifts(db, actor, pubs, zone, start, end, *, team, hydrated=None):
+    if not can_read_duties(actor, team=team):
+        return []
+    return published_shifts(db, pubs, zone, start, end, person_id=None if team else actor.person_id, hydrated=hydrated)
 
 
 def published_shifts(db, pubs, zone, start, end, before=None, person_id=None, *, shift_ids=None, hydrated=None):
@@ -368,6 +379,8 @@ def staff_shift(shift, person_id):
 
 def session_overlap_flags(db, actor, shifts, zone, *, team, people=None, services=None):
     """Current derived flags for published readers, with their own audience boundary."""
+    if not can_read_duties(actor, team=team):
+        return []
     if not shifts:
         return shifts
     shifts = [{key: value for key, value in row.items() if key not in {'double_booking_conflicts', 'absence_reports'}} for row in shifts]
@@ -439,9 +452,11 @@ def session_overlap_flags(db, actor, shifts, zone, *, team, people=None, service
 
 def publication_session_flags(db, actor, publication, shifts, zone):
     """Enrich a publication response without changing its issued snapshot or check."""
+    team = actor.permits(*PERMISSIONS['publications.read_team'])
+    if not can_read_duties(actor, team=team):
+        return []
     if not shifts:
         return shifts
-    team = actor.permits(*PERMISSIONS['publications.read_team'])
     ids = {row['id'] for row in shifts}
     if not team:
         # Public snapshots already removed provenance; restore only the internal inputs needed for legacy closure.
@@ -453,7 +468,7 @@ def publication_session_flags(db, actor, publication, shifts, zone):
         start, end = overlap_dates(lo, hi, zone)
         publications = [row for row in schedule.current_publications(db, [actor.department_id], start, end, light=True)
                         if row.workspace_id != publication.workspace_id]
-        peers = published_shifts(db, publications, zone, lo, hi, person_id=None if team else actor.person_id)
+        peers = viewer_published_shifts(db, actor, publications, zone, lo, hi, team=team)
     projected = session_overlap_flags(db, actor, shifts + peers, zone, team=team)
     return [row for row in projected if row['id'] in ids]
 
@@ -470,16 +485,16 @@ def sessions(db, actor, start, end, exclude=(), if_none_match=None, collection_f
     department = db.get(m.Department, actor.department_id)
     filtering = _collection_context(db, actor, collection_filter, zone)
     hydrated = {}
-    shifts = published_shifts(db, [row for _, row, _ in rows], zone, start, end,
-                             person_id=None if planner else actor.person_id, hydrated=hydrated)
+    shifts = viewer_published_shifts(db, actor, [row for _, row, _ in rows], zone, start, end,
+                                     team=planner, hydrated=hydrated)
     coverage, findings = [], []
     visible_ids = {shift['id'] for shift in shifts}
     if shifts:
         lo, hi = min(aware(shift['start']) for shift in shifts), max(aware(shift['end']) for shift in shifts)
         first, last = overlap_dates(lo, hi, zone)
         _, peers = sources(db, actor, first, last, drafts=False, exclude=exclude)
-        peer_shifts = published_shifts(db, [row for _, row, _ in peers], zone, lo, hi,
-                                      person_id=None if planner else actor.person_id, hydrated=hydrated)
+        peer_shifts = viewer_published_shifts(db, actor, [row for _, row, _ in peers], zone, lo, hi,
+                                              team=planner, hydrated=hydrated)
         shifts.extend(shift for shift in peer_shifts if shift['id'] not in visible_ids)
     shifts = [shift for shift in session_overlap_flags(db, actor, shifts, zone, team=planner)
               if shift['id'] in visible_ids]
