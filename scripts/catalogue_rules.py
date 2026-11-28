@@ -37,7 +37,7 @@ from apps.api.auth import Actor  # noqa: E402
 from apps.api.db import allow_long_idle, make_engine, transaction  # noqa: E402
 from apps.api.serialization import record  # noqa: E402
 from apps.api.settings import secret_from_env  # noqa: E402
-from scripts.group_rules import BASELINE, DryRun, active_count, actor_for, baseline_refusals, run_as, system_identity  # noqa: E402
+from scripts.group_rules import BASELINE, DryRun, active_count, actor_for, baseline_refusals, retirement_pending, run_as, system_identity  # noqa: E402
 
 
 def plan_lines(plan):
@@ -304,10 +304,11 @@ def undo(db, actor, args, transition=None):
     transition = transition or (lambda p: policy_transition(db, actor, SimpleNamespace(
         kind="policy.retire", target_id=p.id, expected_revision=p.revision, payload={"reason": args.reason})))
     rows = made_catalogue(db, actor.department_id, args.only_reason)
-    for p in rows:
-        transition(p)
+    pending = sum(retirement_pending(transition(p)) for p in rows)
     db.flush()
-    print(f"Retired {len(rows)} catalogue rules (the rules they took over apply again). Active rules now {active_count(db, actor.department_id)}.")
+    print(f"Retired {len(rows) - pending} catalogue rules (the rules they took over apply again). Active rules now {active_count(db, actor.department_id)}.")
+    if pending:
+        print(f"{pending} retirement approvals need another authorised person.")
 
 
 def baseline(engine, args):

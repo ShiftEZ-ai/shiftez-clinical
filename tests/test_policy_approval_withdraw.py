@@ -17,7 +17,7 @@ from apps.api.serialization import record
 from apps.api.services import policies
 from packages.contracts import schemas as s
 from packages.contracts.audit import AUDIT_ACTION_CATALOGUE
-from .governance_support import identity
+from .governance_support import identity, retire_rule
 from .test_bulk_reverse_transitions import REASON, proposal, transition
 from .test_policy_transition_approvals import settings
 
@@ -34,7 +34,7 @@ def approval_harness(request):
 def waiting(h, action="retire"):
     row = transition(h, "approver", "policy.activate", proposal(h))["record"]
     if action == "restore":
-        row = transition(h, "approver", "policy.retire", row)["record"]
+        row = retire_rule(h, row, REASON["reason"])["record"]
     settings(h, 2)
     identity(h, "second_approver", ["approver"])
     assert not transition(h, "approver", "policy." + action, row)["approval"]["complete"]
@@ -251,7 +251,10 @@ def test_postgres_history_conflict_rolls_back_racing_withdrawal_or_approval(pg, 
         votes = list(db.scalars(select(m.DefinitionHistory).where(
             m.DefinitionHistory.kind == "policy_transition_approval", m.DefinitionHistory.object_id == row["id"])
             .order_by(m.DefinitionHistory.object_revision)))
-        assert [vote.object_revision for vote in votes] == [1, 2]
+        if action == "restore":
+            assert [vote.snapshot["action"] for vote in votes[:2]] == ["retire", "retire"]
+        assert [vote.object_revision for vote in votes] == ([1, 2, 3, 4] if action == "restore" else [1, 2])
+        assert [vote.snapshot["action"] for vote in votes[-2:]] == [action, action]
     if first == "withdraw":
         assert first_result["withdrawn"] == action
         assert record(stored) == row and votes[-1].snapshot["withdrawn"] is True

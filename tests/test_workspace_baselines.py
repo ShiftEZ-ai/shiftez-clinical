@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DatabaseError
 
+from .governance_support import retire_rule
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.errors import Problem
@@ -281,7 +282,7 @@ def test_strictest_reader_keeps_differently_scoped_safety_obligations():
 def test_retired_live_safety_revision_is_not_added_to_draft_overlay(h):
     draft = h.workspace("Retired live rule")
     policy = h.policy({"kind": "restriction"})
-    h.command("approver", "policy.retire", {"reason": "Synthetic retirement"}, policy["id"], policy["revision"])
+    retire_rule(h, policy, "Synthetic retirement")
     snapshot = h.snapshot(draft)
     assert policy["id"] not in {row["id"] for row in snapshot["policies"]}
 

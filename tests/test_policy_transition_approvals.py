@@ -6,11 +6,12 @@ import io
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.orm.attributes import set_committed_value
 
 from apps.api import models as m
 from apps.api.db import transaction
 from .clock_support import freeze_clock
-from .governance_support import identity
+from .governance_support import identity, retire_rule, retirement_vote
 from .test_bulk_reverse_transitions import REASON, proposal, transition
 from .test_staff_wishes import department_settings
 from packages.contracts.schemas import ENDED_REASON
@@ -146,8 +147,11 @@ def test_one_approval_requires_independence_or_audited_self_approval_for_safety_
         assert (current.status, current.active, current.revision) == ("active", True, row["revision"])
         assert not list(db.scalars(select(m.Outbox).where(m.Outbox.kind == "self_approval")))
 
-    retired = transition(h, "approver", "policy.retire", row)
-    assert "approval" not in retired and retired["record"]["active"] is False
+    pending = transition(h, "approver", "policy.retire", row)
+    assert pending["record"] == row and pending["approval"]["approvals_required"] == 2
+    assert not pending["approval"]["complete"]
+    retired = retirement_vote(h, row, REASON["reason"])
+    assert retired["approval"]["complete"] and retired["record"]["active"] is False
     restored = transition(h, "coordinator", "policy.restore", retired["record"],
                           payload={"reason": "Routine update"}, status=422)
     assert restored["error"]["code"] == "SELF_APPROVAL_REASON"
@@ -194,7 +198,7 @@ def test_retirement_restoration_and_undo_respect_the_approval_count(h, count, ve
         else:
             reply = decision = transition(h, "approver", kind, row)
         check_audit(reply, kind, decision)
-        if count == 2:
+        if count == 2 or kind == "policy.retire":
             assert decision["record"] == before
             assert decision["approval"]["approvals_received"] == 1 and not decision["approval"]["complete"]
             if vehicle == "bulk":
@@ -216,20 +220,22 @@ def test_retirement_restoration_and_undo_respect_the_approval_count(h, count, ve
     if vehicle == "bulk":
         undone = h.command("approver", **reply["undo"])
         check_audit(undone, "policy.retire", undone["items"][0]["results"][0])
-        if count == 2:
-            assert undone["items"][0]["result"] == "waiting" and undone["undo"] is None
-            undone = h.command("second_approver", **reply["undo"])
-            check_audit(undone, "policy.retire", undone["items"][0]["results"][0])
+        assert undone["items"][0]["result"] == "waiting" and undone["undo"] is None
+        undone = h.command("second_approver", **reply["undo"])
+        check_audit(undone, "policy.retire", undone["items"][0]["results"][0])
         assert undone["items"][0]["record"]["status"] == "retired"
     with transaction(h.app.state.engine) as db:
         approvals = list(db.scalars(select(m.DefinitionHistory).where(m.DefinitionHistory.kind == "policy_transition_approval",
             m.DefinitionHistory.object_id == row["id"])))
-        assert len(approvals) == ((6 if vehicle == "bulk" else 4) if count == 2 else 0)
+        assert len(approvals) == 2 + 2 * (count == 2) + 2 * (vehicle == "bulk")
         events = list(db.scalars(select(m.AuditEvent).where(m.AuditEvent.target_id == row["id"],
             m.AuditEvent.action.in_(["policy.retire", "policy.restore", "policy.retire_pending", "policy.restore_pending"]))))
+        actions = {"policy.retire", "policy.restore", "policy.retire_pending"}
         if count == 2:
-            assert {event.action for event in events} == {"policy.retire", "policy.restore", "policy.retire_pending", "policy.restore_pending"}
-            assert all(event.action.endswith("_pending") is not event.detail["approval"]["complete"] for event in events)
+            actions.add("policy.restore_pending")
+        assert {event.action for event in events} == actions
+        assert all(event.action.endswith("_pending") is not event.detail["approval"]["complete"]
+                   for event in events if "approval" in event.detail)
     exported = h.client("auditor").get("/api/audit.csv", params={"target_id": row["id"]})
     assert exported.status_code == 200, exported.text
     actions = [entry["action"] for entry in csv.DictReader(io.StringIO(exported.text))
@@ -241,7 +247,7 @@ def test_retirement_restoration_and_undo_respect_the_approval_count(h, count, ve
 def test_multiple_approvals_exclude_rule_proposer_aliases_and_duplicate_people_even_with_permission(h, kind):
     row = active(h)
     if kind == "policy.restore":
-        row = transition(h, "approver", "policy.retire", row)["record"]
+        row = retire_rule(h, row, REASON["reason"])["record"]
     settings(h, 2)
     author_person, reviewer_person = h.seed["people"][:2]
     with transaction(h.app.state.engine, write=True) as db:
@@ -266,7 +272,7 @@ def test_pending_approval_cannot_be_reused_after_revision_changes(h):
     identity(h, "second_approver", ["approver"])
     assert not transition(h, "approver", "policy.retire", row)["approval"]["complete"]
     settings(h, 1)
-    retired = transition(h, "approver", "policy.retire", row)["record"]
+    retired = transition(h, "second_approver", "policy.retire", row)["record"]
     restored = transition(h, "approver", "policy.restore", retired)["record"]
     settings(h, 2)
     pending = transition(h, "second_approver", "policy.retire", restored)
@@ -289,8 +295,9 @@ def test_disabled_approver_does_not_fill_a_pending_approval_seat(h):
 
 def test_multi_approver_undo_rejects_unauthorised_people_and_changed_payload(h):
     row = active(h)
-    source = bulk(h, "approver", "policy.retire", row)
     identity(h, "second_approver", ["approver"])
+    assert bulk(h, "second_approver", "policy.retire", row)["undo"] is None
+    source = bulk(h, "approver", "policy.retire", row)
     undo = source["undo"]
     # The existing owner-only Undo contract is unchanged with the default approval count.
     assert h.command("second_approver", **undo, status=403)["error"]["code"] == "FORBIDDEN"
@@ -308,7 +315,6 @@ def test_grouped_retirement_undo_collects_one_independent_decision_before_depend
     original = active(h)
     grouped = transition(h, "approver", "policy.activate", proposal(h,
         definition={**original["definition"], "merged_ids": [original["id"]]}))["record"]
-    settings(h, 2)
     identity(h, "second_approver", ["approver"])
     assert bulk(h, "approver", "policy.retire", grouped)["undo"] is None
     retired = bulk(h, "second_approver", "policy.retire", grouped)
@@ -349,3 +355,108 @@ def test_policy_transition_decisions_are_immutable_evidence(h, statement):
         approval_id = db.scalar(select(m.DefinitionHistory.id).where(m.DefinitionHistory.kind == "policy_transition_approval"))
     with pytest.raises(DBAPIError, match="immutable evidence"), transaction(h.app.state.engine, write=True) as db:
         db.execute(text(statement), {"id": approval_id})
+
+
+@pytest.mark.parametrize("known_creator", [True, False])
+def test_default_retirement_requires_two_people_even_without_creator(h, monkeypatch, known_creator):
+    from apps.api.services import policies
+
+    row = active(h)
+    reviewer_person = h.seed["people"][1]
+    with transaction(h.app.state.engine, write=True) as db:
+        db.get(m.Identity, h.seed["identities"]["approver"]).person_id = reviewer_person
+    identity(h, "reviewer_alias", ["approver"], person=reviewer_person)
+    identity(h, "second_approver", ["approver"])
+    if not known_creator:
+        scoped = policies.scoped
+
+        def without_creator(db, model, target, actor):
+            policy = scoped(db, model, target, actor)
+            if model is m.Policy and target == row["id"]:
+                set_committed_value(policy, "created_by", None)
+            return policy
+
+        monkeypatch.setattr(policies, "scoped", without_creator)
+
+    first = transition(h, "approver", "policy.retire", row)
+    assert first["record"]["active"] and first["record"]["revision"] == row["revision"]
+    assert (first["approval"]["approvals_received"], first["approval"]["approvals_required"]) == (1, 2)
+    duplicate = transition(h, "reviewer_alias", "policy.retire", row, status=409)
+    assert duplicate["error"]["code"] == "DUPLICATE_REVIEWER"
+    second = transition(h, "second_approver", "policy.retire", row)
+    assert second["record"]["status"] == "retired" and second["approval"]["complete"]
+    assert set(second["approval"]["approved_by"]) == {h.seed["identities"][name]
+        for name in ("approver", "second_approver")}
+
+
+@pytest.mark.parametrize("case", ["weaker", "alias", "legacy", "equal", "other_scope", "replacement"])
+def test_retire_then_propose_cannot_self_approve_a_weaker_rule(h, monkeypatch, case):
+    from apps.api.services import policies
+
+    freeze_clock(monkeypatch, aware("2026-10-04T00:00:00+03:00"))
+    original = active(h)
+    person = h.seed["people"][1]
+    proposer = identity(h, "new_author", ["coordinator", "approver"], person=person)
+    h.command("admin", "self_approval.grant", {"identity_id": proposer, "actions": ["rule.activate"],
+        "starts_on": "2026-10-01", "reason": "Temporary review cover"})
+    if case == "replacement":
+        other = proposal(h, definition={**original["definition"], "replaces_id": original["id"]})
+        transition(h, "new_author", "policy.activate", other)
+    else:
+        signer = "new_author"
+        if case == "alias":
+            signer = "author_alias"
+            identity(h, signer, ["approver"], person=person)
+        if case == "legacy":
+            # Simulate a historical retirement with audit evidence but no signer list in its definition history.
+            history = policies.history
+
+            def legacy_history(db, actor, kind, row, reason, **kwargs):
+                if kind == "policy" and row.status == "retired":
+                    kwargs.pop("snapshot_extra", None)
+                return history(db, actor, kind, row, reason, **kwargs)
+
+            monkeypatch.setattr(policies, "history", legacy_history)
+            transition(h, "approver", "policy.retire", original)
+            retired = transition(h, signer, "policy.retire", original)
+        else:
+            transition(h, signer, "policy.retire", original)
+            retired = transition(h, "approver", "policy.retire", original)
+        assert retired["record"]["status"] == "retired"
+
+    definition = {**original["definition"],
+                  "rule": {"kind": "min_rest", "hours": 10 if case == "equal" else 8}}
+    if case == "other_scope":
+        definition["scope"] = {"person_id": person}
+    proposed = h.command("new_author", "policy.create", {
+        **{key: original[key] for key in ("name", "owner", "source", "starts_on")}, "definition": definition})["record"]
+    weaker = case in {"weaker", "alias", "legacy"}
+    reviewed = h.client("approver").post(f"/api/policies/{proposed['id']}/review", json={})
+    assert reviewed.status_code == 200 and reviewed.json()["weakens_safety"] is weaker
+    attempted = transition(h, "new_author", "policy.activate", proposed, status=403 if weaker else 200)
+    if weaker:
+        assert attempted["error"]["code"] == "SELF_APPROVAL"
+        assert "weakens a safety rule" in attempted["error"]["message"]
+        attempted = transition(h, "approver", "policy.activate", proposed)
+    assert attempted["record"]["status"] == "active"
+
+
+def test_safety_activation_undo_waits_before_restoring_the_rule_it_replaced(h):
+    original = active(h)
+    pending = proposal(h, definition={**original["definition"], "replaces_id": original["id"]})
+    activated = transition(h, "approver", "policy.activate", pending)
+    replacement = activated["record"]
+    undo = activated["undo"]
+    assert undo["kind"] == "bulk.apply"
+    assert [item["item_kind"] for item in undo["payload"]["items"]] == ["policy.retire", "policy.restore"]
+    identity(h, "second_approver", ["approver"])
+    waiting = h.command("approver", **undo)
+    assert [item["result"] for item in waiting["items"]] == ["waiting", "waiting"]
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Policy, replacement["id"]).status == "active"
+        assert db.get(m.Policy, original["id"]).status == "retired"
+    completed = h.command("second_approver", **undo)
+    assert [item["result"] for item in completed["items"]] == ["changed", "changed"]
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.Policy, replacement["id"]).status == "retired"
+        assert db.get(m.Policy, original["id"]).status == "active"
