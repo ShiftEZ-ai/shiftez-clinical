@@ -819,6 +819,10 @@ and a desktop window narrowed below it gets the same rule at once.
     and words (sr-only), never colour alone.
   - **Stage bar** (`.stage-bar`, sticky at the bottom, warn tones): "N changes in M rows · not saved yet", Discard…
     (armed) and "Preview N changes", which opens the shared Preview (Back to sheet).
+  - **Add rows** (Paste from Excel, types that take new records: leave and availability, academic calendar entries): a
+    Mode select (Change rows / Add rows; Add rows only on an empty type) makes each pasted line a new record; people
+    are named by the server's name matcher, a required field no column gives takes one "for every row" value, and the
+    lines always open the shared Preview (rows marked New) before one apply with one Undo.
   - **Read-only**: roles without an edit for the type see the grid with no cell editing, no Paste from Excel and no
     stage bar. At the 5,000-row window a warning note says "Showing the first 5,000 of N … filter to narrow". Phones
     show the "Best on a desktop" notice.

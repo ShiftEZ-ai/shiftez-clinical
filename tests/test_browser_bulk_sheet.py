@@ -1481,3 +1481,100 @@ def test_an_input_method_enter_confirms_its_text_not_the_cell(browser, live_serv
         expect(stage_bar(main)).to_contain_text('1 change in 1 row')
     finally:
         context.close()
+
+
+def picker_choose(page, owner, label, option):
+    """Choose `option` in the shared picker labelled `label` inside `owner`."""
+    owner.get_by_label(label, exact=True).click()
+    page.locator('.picker-row[role=option]').filter(has_text=option).first.click()
+
+
+def active_leave(h, person_ids):
+    rows = h.client('coordinator').post('/api/bulk/rows', json={'selection': {'collection': 'availability'}, 'limit': 500}).json()['rows']
+    return [r for r in rows if r['person_id'] in person_ids and not r.get('retracted')]
+
+
+def test_paste_adds_leave_rows_reviewed_as_new_with_one_undo_and_one_audit_batch(browser, live_server, h):
+    """Issue 323: Paste from Excel › Add rows makes each pasted line a new leave record. People are named by the server's
+    name matcher (a staff number no one has is Not found), a required field no column gives takes one value for every
+    row, and the rows always open the bulk-change review (New) before one apply with one Undo and one audit batch."""
+    staff_numbers(h)
+    first, second, third = h.seed['people']
+    kind = h.get('admin', '/api/catalogues')['leave_types'][0]
+    h.command('coordinator', 'bulk.apply', {'item_kind': 'availability.record', 'reason': 'Test setup',
+              'common': {'person_id': third, 'kind': 'recorded_leave', 'leave_type_id': kind['id'], 'private_reason': 'Existing record'},
+              'items': [{'payload': {'start': '2027-03-03T08:00:00+03:00', 'end': '2027-03-03T17:00:00+03:00'}}]})
+    audited = lambda: [e for e in h.get('auditor', '/api/audit?action=availability')['events'] if e['action'] == 'availability.record']
+    before = {e['id'] for e in audited()}
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        main, grid = open_sheet(page, 'Leave & availability')
+        main.get_by_role('button', name='Paste from Excel').click()
+        dialog = page.get_by_role('dialog', name='Paste from Excel')
+        picker_choose(page, dialog, 'Mode', 'Add rows')
+        expect(dialog.locator('button[type=submit]')).to_have_text('Review 0 new rows')
+        dialog.get_by_label('Pasted').fill('Staff number\tFrom\tUntil\n10423\t01/04/2027\t02/04/2027\n'
+                                           '10431\t05/04/2027\t05/04/2027\n10999\t01/04/2027\t01/04/2027\n')
+        # Adding has no keys: the "Used for" column is not offered.
+        expect(dialog.get_by_role('columnheader', name='Used for')).to_have_count(0)
+        picker_choose(page, dialog, 'Type for every row', 'Recorded leave')
+        dialog.get_by_label('Private note for every row', exact=True).fill('Added from the planner')
+        summary = dialog.locator('.matrix-summary')
+        expect(summary).to_contain_text('2 new')
+        expect(summary).to_contain_text('1 not found')
+        lines = dialog.locator('.sheet-paste-lines')
+        expect(lines.locator('tr').filter(has_text='10999')).to_contain_text('Not found')
+        expect(lines.locator('tr').filter(has_text='10423')).to_contain_text('New')
+        assert not active_leave(h, (first, second))  # nothing saved yet
+        dialog.get_by_role('button', name='Review 2 new rows').click()
+        expect(dialog).to_be_hidden()
+        panel = page.locator('.dock-panel.bulk-panel')
+        expect(panel.locator('.bulk-sum')).to_contain_text('2 ready')
+        expect(panel.locator('.ba-after', has_text='New')).to_have_count(2)
+        assert not active_leave(h, (first, second))  # the review saves nothing either
+        panel.get_by_role('button', name=re.compile(r'^Apply ready rows \(2\)')).click()
+        toast = page.locator('#toast-tray .toast').filter(has_text='Rows added: 2')
+        expect(toast).to_be_visible()
+        made = {r['person_id']: r for r in active_leave(h, (first, second))}
+        assert set(made) == {first, second}
+        assert made[first]['start'].startswith('2027-03-31T21:00') and made[first]['end'].startswith('2027-04-02T21:00')
+        assert made[second]['start'].startswith('2027-04-04T21:00') and made[second]['end'].startswith('2027-04-05T21:00')
+        assert all(r['kind'] == 'recorded_leave' for r in made.values())
+        new = [e for e in audited() if e['id'] not in before]
+        assert len(new) == 2 and len({e['detail']['batch_id'] for e in new}) == 1
+        toast.get_by_role('button', name='Undo').click()
+        expect(page.locator('#toast-tray')).to_contain_text(re.compile('Undone|undone'))
+        assert not active_leave(h, (first, second))
+        assert len(active_leave(h, (third,))) == 1  # the record that was there is untouched
+    finally:
+        context.close()
+
+
+def test_an_empty_calendar_type_offers_paste_that_only_adds_rows(browser, live_server, h):
+    """Issue 323: a type with nothing to change yet (no academic calendar entries) still offers Paste from Excel, in
+    Add rows only; the pasted entry is reviewed as New and saved with its last day included."""
+    programme = h.configure('programmes', {'name': 'Test learners', 'starts_on': '2026-01-01'})['record']
+    assert h.client('admin').get('/api/bulk/collections').json()['collections']['programme_calendar_entries']['count'] == 0
+    context, page = sign_in(browser, live_server, 'admin')
+    try:
+        navigate(page, ROUTE)
+        main = page.locator('#main')
+        main.get_by_role('button', name=re.compile(r'^Record type: ')).click()
+        page.get_by_role('listbox', name='Record types').get_by_role('option', name=re.compile('^Academic calendar entries')).click()
+        main.get_by_role('button', name='Paste from Excel').click()
+        dialog = page.get_by_role('dialog', name='Paste from Excel')
+        expect(dialog.get_by_label('Mode', exact=True)).to_have_count(0)
+        expect(dialog.locator('button[type=submit]')).to_have_text('Review 0 new rows')
+        dialog.get_by_label('Pasted').fill('Programme\tName\tType\tFrom\tLast day\n'
+                                           'Test learners\tSpring block\tAcademic block\t01/03/2027\t31/03/2027\n')
+        expect(dialog.locator('.matrix-summary')).to_contain_text('1 new')
+        dialog.get_by_role('button', name='Review 1 new row').click()
+        panel = page.locator('.dock-panel.bulk-panel')
+        expect(panel.locator('.ba-after', has_text='New')).to_have_count(1)
+        panel.get_by_role('button', name=re.compile(r'^Apply ready rows \(1\)')).click()
+        expect(page.locator('#toast-tray .toast').filter(has_text='Rows added: 1')).to_be_visible()
+        entries = h.get('admin', '/api/catalogues')['programme_calendar_entries']
+        assert [(e['programme_id'], e['name'], e['kind'], e['starts_on'], e['ends_on']) for e in entries] == [
+            (programme['id'], 'Spring block', 'academic_block', '2027-03-01', '2027-04-01')]
+    finally:
+        context.close()

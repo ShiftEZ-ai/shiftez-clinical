@@ -1,12 +1,12 @@
 import {el,icon,button,desktopNotice,withIcon,armed,field,area,select,check,multiPick,popover,menuItem,empty,note,notify,announce,plural,formatDate,departmentDateTime,footerStatus,phoneQuery,labelOf,departmentToday,type Choice} from './dom.js';
 import type {Catalogues} from './types.js';
 import {lastDayIncluded} from './date_picker.js';
-import {request,onSessionReset,sessionChanged} from './api.js';
+import {request,instant,onSessionReset,sessionChanged} from './api.js';
 import {dataTable,useSheetLayout,tableAsOf,type Column} from './table_view.js';
 import {type Context} from './forms.js';
 import {skeleton} from './loading.js';
 import {BULK_COLLECTIONS,TABLE_CONDITION_DEFINITIONS} from './generated.js';
-import {pasteDialog,readValue} from './sheet_paste.js';
+import {pasteDialog,readValue,type AddRows} from './sheet_paste.js';
 import {parseTable,toTable,joinValues} from './table_text.js';
 import {bulkContext,canRead,nounOf,lineSelection,LAST_DAY,editAction} from './bulk.js';
 import {runBulk,openChange,switchesOff,type BulkBody} from './bulk_change.js';
@@ -66,25 +66,44 @@ export function sheetFields(collection:string,rows:SheetRow[]=[]):SheetField[]{
   const e=REGISTRY[collection];if(!e)return [];
   const editable=roleOk(editAction(collection)?.roles);
   const own=Object.entries({...e.columns,...Object.fromEntries(Object.keys(e.fields).map(k=>[k,{label:e.fields[k].label,read_only:false}]))})
-    .filter(([k])=>k!=='id'&&k!=='revision').map(([key,c]):SheetField=>{
-      const spec=e.fields[key],p=plain(spec?.schema),items=plain(p.items),values=rows.map(r=>r[key]);
-      const lastDay=LAST_DAY.has(key);
-      const label=lastDay?'Until (included)':cap(c.label.toLowerCase());
-      let kind:SheetField['kind']='text',choices:Choice[]|undefined,creatable=false;
-      if(spec?.kind==='date')kind=p.format==='date-time'?'datetime':'date';
-      else if(spec?.kind==='multi'){kind='multi';choices=items.enum?items.enum.map((v:string)=>({value:v,label:cap(v.replaceAll('_',' '))})):isId(items)?idChoices(collection,key,values,spec)
-        :key==='tags'?(catalogues().tags||[]).map(t=>({value:t.name,label:'#'+t.name})):undefined;creatable=key==='tags';if(!choices&&!creatable)kind='other';}
-      else if(p.type==='boolean')kind='toggle';
-      else if(p.type==='integer'||p.type==='number')kind='number';
-      else if(p.enum){kind='select';choices=p.enum.map((v:string)=>({value:v,label:cap(v.replaceAll('_',' '))}));}
-      else if(isId(p)||/_id$/.test(key)){kind='select';choices=idChoices(collection,key,values,spec);}
-      else if(spec&&p.type!=='string')kind='other';   // definitions, conditions, numbers: the Change form edits them
-      // A read-only structure (an audience, a repeat): shown in words, never typed or pasted.
-      if(kind==='text'&&values.some(v=>isStructured(key,v)))kind='other';
-      return {key,label,kind,choices,creatable,lastDay,editable:editable&&!!spec&&kind!=='other'&&kind!=='datetime',required:!!spec?.required&&!spec.nullable,maxLength:p.maxLength};});
+    .filter(([k])=>k!=='id'&&k!=='revision').map(([key,c])=>fieldOf(collection,key,c.label,e.fields[key],rows.map(r=>r[key]),editable));
   const related=Object.entries(e.related_columns).map(([key,c]):SheetField=>({key,label:c.label,related:true,editable:false,
     kind:/_ids$|^tags$/.test(c.field)?'multi':'text'}));
   return [...own,...related];
+}
+
+/** One field of a type as the Sheet reads, types and pastes it (`values`: the column's values, for its choices). */
+function fieldOf(collection:string,key:string,name:string,spec:Spec|undefined,values:unknown[],editable:boolean):SheetField{
+  const p=plain(spec?.schema),items=plain(p.items);
+  const lastDay=LAST_DAY.has(key);
+  const label=lastDay?'Until (included)':cap(name.toLowerCase());
+  let kind:SheetField['kind']='text',choices:Choice[]|undefined,creatable=false;
+  if(spec?.kind==='date')kind=p.format==='date-time'?'datetime':'date';
+  else if(spec?.kind==='multi'){kind='multi';choices=items.enum?items.enum.map((v:string)=>({value:v,label:cap(v.replaceAll('_',' '))})):isId(items)?idChoices(collection,key,values,spec)
+    :key==='tags'?(catalogues().tags||[]).map(t=>({value:t.name,label:'#'+t.name})):undefined;creatable=key==='tags';if(!choices&&!creatable)kind='other';}
+  else if(p.type==='boolean')kind='toggle';
+  else if(p.type==='integer'||p.type==='number')kind='number';
+  else if(p.enum){kind='select';choices=p.enum.map((v:string)=>({value:v,label:cap(v.replaceAll('_',' '))}));}
+  else if(isId(p)||/_id$/.test(key)){kind='select';choices=idChoices(collection,key,values,spec);}
+  else if(spec&&p.type!=='string')kind='other';   // definitions, conditions, numbers: the Change form edits them
+  // A read-only structure (an audience, a repeat): shown in words, never typed or pasted.
+  if(kind==='text'&&values.some(v=>isStructured(key,v)))kind='other';
+  return {key,label,kind,choices,creatable,lastDay,editable:editable&&!!spec&&kind!=='other'&&kind!=='datetime',required:!!spec?.required&&!spec.nullable,maxLength:p.maxLength};
+}
+
+// shortcut: the types whose pasted lines may be added as new records are listed here with their create command; an
+// `add` action in BULK_COLLECTIONS replaces this list once a third type needs it.
+const ADDS:Record<string,{action?:string;kind:string}>={availability:{action:'record',kind:'availability.record'},programme_calendar_entries:{kind:'catalogue.create'}};
+/** Add rows for a type (Paste from Excel): the fields a new record is created with, when this person may create one.
+ *  From and Until of a leave are pasted as days (Until: the last day included); `dates` are those sent as instants. */
+function addFields(key:string){
+  const a=ADDS[key],e=REGISTRY[key];if(!a||!e)return null;
+  const act=(a.action?e.actions[a.action]:editAction(key)) as unknown as {roles:readonly string[];fields?:Record<string,Spec>}|undefined;
+  if(!roleOk(act?.roles))return null;
+  const specs=a.action?act?.fields||{}:e.fields,dates=new Set<string>();
+  const fields=Object.entries(specs).map(([k,spec])=>{const f=fieldOf(key,k,spec.label,spec,[],true);if(f.kind!=='datetime')return f;
+    dates.add(k);return {...f,kind:'date',editable:true,...(k==='end'?{lastDay:true,label:'Until (included)'}:{})} as SheetField;}).filter(f=>f.kind!=='other');
+  return {kind:a.kind,catalogue:!a.action,fields,dates,named:'person_id' in specs?'person_id':undefined};
 }
 
 /** What a value reads as in a cell, the cell bar and a copy: dates "1 Sep 2026", ids by their record's name. */
@@ -447,6 +466,7 @@ export function bulkEditorPage(target:HTMLElement,ctx:Context){
   }
   function draw(){
     const key=editorType,e=REGISTRY[key],fields=sheetFields(key,rows),noun=nounOf(key);
+    const changes=!!rows.length&&roleOk(editAction(key)?.roles)&&fields.some(f=>f.editable);
     const definitions=(TABLE_CONDITION_DEFINITIONS as unknown as Record<string,Record<string,{value_kind:string;operand_field?:string}>>)[key]||{};
     const columns:Column<SheetRow>[]=fields.map(f=>{const d=definitions[f.key],kind=!f.related&&d&&['date','text','number'].includes(d.value_kind)?d.value_kind as 'date'|'text'|'number':null;
       const related=e.related_columns[f.key],id=related?related.field===d?.operand_field?f.key:e.parent_of[related.collection]:f.key;
@@ -464,8 +484,8 @@ export function bulkEditorPage(target:HTMLElement,ctx:Context){
       asOf:day=>{asOf=day;void load();},afterChange:load,
       controls:[typeButton()],
       // Structured columns (who / where, rule lines, details) are neither typed nor pasted: their own editors change them.
-      // Paste matches rows, so it needs some.
-      actions:rows.length&&roleOk(editAction(key)?.roles)&&fields.some(f=>f.editable)?[withIcon(button('Paste from Excel',()=>paste(key,fields.filter(f=>f.kind!=='other')),'secondary small'),'clipboard')]:[],
+      // Changing rows matches them, so it needs some; adding rows does not.
+      actions:changes||addFields(key)?[withIcon(button('Paste from Excel',()=>paste(key,changes?fields.filter(f=>f.kind!=='other'):[]),'secondary small'),'clipboard')]:[],
       empty:[`No ${noun[1]} yet`,'']}).root);
   }
   /** Record type (artboard B1): the registry's types grouped, each with its count, in the shared picker (picker.ts). */
@@ -495,7 +515,23 @@ export function bulkEditorPage(target:HTMLElement,ctx:Context){
       resolve:async names=>(await request<{matches?:{line:string;ids:string[]}[]}>('/api/bulk/resolve',{method:'POST',body:JSON.stringify({collection:key,names,where:{as_of:asOf||departmentToday()}})})).matches||[],
       text:(r,k)=>{const f=fields.find(x=>x.key===k);const v=r[k];return f?Array.isArray(v)?v.map(x=>shownValue({...f,kind:'text'},x)).join(', '):shownValue(f,v).replace(/^—$/,''):'';},
       differs:(r,k,v)=>!same(v,stagedValue(key,r,k)),
-      stage:list=>{stageCells(key,list);draw();}});
+      stage:list=>{stageCells(key,list);draw();},add:adding(key)});
+  }
+  /** Add rows: each line a new record, sent as one bulk change that always opens its review (New rows), with one Undo and
+   *  one audit entry; a person is named as the server's name matcher reads people. */
+  function adding(key:string):AddRows|undefined{
+    const a=addFields(key);if(!a)return undefined;
+    return {fields:a.fields,named:a.named,
+      resolve:async names=>(await request<{matches?:{line:string;ids:string[]}[]}>('/api/bulk/resolve',{method:'POST',body:JSON.stringify({collection:'people',names,where:{as_of:asOf||departmentToday()}})})).matches||[],
+      create:async records=>{
+        // A day is sent as the department's start of that day (Until: the start of the day after the last one).
+        const at=new Map<string,Promise<string>>(),when=(d:string)=>{if(!at.has(d))at.set(d,instant(`${d}T00:00`));return at.get(d)!;};
+        const items=await Promise.all(records.map(async r=>{const v={...r};for(const k of a.dates)if(typeof v[k]==='string')v[k]=await when(v[k] as string);
+          return {payload:a.catalogue?{value:v}:v};}));
+        const body={item_kind:a.kind,...(a.catalogue?{common:{catalogue:key}}:{}),items,reason:'Added in the Bulk editor'} as unknown as BulkBody;
+        // The paste dialog closes first; its review opens next.
+        window.setTimeout(()=>void runBulk({collection:key,noun:nounOf(key),body,review:true,title:`Review ${plural(items.length,'new row')}`,
+          message:'Rows added: {n}',onDone:()=>load()}));}};
   }
   void load();
 }
