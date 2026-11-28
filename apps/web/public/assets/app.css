@@ -1922,7 +1922,7 @@ html:has(#main.page-planner){overflow-anchor:none}
 .targets-body{display:flex;flex-direction:column;gap:10px}
 .targets-body .panel{margin:0;padding:0;border:0;box-shadow:none}
 @media(max-width:1180px){.page-planner .planner-body{flex-direction:column}.page-planner .auto-panel{max-height:70vh;position:sticky;bottom:calc(var(--status-footer-height,0px) + 8px);z-index:20}}  /* stacked: rises from the status footer (its Apply always in view), up to 70% of the height; scroll up for the schedule */
-@media(max-width:720px){.page.page-planner{height:auto;overflow:visible;display:block}.page-planner .planner-main{overflow:visible}.page-planner .wk-scroller{max-height:none}.topbar .planner-bar{flex-wrap:wrap}}
+@media(max-width:720px){.page.page-planner{height:auto;overflow:visible;display:block}.page-planner .planner-main{overflow:visible}.topbar .planner-bar{flex-wrap:wrap}}
 @container work (max-width:720px){.topbar.has-planner{height:auto;min-height:var(--top-h);flex-wrap:wrap;padding:6px 12px}}
 /* The planner's own columns fill the page; anything else on it (an error, Restricted page) keeps its natural height. */
 .page-planner>div:has(.planner-body),.page-planner>div>div:has(.planner-body){display:flex;flex-direction:column;flex:1;min-height:0}

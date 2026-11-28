@@ -15,3 +15,13 @@ def test_every_stop_option_has_a_title_and_help():
     for name in ('stop_without_improvement_seconds', 'target_gap_percent', 'target_score', 'stop_by', 'on_conflict'):
         field = GenerationOptions.model_fields[name]
         assert field.title and field.description, name
+
+
+def test_the_cost_of_continuing_past_a_conflict_is_written_once_in_the_contract():
+    # app.ts says the help after its first sentence beside the choice (CONFLICT_COST) and never types it again.
+    from pathlib import Path
+    first, cost = GenerationOptions.model_fields['on_conflict'].description.split('. ', 1)
+    assert cost == 'Every broken rule is a must-fix and blocks publishing until fixed.' and '.' not in first
+    app = (Path(__file__).resolve().parents[1] / 'apps/web/src/app.ts').read_text(encoding='utf-8')
+    assert cost not in app
+    assert "CONFLICT_COST=GENERATION_STOP_FIELDS.on_conflict.help.replace(" in app and app.count('CONFLICT_COST') == 3

@@ -19,6 +19,7 @@ def test_empty_candidate_quota_identifies_its_rule_without_mutating_model():
     assert result['message'] == ('These requirements cannot all be met together with eligibility, availability '
                                  'and the other mandatory rules: Four clinical duties')
     assert not result['minimal'] and not result['exhaustive']
+    assert 'may not be the only cause' in result['boundary']
     assert str(model.proto) == before
 
 
@@ -33,6 +34,9 @@ def test_unproven_diagnostic_outcomes_never_claim_a_conflict_core(status, implem
     assert result['implementation_error'] is implementation_error
     assert not result['proven'] and not result['requirements']
     assert result['proof_kind'] == 'unresolved'
+    # A timed-out diagnosis keeps the confirmed strict result and says the cause is unknown.
+    assert result['strict_status'] == 'INFEASIBLE'
+    assert ('The cause is unknown' in result['message']) is (status == cp_model.UNKNOWN)
 
 
 def test_background_conflict_is_not_presented_as_a_named_explanation():

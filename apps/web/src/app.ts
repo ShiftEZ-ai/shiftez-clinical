@@ -104,7 +104,7 @@ import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
 import {viewSettings,segment,labelBody,type ViewSettingsSpec} from './view_settings.js';
 import {WEB_COMMIT} from './build.js';
-import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED} from './generated.js';
+import {RUN_SUPERSEDED,AUDIT_ACTION_CATALOGUE,RULE_CATALOGUE_V2,SCORE_WEIGHT_LABELS,STRENGTH_LABELS,WHEREABOUTS_DEFAULTS,WHEREABOUTS_LIMITS,HONORIFIC_DEFAULTS,NAME_PARTICLE_DEFAULTS,NAME_LABEL_DEFAULTS,PLANNER_COLOUR_LABELS,PLANNER_COLOUR_TAG_LIMIT,PLANNER_PERSON_DISPLAYS,PLANNER_PERSON_DISPLAY_DEFAULT,PLANNER_TEAM_ROWS_DEFAULT,PLANNER_WIDTH_KEYS,AUTO_SCHEDULE_LIMITS,GENERATION_CONTROL_DEFAULTS,GENERATION_SEARCH_FINISHED_STAGES,BULK_SETTING_FIELDS,APP_VERSION,ROLE_NAMES,INSTALLATION_ADMIN_ROLE,LINE_SETTINGS,ANY_LINE_SETTINGS,ENDED_REASON,RULE_NUMBERS,SWAP_LIMITS,SWAP_KINDS,EVENT_HORIZON_MAX_DAYS,MAX_APPROVALS_REQUIRED,GENERATION_STOP_FIELDS} from './generated.js';
 import {upcoming} from './agenda.js';
 import {reloadFor,justUpdated,serverBuild,noticeServerBuild,staleHooks,updateAfter} from './stale_bundle.js';
 import {schedulingGroupsPage,NO_ROTA_COORDINATORS} from './scheduling_groups.js';
@@ -7721,6 +7721,9 @@ let panelJob='',releasePanelJob:(()=>void)|null=null;
 function watchPanelJob(id:string){if(id===panelJob)return;releasePanelJob?.();panelJob=id;releasePanelJob=id?watchJob(id):null;}
 /** Re-says whether Run can start when the schedule's selection changes. */
 let autoRunSync:(()=>void)|null=null;
+/** What continuing past a rules conflict costs: the contract's help for If rules conflict after its first sentence
+ *  (the choice itself), said beside the choice in Stop when and on the clash. */
+const CONFLICT_COST=GENERATION_STOP_FIELDS.on_conflict.help.replace(/^[^.]*\.\s*/,'');
 async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:boolean,reuse:boolean,closePanel?:()=>void){
   const w=data.workspace;
   if(schedulingSettings.workspace!==w.id){const open=schedulingSettings.open;
@@ -7847,7 +7850,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // open while one differs (a changed condition is never out of sight). Only CP-SAT has stop conditions.
   let stopOpen=stopsChanged();
   const stopLine=el('span',{class:'grow'}),stopMore=el('div',{class:'auto-numbers auto-stop-more'},...stops.inputs.map(f=>f.wrap));
-  const stopWarn=el('p',{class:'hint auto-stop-warn'},icon('alert'),'Every broken rule is a must-fix and blocks publishing until fixed.');
+  const stopWarn=el('p',{class:'hint auto-stop-warn'},icon('alert'),CONFLICT_COST);
   const stopToggle=el('button',{type:'button',class:'link-button','aria-label':'Change stop conditions'},'Change');
   const paintStops=()=>{const changed=stopsChanged();stopOpen||=changed;stopLine.textContent=stopWords(Number(minutes.input.value)||Number(defaults.search_minutes)||AUTO_SCHEDULE_LIMITS.default_minutes,stops.read());
     stopMore.hidden=!stopOpen;stopToggle.hidden=changed;stopToggle.setAttribute('aria-expanded',String(stopOpen));stopToggle.textContent=stopOpen?'Done':'Change';
@@ -8089,7 +8092,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // card, and nothing is applied before Review; the run's history records the choice as its reason.
   const fillRest=async(conflicted:Row)=>{
     if(!conflicted.result?.resume_available)return queue('generation',true,{on_conflict:'continue_flagged'});
-    const continued=await command<Row>('job.continue',{reason:'Chosen: Fill everything else (flag every break)'},conflicted.id).catch(e=>supersededRun(e,w.id));
+    const continued=await command<Row>('job.continue',{reason:'Chosen: Fill everything else (broken rules flagged Must fix)'},conflicted.id).catch(e=>supersededRun(e,w.id));
     if(continued.preparation_expired)notify('Cached preparation expired. This attempt rebuilds from your saved inputs.','info');await load();};
   // Continue a run from its saved checkpoint (job.continue) for the minutes chosen; nothing is applied until reviewed.
   const resumeControls=(latest:Row,tone:string)=>{const saved=st().resume;
@@ -8286,7 +8289,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
         if(act)shortfall=null;
         const choices=act?el('section',{class:'auto-choices','aria-label':'Rules conflict'},el('div',{class:'actions'},
             button('Stop and fix rules',()=>openRotaRules(),'secondary'),button('Fill everything else',()=>fillRest(latest),'primary',{disabled:!runnable(),why:runReason()})),
-          el('p',{class:'hint'},icon('alert'),'Every broken rule is a must-fix and blocks publishing until fixed.')):'';
+          el('p',{class:'hint'},icon('alert'),CONFLICT_COST)):'';
         feedback.append(reasons,clash?clashCard(facts.conflict!,{...clashHooks(data,()=>{}),...(act?{leaveOpen:()=>fillRest(latest)}:{})}):'',choices,
           el('div',{class:'actions'},first?button('Show on schedule',()=>showOnSchedule(first),'secondary small'):'',
             allowed('people')?button('Open People',()=>navigate('people'),'secondary small'):''),
