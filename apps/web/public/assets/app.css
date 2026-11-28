@@ -4589,6 +4589,9 @@ tr.rc-changed>td,.rt-ln.rc-changed{background:var(--info-soft)}
 .rt-iline>.rt-n{padding-top:5px}
 .rt-iline>:not(.rt-n){min-width:0;max-width:100%}
 .rt-iline .pill-list{align-items:flex-start}
+/* A line's who and where columns can be narrower than the shared 220px pill cap: a long name wraps inside its column,
+   as in a wrapped column, rather than running over its +N and the limits. */
+.rt-iline .pill-list>.pill-item>.rp{max-width:100%;height:auto;min-height:22px;white-space:normal;overflow-wrap:break-word;border-radius:var(--r-sm)}
 .rt-iline>.rule-num{white-space:nowrap}
 .rt-rec{display:grid;gap:6px}
 .rt-best{display:grid;justify-items:start;gap:4px}
