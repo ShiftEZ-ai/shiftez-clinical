@@ -264,3 +264,6 @@ def test_saved_layers_keep_only_changed_layers_with_the_contract_defaults(client
     # Whether a draft shows, never which one: no rota or publication id survives.
     kept = js(client_modules, 'm.savedLayers(input)', {'draft': True, 'leave': False, 'workspace_id': 'w1', 'publication_id': 'p1'})
     assert kept == {**defaults, 'leave': False}
+    # Rotations (People by days) is kept like Leave: on by default, saved only when turned off.
+    assert defaults['rotations'] is True
+    assert js(client_modules, 'm.savedLayers(input)', {'rotations': False}) == {**defaults, 'rotations': False}

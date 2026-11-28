@@ -323,7 +323,7 @@ def test_saved_layers_reload_and_explicit_route_precedence(browser, live_server,
         close_popover(page)
         save_view(page, bar, 'Cedar layers')
         saved = h.get('coordinator', '/api/table-views?table=planner')['views'][0]['definition']['planner']['layers']
-        assert saved == {'draft': True, 'leave': False, 'mine': False, 'mode': 'overlay'}
+        assert saved == {'draft': True, 'leave': False, 'mine': False, 'mode': 'overlay', 'rotations': True}
         page.reload()
         layers = view_settings(bar, 'Layers')
         expect(layers.get_by_label('Leave and wishes', exact=True)).not_to_be_checked()

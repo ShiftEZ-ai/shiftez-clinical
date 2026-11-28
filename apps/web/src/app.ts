@@ -2081,7 +2081,7 @@ const plannerDefinition=():PlannerSaved=>({...(schedConditions?{conditions:sched
   group_by:schedView==='people'?peopleView.group:weekView.groupBy,people_sort:schedView==='people'?peopleView.sort.replace('-','_') as PlannerSettings['people_sort']:null,sort_by:weekView.sortBy,colour_by:weekView.colourBy,colour_tags:weekView.colourTags,density:weekView.compact?'compact':'comfortable',team_rows:weekView.teamRows,staffing:weekView.staffing?null:false,only_open:weekView.onlyOpen,only_issues:weekView.onlyIssues,label:viewNames,properties:weekView.props,
   weekdays:viewDays.weekdays,week_start:viewDays.week_start,time_window:viewDays.time_window,days:rangeNow()==='custom'?viewDays.days:null,
   columns:gridColumns==='day'?null:gridColumns,cells:cellsNow()==='counts'?'counts':null,rows:schedView==='timeline'?gridRows:null,coverage:{rows:coverRows,columns:coverColumns},subgroup:useGrid()||schedView==='week'&&isSessionGroup(gridSubgroup)?gridSubgroup:null,collapsed:[...collapsed],
-  layers:{draft:draftsShown,leave:peopleView.leave,mine:mineOnly,mode:layerMode},person_display:personDisplay,group_sort:weekView.groupSort.filter((x):x is [Dim,'asc'|'desc']=>isDim(x[0])),widths:weekView.widths}))});
+  layers:{draft:draftsShown,leave:peopleView.leave,mine:mineOnly,mode:layerMode,rotations:peopleView.rotations},person_display:personDisplay,group_sort:weekView.groupSort.filter((x):x is [Dim,'asc'|'desc']=>isDim(x[0])),widths:weekView.widths}))});
 /** Rows, a category as columns, the group and Then by are four different dimensions (the server refuses a repeat):
  *  a group or Then by repeating the rows or columns is dropped (the grid leaves it out too). */
 const distinctAxes=(p:PlannerSettings):PlannerSettings=>{const taken=[p.rows||(p.mode==='timeline'||p.mode==='person'?'person':''),p.columns];
@@ -2096,6 +2096,7 @@ function applyPlannerView(p:Partial<PlannerSettings>|undefined,conditions?:Condi
   const v=plannerPart(p);schedConditions=conditions||null;
   const l=savedLayers(v.layers)||LAYER_DEFAULTS,named=(k:string)=>!!route?.has(k);
   if(!named('leave'))peopleView.leave=l.leave;
+  peopleView.rotations=l.rotations;
   if(!named('person'))mineOnly=l.mine&&!!me?.person_id;
   if(!named('mode'))layerMode=l.mode;
   // Whether a draft shows, never which: off shows the published rota only; on lets the Schedule choose one it may open.
@@ -3255,7 +3256,7 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
     // List hides its table toolbar: a hidden column comes back here, through the table's own Shown properties.
     columns:schedView==='list'&&listParts.view?.build?{build:(b,changed)=>listParts.view!.build!(b,changed,close)}:undefined,
     label:{value:labelNow,set:l=>{viewNames=l;void redraw();},preview:l=>sample?displayName(sample,l):'',part:(p,l)=>sample?labelPart(sample,p,l.honorific,labelFacts(sample)):''},
-    layers:{hint:()=>['Published',w?w.name:'',peopleView.leave&&planner&&schedView==='people'?'leave':'',mineOnly?'my duties':''].filter(Boolean).join(', '),build:panel=>{
+    layers:{hint:()=>['Published',w?w.name:'',peopleView.leave&&planner&&schedView==='people'?'leave':'',peopleView.rotations&&planner&&schedView==='people'?'rotations':'',mineOnly?'my duties':''].filter(Boolean).join(', '),build:panel=>{
       // Published always; one draft to edit, optionally a second side by side or the published days under it.
       panel.append(el('div',{class:'sd-layer'},el('span',{class:'sd-dot key','aria-hidden':'true'}),el('span',{class:'issue-text'},el('strong',{},'Published'),el('small',{},planner?'Always shown, read-only':'Your published duties')),icon('lock')));
       if(planner){
@@ -3265,7 +3266,9 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
         if(w)panel.append(...segment('Show drafts',[['edit','Edit one'],['side','Side by side'],['overlay','Overlay']],layerMode,k=>{layerMode=k as LayerMode;void redraw();}));
         // People × Days draws leave and wishes as a layer (on by default); the grid's person rows have the property instead.
         if(schedView==='people'){const leave=check('Leave and wishes',peopleView.leave);leave.input.addEventListener('change',()=>{peopleView.leave=leave.input.checked;void redraw();});
-          panel.append(el('div',{class:'sd-layer'},leave.wrap));}
+          // Rotations and protected time (on by default): what each person is placed on, read from the person timeline.
+          const rotations=check('Rotations',peopleView.rotations);rotations.input.addEventListener('change',()=>{peopleView.rotations=rotations.input.checked;void redraw();});
+          panel.append(el('div',{class:'sd-layer'},leave.wrap),el('div',{class:'sd-layer'},rotations.wrap));}
         if(me!.person_id){const m=check('My duties',mineOnly);m.input.addEventListener('change',()=>{mineOnly=m.input.checked;void redraw();});panel.append(el('div',{class:'sd-layer'},m.wrap));}
       }}},
     saved:()=>!activeView||activeView.can_edit===false?'none':views.dirty(activeView.definition)?'dirty':'clean',saveAs:a.saveAs,update:()=>a.update?.()||Promise.resolve(),duplicate:a.duplicate||undefined,reset:resetView,

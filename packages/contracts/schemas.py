@@ -9506,6 +9506,7 @@ class PlannerLayers(Schema):
     leave: bool = Field(default=True, strict=True)
     mine: bool = Field(default=False, strict=True)
     mode: Literal['edit', 'side', 'overlay'] = 'edit'
+    rotations: bool = Field(default=True, strict=True)
 
 
 PLANNER_LAYER_DEFAULTS = PlannerLayers().model_dump()

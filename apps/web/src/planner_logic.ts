@@ -4,12 +4,12 @@ import type {Row,Catalogues,PlannerSession} from './types.js';
 import {PLANNER_LAYER_DEFAULTS,type PlannerViewDefinition,type PlannerLayers} from './generated.js';
 
 /** The Schedule's Layers before anyone changes them (the contract's PLANNER_LAYER_DEFAULTS): a draft shown (which one
- *  the Schedule chooses), leave and wishes shown, everyone's duties, one draft to edit. */
+ *  the Schedule chooses), leave and wishes shown, rotations shown, everyone's duties, one draft to edit. */
 export const LAYER_DEFAULTS:Required<PlannerLayers>=PLANNER_LAYER_DEFAULTS;
 /** Layers as a saved view keeps them (PlannerViewSettings.layers): null when all are at their defaults, so a view saved
  *  before layers were kept compares equal. Whether a draft shows, never which rota or publication. */
 export function savedLayers(l:PlannerLayers|null|undefined):Required<PlannerLayers>|null{
-  const v={draft:l?.draft??LAYER_DEFAULTS.draft,leave:l?.leave??LAYER_DEFAULTS.leave,mine:l?.mine??LAYER_DEFAULTS.mine,mode:l?.mode??LAYER_DEFAULTS.mode};
+  const v={draft:l?.draft??LAYER_DEFAULTS.draft,leave:l?.leave??LAYER_DEFAULTS.leave,mine:l?.mine??LAYER_DEFAULTS.mine,mode:l?.mode??LAYER_DEFAULTS.mode,rotations:l?.rotations??LAYER_DEFAULTS.rotations};
   return (Object.keys(v) as (keyof typeof v)[]).every(k=>v[k]===LAYER_DEFAULTS[k])?null:v;
 }
 

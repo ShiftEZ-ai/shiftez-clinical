@@ -13,7 +13,7 @@ from scripts.generate_contracts import render
 SETTINGS = {'person_display': 'team', 'group_by': 'service', 'subgroup': 'location',
             'group_sort': [['service', 'desc'], ['location', 'asc']],
             'widths': {'row_heading': 240, 'date': 144.5, 'cell': 180},
-            'layers': {'draft': True, 'leave': False, 'mine': False, 'mode': 'overlay'}}
+            'layers': {'draft': True, 'leave': False, 'mine': False, 'mode': 'overlay', 'rotations': False}}
 
 
 def test_display_extensions_are_absent_from_old_views_and_null_or_empty_resets():

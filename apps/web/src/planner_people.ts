@@ -10,13 +10,14 @@ import {teamOf} from './planner_teams.js';
 import {wishWords} from './wishes.js';
 import type {Context} from './forms.js';
 import type {Row,WorkspaceData} from './types.js';
+import type {TimelineItem,TimelineResponse} from './generated.js';
 import {tag,ruleSummary,dayTitle,addsToSelection,selectSession} from './planner_rules.js';
 import {leaveTypeName,causeText} from './findings.js';
 import {issueMarker,issueLabel,issueList,findingIssue,openMarkerFrom} from './issue_marker.js';
 
 type Group='rank'|'tag'|'team'|'none';type Sort='hours-desc'|'hours-asc'|'name'|'name-desc';
 // Viewer choices for this page visit (not saved). The planner's collection toolbar sets find, group and sort.
-const state={find:'',group:'rank' as Group,sort:'hours-desc' as Sort,collapsed:new Set<string>(),/** Schedule's Leave & wishes layer. */leave:LAYER_DEFAULTS.leave};
+const state={find:'',group:'rank' as Group,sort:'hours-desc' as Sort,collapsed:new Set<string>(),/** Schedule's Leave & wishes layer. */leave:LAYER_DEFAULTS.leave,/** Its Rotations layer. */rotations:LAYER_DEFAULTS.rotations};
 export const peopleView=state;
 export const PEOPLE_GROUPS=[{key:'rank',label:'Rank'},{key:'tag',label:'Tag'},{key:'team',label:'Supervision team'}];
 export const PEOPLE_SORTS=[{key:'hours',label:'Hours'},{key:'name',label:'Name'}];
@@ -27,7 +28,10 @@ let redrawPeople:(()=>void)|null=null;
 /** Redraw the open People view after its find, group or sort changed (no reload). */
 export function refreshPeople(){redrawPeople?.();}
 let leaveCache:{key:string;rows:Row[]}|null=null;
-onSessionReset(()=>{leaveCache=null;});
+// Rotations and protected time: one read per account, days in view and department input and availability revisions (a
+// saved rotation or protected time bumps one), kept across redraws of the same days.
+let rotationCache:{key:string;read:Promise<Map<string,TimelineItem[]>>}|null=null;
+onSessionReset(()=>{leaveCache=null;rotationCache=null;});
 
 const HOURS=new Set(['reserved_hours','scheduled_hours']);
 // Wishes to work (on duty, a wanted duty) and wishes for time off (a day off, a duty to avoid) are marked apart.
@@ -52,6 +56,7 @@ export function leaveLayer(ctx:Context,data:WorkspaceData,key:Legend,zone:string
     const block=a.counts_as_unavailable!==false,name=leaveTypeName(a);
     const words=block?'On leave or away'+(name?' · '+name:''):`${name||'Leave'} · does not block duties`;
     cell.classList.add(block?'leave':'leave-soft');cell.setAttribute('data-tip',words);
+    cell.querySelector(':scope>.pg-rot')?.remove();  // a rotation is named only on a day with no leave (rotationLayer)
     // The cell is the drawn mark (its pattern), stamped as its key entry (dom.ts legend `mark`).
     if(block)key.mark(cell,'leave',el('span',{class:'pg-leave-key','aria-hidden':'true'}),'Leave or away');else key.mark(cell,'leave-soft',el('span',{class:'pg-leave-key soft','aria-hidden':'true'}),'Leave that does not block duties');
     const chips=cell.querySelectorAll('.pg-chip');chips.forEach(c=>c.setAttribute('aria-label',c.getAttribute('aria-label')+' · '+(block?'on leave'+(name?' ('+name+')':''):words)));
@@ -79,6 +84,45 @@ export function leaveLayer(ctx:Context,data:WorkspaceData,key:Legend,zone:string
     /** The person's leave on this day, now and when leave arrives (`id`: the cell's key, person and day first). */
     leave(cell:HTMLElement,pid:string,d:string,id=pid+'|'+d){if(!on)return;cells.set(id,cell);const away=leaveOf.get(pid),a=away&&awayOn(away,d);if(a)markLeave(cell,a);},
   };
+}
+
+/** Rotations and protected time on People × Days (its Rotations layer, on by default): the person timeline's rotation and
+ *  protected-time items (GET /api/timeline, scoped by the server to whom the reader may see). A day with no duty and no
+ *  leave names the rotation (its type's short name, the full name read out); protected time is an outlined PT chip on any
+ *  day, under the day's duties. A cell drawn before the read lands is marked when it does. `draw` after the cell's chips
+ *  and leave. */
+export function rotationLayer(ctx:Context,key:Legend,days:string[],on:boolean){
+  // The person timeline answers staff (themselves) and team readers; another role draws no rotations.
+  const mayRead=on&&!!days.length&&ctx.permits(CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER,CAPABILITY.ADMIN,CAPABILITY.AUDITOR,CAPABILITY.PROGRAMME_LEAD);
+  const o=ctx.me.organisation,start=days[0],end=mayRead?addDays(days.at(-1)!,1):'';
+  const cacheKey=`${ctx.me.identity_id}|${start}|${end}|${o.input_revision}|${o.availability_revision}`;
+  const cells:[HTMLElement,string,string][]=[];
+  let items:Map<string,TimelineItem[]>|null=null;
+  const shortOf=new Map((ctx.catalogues.rotation_types||[]).map(r=>[r.id,r.short_name as string|undefined]));
+  const covers=(x:TimelineItem,d:string)=>x.starts_on<=d&&(!x.ends_on||d<x.ends_on);
+  const mark=(cell:HTMLElement,pid:string,d:string)=>{
+    const mine=(items?.get(pid)||[]).filter(x=>covers(x,d));
+    const kept=mine.filter(x=>x.kind==='protected_time').map(x=>x.label).filter(x=>x&&x!=='Protected time');
+    if(mine.some(x=>x.kind==='protected_time')){const words=['Protected time',...new Set(kept)].join(' · ');
+      cell.append(key.mark(el('span',{class:'pg-pt',role:'img','aria-label':words,'data-tip':words},'PT'),'pt',el('span',{class:'pg-pt','aria-hidden':'true'},'PT'),'Protected time',2));}
+    const r=mine.find(x=>x.kind==='rotation');
+    if(!r||cell.querySelector(':scope>.pg-chip')||cell.classList.contains('leave')||cell.classList.contains('leave-soft'))return;
+    const short=shortOf.get(String(r.details?.rotation_type_id))||r.label,words='Rotation · '+r.label;
+    cell.prepend(key.mark(el('span',{class:'pg-rot',role:'img','aria-label':words,'data-tip':words},short),'rot:'+short,el('span',{class:'pg-rot','aria-hidden':'true'},short),short===r.label?'Rotation':words,2));};
+  // Every page of people the reader may see (the server's pages hold up to 200).
+  const page=(offset:number,into:Map<string,TimelineItem[]>):Promise<Map<string,TimelineItem[]>>=>get<TimelineResponse>(`/api/timeline?start=${start}&end=${end}&layers=rotation,protected_time&limit=200&offset=${offset}`)
+    .then(r=>{for(const p of r.people)into.set(p.id,p.items);return r.has_more&&r.people.length?page(offset+r.people.length,into):into;});
+  // A failed read says so beside the grid with Retry; it is never cached. A session change or a page left stays silent.
+  const status=el('div',{class:'pg-rot-status'});
+  const read=()=>{status.replaceChildren();
+    if(rotationCache?.key!==cacheKey)rotationCache={key:cacheKey,read:page(0,new Map())};
+    const held=rotationCache;
+    void held.read.then(m=>{items=m;for(const [cell,pid,d] of cells)mark(cell,pid,d);},
+      e=>{if(rotationCache===held)rotationCache=null;if(!sessionChanged(e))status.replaceChildren(readFailed('rotations',e,read,'rotations','Rotations and protected time may be missing.'));});};
+  if(mayRead)read();
+  return {status,clear:()=>{cells.length=0;},
+    /** This person's rotation and protected time on this day, now and when the read lands. */
+    draw(cell:HTMLElement,pid:string,d:string){if(!mayRead)return;cells.push([cell,pid,d]);if(items)mark(cell,pid,d);}};
 }
 
 /** People view: one row per person across the rota, grouped by rank, with leave, rule issues and hours against target. */
@@ -117,6 +161,7 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
 
   // Leave and wishes (the Layers switch here): one helper with the codes/counts grid (leaveLayer).
   const layer=leaveLayer(ctx,data,key,zone,state.leave);gridWrap.before(layer.status);
+  const placed=rotationLayer(ctx,key,days,state.rotations);gridWrap.before(placed.status);
 
   // Schedule: the days around the draft are the published layer (grey); an accent edge marks where the draft starts.
   const ctxCls=(d:string)=>data.context?((d<w.starts_on||d>=w.ends_on)?' sd-ctx':'')+(d===w.starts_on?' sd-edge':''):'';
@@ -150,7 +195,7 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     const nameOfGroup=(k:string)=>groupName.get(k)||k;
     // One team's sessions of a person (null: all of them, every grouping but Supervision team).
     const onlyIn=(k:string,pid:string)=>state.group==='team'?scoped.get(k+'|'+pid)||new Set<string>():null;
-    layer.clear();key.clear();
+    layer.clear();placed.clear();key.clear();
     const grid=el('div',{class:'people-grid'+(itemSaysWords(props)?' it-words':''),role:'grid','aria-label':'Duties by person and day'});grid.style.setProperty('--days',String(days.length));
     // A chip is its duty type's code and hue, and Colour by's entry (dom.ts legend): one stamp for this grid's own chips and
     // the live auto-schedule view's (LiveHost.stamp; null: an open place), so a live chip is keyed like a drawn one.
@@ -227,6 +272,7 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
             cell.append(chip);
           }
           layer.leave(cell,person.id,d,person.id+'|'+d+'|'+name);
+          placed.draw(cell,person.id,d);
           row.append(cell);
         }
         const over=!!target&&target.comparison!=='minimum'&&h>target.amount;
