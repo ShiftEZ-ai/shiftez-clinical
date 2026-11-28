@@ -3,11 +3,12 @@ from copy import deepcopy
 import secrets
 from packages.contracts import schemas as s
 from sqlalchemy import insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer
 from uuid import uuid4
 from apps.api import models as m
 from apps.api.auth import digest, require_role
-from apps.api.errors import require
+from apps.api.errors import require, unique_violation
 from apps.api.serialization import record, job_record, job_progress_record, json_value, generation_defaults_record
 from apps.api.serialization import job_result_with_reconciliation, retain_job_reconciliation
 from apps.api.snapshots import (currency_hint, currency_match, domain_snapshot, fingerprint,
@@ -338,19 +339,41 @@ def queue_validation(db, actor, workspace, data):
     from .read_projections import input_stamp
     request_key = input_stamp(db, workspace)
     # Compare compact request currencies without loading pending snapshots.
-    pending = db.execute(select(m.Job, m.Job.input_snapshot['validation_request_key'].as_string())
-        .options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(m.Job.workspace_id == workspace.id,
-        m.Job.kind == 'validation', m.Job.status.in_(['queued', 'running']))).all()
+    key_column = m.Job.input_snapshot['validation_request_key'].as_string()
+    validation_jobs = select(m.Job).options(defer(m.Job.input_snapshot), defer(m.Job.result)).where(
+        m.Job.workspace_id == workspace.id, m.Job.kind == 'validation', m.Job.status.in_(('queued', 'running')))
+    pending = db.execute(validation_jobs.add_columns(key_column)).all()
     for job, queued_key in pending:
         if queued_key == request_key or (not data.get('validation_basis') and job.input_fingerprint == data['fingerprint']):
             return job
         job.status, job.error_code, job.completed_at = 'failed', 'STALE_INPUTS', m.now()
         job.revision += 1
-    job = m.Job(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
-                kind='validation', input_fingerprint=data['fingerprint'], input_snapshot={**data, 'validation_request_key': request_key})
-    db.add(job)
-    db.flush()
-    return job
+    values = dict(department_id=actor.department_id, workspace_id=workspace.id, requested_by=actor.identity_id,
+                  kind='validation', input_fingerprint=data['fingerprint'],
+                  input_snapshot={**data, 'validation_request_key': request_key})
+    if db.get_bind().dialect.name != 'postgresql':
+        job = m.Job(**values)
+        db.add(job)
+        db.flush()
+        return job
+    matching = validation_jobs.where(key_column == request_key).execution_options(populate_existing=True).limit(1)
+    for attempt in range(2):
+        job = m.Job(**values)
+        try:
+            # An ended competitor leaves room for one fresh insert without discarding the rota edit.
+            with db.begin_nested():
+                db.add(job)
+                db.flush()
+        except IntegrityError as error:
+            if unique_violation(error) != 'uq_jobs_live_validation':
+                raise
+            winner = db.scalar(matching)
+            if winner is not None:
+                return winner
+            if attempt == 1:
+                raise
+        else:
+            return job
 
 
 def queue_current_validation(db, actor, workspace):

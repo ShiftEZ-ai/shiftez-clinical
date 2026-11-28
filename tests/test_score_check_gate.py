@@ -134,7 +134,8 @@ def test_disabling_blocks_replays_and_pauses_queued_ai_and_benchmark_jobs(depart
     if state == 'running':
         with transaction(h.app.state.engine, write=True) as db:
             job = db.get(m.Job, auto['job']['id'])
-            job.status, job.started_at = state, m.now() - timedelta(days=1)
+            job.status, job.started_at = state, m.now()
+            job.heartbeat_at = job.started_at
             extraction_job = db.get(m.ScoreCheckExtractionJob, extraction)
             extraction_job.state, extraction_job.lease_expires_at = state, m.now() - timedelta(days=1)
     setting(h, False)
@@ -153,7 +154,12 @@ def test_disabling_blocks_replays_and_pauses_queued_ai_and_benchmark_jobs(depart
     normal = h.command('coordinator', 'job.create', {'workspace_id': ordinary['id'], 'kind': 'generation'},
                        revision=ordinary['revision'])
     with transaction(h.app.state.engine, write=True) as db:
+        if state == 'running':
+            # Disabling the feature does not free a lease that a worker can still hold.
+            assert claim_job(db) is None
+            db.get(m.Job, auto['job']['id']).heartbeat_at = m.now() - timedelta(days=1)
         assert claim_job(db)['id'] == normal['job']['id']
+        assert db.get(m.Job, auto['job']['id']).status == state
 
 
 def test_off_preserves_ordinary_amendment_fingerprint_scoring_and_publication(department):

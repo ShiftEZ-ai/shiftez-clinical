@@ -16,7 +16,7 @@ from packages.contracts import schemas as s
 from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
 from apps.api import models as m
 from apps.api.auth import require_role
-from apps.api.errors import INTEGRITY_CONFLICT_MESSAGE, VALUE_INVALID_MESSAGE, Problem, require, safe_message, validation_issues
+from apps.api.errors import VALUE_INVALID_MESSAGE, Problem, integrity_problem, require, safe_message, validation_issues
 from apps.api.serialization import json_value, record
 from apps.api.snapshots import snapshot_hash
 from .common import CATALOGUES, PROGRAMME_CATALOGUES, scoped
@@ -1454,7 +1454,7 @@ def _problem(error):
             raise error
         return error
     if isinstance(error, IntegrityError):
-        return Problem(409, "INTEGRITY_CONFLICT", INTEGRITY_CONFLICT_MESSAGE)
+        return integrity_problem(error)
     if isinstance(error, ValidationError):
         messages = []
         for issue in validation_issues(error.errors()):

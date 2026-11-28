@@ -235,10 +235,11 @@ def test_generation_recovery_is_evidenced_actor_scoped_and_ephemeral(audit_h):
         ('failed', None, 'RuntimeError', True, None),
         ('succeeded', {'status': 'needs_more_time'}, None, False, None),
     ]):
+        job_workspace = h.workspace('Running generation fixture') if status == 'running' else w
         with transaction(h.app.state.engine, write=True) as db:
-            job = m.Job(department_id=h.seed['department_id'], workspace_id=w['id'],
+            job = m.Job(department_id=h.seed['department_id'], workspace_id=job_workspace['id'],
                 requested_by=h.seed['identities']['coordinator'], kind='generation', status=status,
-                input_fingerprint='stale' if stale else fingerprint(db, db.get(m.Workspace, w['id'])),
+                input_fingerprint='stale' if stale else fingerprint(db, db.get(m.Workspace, job_workspace['id'])),
                 input_snapshot={'generation_engine': 'legacy'}, result=result, error_code=error)
             db.add(job)
             db.flush()
@@ -258,7 +259,7 @@ def test_generation_recovery_is_evidenced_actor_scoped_and_ephemeral(audit_h):
                 assert detail['result'] is None
         with transaction(h.app.state.engine) as db:
             assert db.get(m.Job, job_id).result == result
-        assert all('recovery' not in job for job in h.get('coordinator', '/api/jobs?workspace_id=' + w['id'])['jobs'])
+        assert all('recovery' not in job for job in h.get('coordinator', '/api/jobs?workspace_id=' + job_workspace['id'])['jobs'])
     for role in ('staff', 'auditor', 'approver', 'operator'):
         h.get(role, '/api/jobs/' + job_id, status=403)
 

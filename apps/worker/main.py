@@ -48,6 +48,8 @@ from apps.process_memory import memory_probe as _memory_probe, release_memory
 
 log = logging.getLogger("rota.worker")
 
+_HEAVY_JOB_KINDS = ('generation', 'feasibility', 'catalogue_proof', 'swap_audience',
+                    'merge_preview', 'merge_apply', 'fill_options')
 _GENERATION_STAGE_KEYS = tuple(s.GENERATION_PROGRESS_STAGES)
 _GENERATION_SEARCH_STAGE_START = _GENERATION_STAGE_KEYS.index('finding')
 _GENERATION_SCORING_STAGE_START = _GENERATION_STAGE_KEYS.index('scoring')
@@ -644,9 +646,8 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
     # The heavy-kind check below stays department-wide; only the lane's own candidates are narrowed.
     wanted = enabled if kinds is None else enabled & m.Job.kind.in_(kinds)
     # Bounded lease recovery after worker death; no lost running job remains forever.
-    lost = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
-    if recovering_worker is not None:
-        lost = or_(lost, m.Job.worker_id == recovering_worker)
+    lease_expired = func.coalesce(m.Job.heartbeat_at, m.Job.started_at) < m.now() - timedelta(seconds=JOB_LEASE_SECONDS)
+    lost = lease_expired if recovering_worker is None else or_(lease_expired, m.Job.worker_id == recovering_worker)
     expired = list(db.scalars(select(m.Job).where(wanted, m.Job.status == "running", lost).order_by(m.Job.created_at, m.Job.id)
         .limit((db.get_bind().get_execution_options().get("rota_write_settings") or Settings()).worker_batch_size)
         .with_for_update(skip_locked=True).execution_options(populate_existing=True)))
@@ -720,10 +721,10 @@ def claim_job(db, *, recovering_worker=None, kinds=None):
         old.revision += 1
         queue_generation_outcome(db, old)
     queued = select(m.Job).where(wanted, m.Job.status == "queued")
-    # shortcut: one solve at a time for the pilot server; add bounded slots when measured demand requires them.
-    heavy = ["generation", "feasibility", "catalogue_proof", "swap_audience", "merge_preview", "merge_apply", "fill_options"]
-    if db.scalar(select(m.Job.id).where(enabled, m.Job.status == "running", m.Job.kind.in_(heavy)).limit(1)):
-        queued = queued.where(m.Job.kind.not_in(heavy))
+    # A feature can pause a live lease. Count it until expiry, across both worker lanes.
+    heavy = m.Job.kind.in_(_HEAVY_JOB_KINDS)
+    if db.scalar(select(m.Job.id).where(m.Job.status == "running", heavy, lease_expired.is_not(True)).limit(1)):
+        queued = queued.where(~heavy)
     if recovering_worker is not None and expired:
         queued = queued.order_by(m.Job.id.in_([old.id for old in expired]).desc())
     job = db.scalar(queued.order_by(m.Job.created_at, m.Job.id).limit(1)

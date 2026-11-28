@@ -47,7 +47,7 @@ from .commands import execute, authorize_receipt, logged_command_kind, command_r
 from .db import DatabaseWriteTimeout, allow_long_idle, make_engine, transaction, retry_write, liveness_write, request_db_time_ms
 from .version import __version__, build
 from .rate_limit import enforce, session_identity
-from .errors import Problem, problem_payload, require, safe_message, INTEGRITY_CONFLICT_MESSAGE, validation_issues
+from .errors import Problem, integrity_problem, problem_payload, require, safe_message, validation_issues
 from .logging_setup import configure_logging
 from .serialization import record, job_record, json_value, projection_json_value
 from .services.leave_disclosure import disclose_leave
@@ -378,8 +378,10 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.exception_handler(IntegrityError)
     async def integrity_error(request, exc):
-        request.state.error_code = "INTEGRITY_CONFLICT"
-        return JSONResponse({"error": {"code": "INTEGRITY_CONFLICT", "message": INTEGRITY_CONFLICT_MESSAGE}, "correlation_id": request.state.correlation_id}, status_code=409)
+        refusal = integrity_problem(exc)
+        request.state.error_code = refusal.code
+        return JSONResponse({"error": {"code": refusal.code, "message": refusal.message},
+                             "correlation_id": request.state.correlation_id}, status_code=refusal.status)
 
     @app.exception_handler(PoolTimeout)
     @app.exception_handler(OperationalError)

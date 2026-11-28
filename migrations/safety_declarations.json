@@ -704,5 +704,10 @@
     "class": "additive",
     "sha256": "3f6c63ed813062ae6b45644706e2941f6d6106d7f7cb77c1d333424bc3a94126",
     "review": "Adds department-owned leave policy storage and its lookup index without updating any existing records."
+  },
+  "0158_live_uniqueness": {
+    "class": "additive",
+    "sha256": "a3e70259840574baba7c0b7ee498e1a1aeac2e299feb06927434c44267c172cc",
+    "review": "Adds partial unique indexes for active calendar feeds and live validation and generation jobs. Read-only preflight checks retained duplicates and the migration preserves existing rows."
   }
 }
