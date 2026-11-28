@@ -3047,13 +3047,16 @@ def quota_target_amount(metric, amount):
     return amount
 
 
+QuotaMetric = Literal["duties", "session_units", "scheduled_hours", "reserved_hours", "workload_credit", "training_credit", "lead_turns"]
+
+
 class BlockQuota(Schema):
     """A department-owned block commitment or recurring calendar limit, never a payroll entitlement."""
     kind: Literal["block_quota"]
     starts_on: date
     ends_on: date | None = None
     repeat: bool = False
-    metric: Literal["duties", "session_units", "scheduled_hours", "reserved_hours", "workload_credit", "training_credit", "lead_turns"]
+    metric: QuotaMetric
     # range: at least `amount` and at most `maximum_amount` (one rule; checked as a minimum and a maximum).
     comparison: Literal["maximum", "minimum", "target", "range"]
     amount: float = Field(ge=0, le=100000)
@@ -8099,6 +8102,19 @@ class ReadinessGroup(SolverExclusionCount):
     sample_person_ids: list[str]
 
 
+class ReadinessShortfall(Schema):
+    code: Literal['RECURRING_SESSIONS_ENDED', 'SUPERVISED_MINIMUM_SHORTFALL', 'PERSON_MINIMUM_SHORTFALL']
+    rule_ids: list[ID]
+    person_ids: list[ID]
+    assignment_type_ids: list[ID]
+    series_ids: list[ID]
+    starts_on: date
+    ends_on: date
+    metric: QuotaMetric
+    required: float
+    possible: float
+
+
 class PeriodReadiness(Schema):
     workspace_id: ID
     fingerprint: str
@@ -8113,6 +8129,7 @@ class PeriodReadiness(Schema):
     basis: Literal['known_records_not_solver_proof'] = 'known_records_not_solver_proof'
     records_coverage: Literal['assigned_people_only', 'paged_duty_candidates'] = 'assigned_people_only'
     groups: list[ReadinessGroup]
+    shortfalls: list[ReadinessShortfall] = Field(default_factory=list)
     check_action: Literal['workspace.validate'] = 'workspace.validate'
 
 

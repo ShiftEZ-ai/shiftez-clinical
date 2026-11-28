@@ -1,12 +1,13 @@
 {
   "id": "A-WEEKLY-LIMIT-01",
-  "revision": 3,
+  "revision": 4,
   "title": "Weekly maximum with an inherited minimum",
   "intent": "A more specific weekly maximum replaces only the broad maximum.",
   "pressure": "Two fixed duties use the individual maximum. The shared minimum still requires one duty for the other person.",
   "covers": {
     "kind.block_quota": [
-      "validator"
+      "validator",
+      "readiness"
     ],
     "kind.max_duties": [
       "validator"
@@ -323,6 +324,11 @@
     },
     "counterfactual": {
       "without_person_line": "requirements_conflict"
+    },
+    "readiness": {
+      "raised_minimum": 4,
+      "code": "PERSON_MINIMUM_SHORTFALL",
+      "possible": 3
     },
     "assignment": [
       "p0",

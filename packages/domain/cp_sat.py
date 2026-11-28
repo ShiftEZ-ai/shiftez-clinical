@@ -507,6 +507,14 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     # Existing publication content and explicitly protected work are never rebalanced.
     editable = {s['id'] for s in shifts if s['id'] in focus & selected and not s['locked']
                 and not period.get('base_publication_id')}
+    if not feasibility_only and _on_model is None:
+        from .finding_causes import quota_shortfalls
+        shortfalls = quota_shortfalls(data)
+        if shortfalls:
+            publish_issues([{'code': row['code'], 'person_id': row['person_ids'][0], 'rule_id': row['rule_ids'][0]}
+                            for row in shortfalls], 'unresolved' if diagnostic_proposal or _diagnostic_continuation
+                            else 'blocking')
+            result['precheck_issues'] = control.context['precheck_issues']
     # Work auto-schedule must keep (fixed, locked, outside the chosen sessions) and session-level setup it
     # cannot change (opening hours, resource pools) are checked now, so a problem there is reported as
     # what it is rather than surfacing after the search as a solver/validator disagreement. Rule checks
@@ -1878,7 +1886,7 @@ def _generate(snapshot, time_budget_seconds, workers, control, options, feasibil
             control.phase('preparation')
     else:
         state = dict(resume_state)
-        issues = []
+        issues = prepared['result'].get('precheck_issues', [])
         for findings, classification in ((prepared['result'].get('issues', []), 'protected'),
                 (prepared['result'].get('outside_scope_issues', []), 'outside_scope'),
                 (prepared['shortages'], 'unresolved')):

@@ -1,4 +1,4 @@
-"""On-demand recorded facts for a planning period; never a second check or solver proof."""
+"""Recorded candidate facts and necessary quota bounds for a planning period."""
 from datetime import date, timedelta
 from zoneinfo import ZoneInfo
 from sqlalchemy import func, select
@@ -9,6 +9,7 @@ from apps.api.errors import Problem, require
 from apps.api.snapshots import domain_snapshot, fingerprint, snapshot_hash
 from packages.contracts import schemas as s
 from packages.domain.candidate_evidence import candidate_evidence
+from packages.domain.finding_causes import quota_shortfalls
 from packages.domain.generation_scope import has_population, population_allows, selected_session_ids
 from packages.domain.recurrence import inactive
 from packages.domain.rota_summary import normalized_check, requirement_references
@@ -83,6 +84,7 @@ def readiness(db, actor, workspace_id, value):
         'start': start, 'end': end, 'people': len(ids),
         'sample_person_ids': sorted(ids)[:s.AUTOSCHEDULE_PRECHECK_LIMITS['samples']]}
         for (code, service, rule, typ, start, end), ids in groups.items()]
+    result['shortfalls'] = quota_shortfalls(source)
     return result
 
 

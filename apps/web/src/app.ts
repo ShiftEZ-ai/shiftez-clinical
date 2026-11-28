@@ -119,7 +119,7 @@ import {PAGE_TABS,parseRoute,routeHash,ruleNotice,withoutPrototype} from './rout
 import {grantRefusal} from './role_grants.js';
 import {integrationsPage} from './integrations.js';
 import {signInConfigPage} from './sign_in_config.js';
-import {readinessRegion,requirementEvidence,currency,notCompared,SUPERSEDED,type Currency} from './planning_context.js';
+import {readinessRegion,requirementEvidence,currency,notCompared,SHORTFALL_WORDS,SUPERSEDED,type Currency} from './planning_context.js';
 import {openAmendment} from './published_amendment.js';
 import {publishedSession,changesChip,markChanges,loadChanges,forgetChanges,changeable,replaceNext,stagedCoverage,changedSessions,markDiff,type ChangeDiff,type PublishedHooks} from './published_changes.js';
 import {ruleCataloguePage,readRulesAhead,relaxForPerson,promoteAdjustment,namer,countWords,numbersText,daysText,safetyRetirement,SAFETY_RETIREMENT_NOTICE} from './rule_catalogue.js';
@@ -4617,7 +4617,8 @@ function healthPills(data:WorkspaceData,fresh:boolean,counts:NonNullable<Schedul
 }
 
 /** A finding's kind by its code alone ("Time overlap"; leave in the department's words): rule-less lists and run prechecks. */
-const findingCodeLabel=(f:Row)=>f.code==='UNAVAILABLE'?issueKind(f):plainCode(f.code)||String(f.code||'Warning').toLowerCase().replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
+const findingCodeLabel=(f:Row)=>f.code==='UNAVAILABLE'?issueKind(f):(SHORTFALL_WORDS as Record<string,string>)[f.code]
+  ||plainCode(f.code)||String(f.code||'Warning').toLowerCase().replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
 // Run prechecks (job.progress.precheck_issues) by classification, blocking first, as the contract names them.
 const PRECHECK_GROUPS:[string,string,Tone][]=[['blocking',LEVEL_WORDS.must,'err'],['protected','Kept as they are','warn'],['unresolved','Not resolved yet','info'],['outside_scope','Outside these sessions','info']];
 /** What a run's checks found before its search: one line per code with its count and up to three sample sessions/rules. */
@@ -7840,8 +7841,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   // The basic scheduler weighs only mandatory rules: what it leaves out is said before the run, not only in its result (RUL-E05).
   const NOT_WEIGHED:Record<string,string>={wishes:'dated wishes',work_patterns:'work patterns',fairness_targets:'fairness targets',advisory_limits:'advisory limits'};
   const notWeighed=((capability.not_applied||[]) as Row[]).map(x=>NOT_WEIGHED[x.input]||String(x.input).replaceAll('_',' '));
-  // What is recorded for the people already on the chosen sessions (on request; never blocks Run).
-  const recorded=editable?readinessRegion({workspace:w.id,name,zone:zone(),check:()=>void command('workspace.validate',{reason:'Routine rota check'},w.id,w.revision).then(()=>refresh()).catch(reportError),input:()=>{const t=runScope(),g=grouped()?st().group:null;return typeof t==='string'?t:
+  // Readiness uses the current run scope and remains a read-only action.
+  const recorded=editable?readinessRegion({workspace:w.id,name:(kind,id)=>kind==='people'?personName(id):name(kind,id),zone:zone(),check:()=>void command('workspace.validate',{reason:'Routine rota check'},w.id,w.revision).then(()=>refresh()).catch(reportError),input:()=>{const t=runScope(),g=grouped()?st().group:null;return typeof t==='string'?t:
     {expected_fingerprint:String(data.current_fingerprint),session_ids:t,...(g?{generation_scope:{conditions:g,protection:keeping()?'keep_existing' as const:'rebalance_selected' as const}}:{})};}}):null;
   // What changes what happens stays in sight above the setup's fields (D76: those open under Change): nothing to fill,
   // what the basic scheduler does not weigh, a group this scheduler cannot take, a choice kept on this device.
@@ -7917,7 +7918,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   const panel=el('div',{class:'automatic-scheduling'},el('div',{class:'auto-head'},el('span',{class:'auto-icon','aria-hidden':'true'},icon('sparkle')),el('div',{},el('h2',{},'Auto-schedule'),sub),closeButton),body,foot);
   // Early findings change rarely: the same list keeps its node (and what was opened in it) across the run's reads.
   let early={key:'',node:null as HTMLElement|null};
-  const earlyIssues=(job:Row)=>{const found=Array.isArray(job.progress?.precheck_issues)?(job.progress.precheck_issues as Row[]).filter(i=>i&&typeof i==='object'&&i.code):[];if(!found.length)return '';
+  const earlyIssues=(job:Row)=>{const reported=job.progress?.precheck_issues??job.result?.precheck_issues;
+    const found=Array.isArray(reported)?(reported as Row[]).filter(i=>i&&typeof i==='object'&&i.code):[];if(!found.length)return '';
     const key=job.id+JSON.stringify(found);if(early.key!==key)early={key,node:precheckIssues(data,found)};return early.node!;};
     // reasons: the places a run found nobody can fill, kept on screen while the chosen "Fill everything else" runs.
   let active=false,review:Row|null=null,continuation:HTMLButtonElement|null=null,shortfall:Row|null=null,staleNote='',reasons:HTMLElement|null=null;
@@ -8256,6 +8258,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
       const current=currentDraft&&latest.status==='succeeded'&&!stale&&!discarded;
       const blocking:Row[]=!current?[]:(result?.issues||[]).length?result.issues:result?.status==='invalid_inputs'?(result.validation?.findings||[]).filter((f:Row)=>f.severity==='error'):[];
       const infeasible=current&&result?.status==='requirements_conflict';
+      if(infeasible)feedback.append(earlyIssues(latest));
       // Ran out of time (SR-25): not a failure. It continues from its saved preparation with twice the search time;
       // already at the department maximum it cannot, so it runs again from the start with the time you choose.
       const was=Number(latest.effective_options?.search_minutes)||AUTO_SCHEDULE_LIMITS.default_minutes,doubled=Math.min(was*2,maxMinutes);

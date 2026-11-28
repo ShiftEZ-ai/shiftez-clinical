@@ -263,6 +263,9 @@ def check_allocation_cover(data, ids, spec):
 
 
 def check_weekly_limit(data, ids, spec):
+    from packages.domain.finding_causes import quota_shortfalls
+    from packages.domain.validation import prepare_assignment_trials
+
     expected = spec['expect']
     sid, first, second, rid = ids['s2'], ids['p0'], ids['p1'], ids['workload']
     broken = copy.deepcopy(data)
@@ -275,6 +278,18 @@ def check_weekly_limit(data, ids, spec):
         place(missing_minimum, session, [second])
     assert any(row.get('rule_id') == rid and row['code'] == expected['validator']['missing'] and row['person_id'] == first
                for row in finding_observations(evaluate(missing_minimum)))
+
+    assert not [row for row in quota_shortfalls(prepare_assignment_trials(data)) if rid in row['rule_ids']]
+    raised = copy.deepcopy(data)
+    readiness = expected['readiness']
+    policy = next(p for p in raised['policies'] if p['id'] == rid)
+    # Remove the ceilings in this counterfactual so the raised minimum is the only changed obligation.
+    policy['definition']['rule']['lines'] = policy['definition']['rule']['lines'][:1]
+    policy['definition']['rule']['lines'][0]['numbers'] = {
+        'min': {'value': readiness['raised_minimum'], 'level': 'mandatory'}}
+    shortfalls = [row for row in quota_shortfalls(prepare_assignment_trials(raised)) if rid in row['rule_ids']]
+    assert {(row['code'], tuple(row['person_ids']), row['required'], row['possible']) for row in shortfalls} == {
+        (readiness['code'], (person,), readiness['raised_minimum'], readiness['possible']) for person in (first, second)}
 
     broad_only = copy.deepcopy(data)
     for policy in broad_only['policies']:
@@ -291,7 +306,7 @@ def check_weekly_limit(data, ids, spec):
         assert contrary['status'] == expected['counterfactual']['without_person_line'], contrary
         bound.update((session, first) for session in sessions if first in {
             p['person_id'] for p in shift(candidate, session)['participants']})
-    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
+    return {'assertions': {'validator', 'counterfactual', 'readiness', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
 def check_scenario(data, ids, spec):
