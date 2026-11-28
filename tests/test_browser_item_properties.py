@@ -119,6 +119,36 @@ def test_the_duty_code_is_the_configured_short_code_and_a_property(browser, live
         context.close()
 
 
+
+def test_grid_chips_say_a_service_or_location_short_code_and_keep_its_name(browser, live_server, h):
+    """A grid chip says a service's or location's configured short code; its tip and the chip's accessible name keep the
+    name, and a record with a blank code says its name."""
+    matrix_rota(h)
+    catalogues = h.get('admin', '/api/catalogues')
+    service = next(r for r in catalogues['services'] if r['id'] == h.seed['services'][0])
+    place = next(r for r in catalogues['locations'] if r['id'] == h.seed['locations'][0])
+    assert place['short_code'] == ''
+    h.command('admin', 'catalogue.bulk_update', {'catalogue': 'services', 'items': [{'id': service['id'], 'revision': service['revision']}],
+                                                  'set': {'short_code': 'FSV'}, 'reason': 'Codes for dense grids'})
+    h.command('coordinator', 'table_view.create', {'table_key': 'planner', 'name': 'Fictional month of service codes',
+        'definition': {'planner': {'mode': 'timeline', 'range': 'month', 'properties': [
+            {'key': 'code', 'on': False, 'form': 'chip'}, {'key': 'time', 'on': False, 'form': 'text'},
+            {'key': 'service', 'on': True, 'form': 'text'}, {'key': 'location', 'on': True, 'form': 'text'}]}}})
+    context, page = sign_in(browser, live_server, 'coordinator', viewport=DESKTOP)
+    try:
+        navigate(page, 'planner'); settled(page)
+        pick_view(page, 'Fictional month of service codes'); settled(page)
+        chip = page.locator('#schedule-view .pg-chip[data-session]').first
+        code = chip.locator('[data-part="service"]')
+        expect(code).to_have_text('FSV')
+        expect(code).to_have_attribute('data-tip', service['name'])
+        expect(chip.locator('[data-part="location"]')).to_have_text(place['name'])
+        expect(chip.locator('[data-part="location"]')).not_to_have_attribute('data-tip', re.compile('.'))
+        label = chip.get_attribute('aria-label')
+        assert service['name'] in label and place['name'] in label and 'FSV' not in label
+    finally:
+        context.close()
+
 # Which of a pill's name forms is on screen, per pill: the label, its short form or its code (person_pill.ts, L7).
 NAME_FORMS = """() => [...document.querySelectorAll('#schedule-view .wk-grid DRAFT_CHIP')].map(p => {
   const on = n => !!n && getComputedStyle(n).display !== 'none';

@@ -20,7 +20,7 @@ import type {Me,Catalogues,Row,PersonRow,WorkspaceData} from './types.js';
 import {mayDecide} from './independence.js';
 import type {LeadContextInput,RotaCoverageGap,CustomField,TypeDefinition,RequirementSegment,Supervision,Command,DepartmentContentInput} from './generated.js';
 import {CONTACT_KINDS,CONTACT_VISIBILITY} from './contacts.js';
-import {TAG_LIMITS,ROLE_NAMES,USUAL_ASSIGNEES_FIXED_DEFAULT,WEEKDAY_SHORT_LABELS,RULE_KINDS as GEN_RULE_KINDS,RULE_HELP as GEN_RULE_HELP,RULE_NUMBER_FIELD as GEN_RULE_NUMBER_FIELD,RULE_TOPICS as GEN_RULE_TOPICS,LINE_KINDS,PER_PERSON_KINDS,LINE_NUMBER_FIELDS,LINE_SETTINGS,ANY_LINE_SETTINGS,RULE_CATALOGUE,RULE_CATALOGUE_V2,NEVER_OVERRIDDEN} from './generated.js';
+import {TAG_LIMITS,ROLE_NAMES,USUAL_ASSIGNEES_FIXED_DEFAULT,WEEKDAY_SHORT_LABELS,RULE_KINDS as GEN_RULE_KINDS,RULE_HELP as GEN_RULE_HELP,RULE_NUMBER_FIELD as GEN_RULE_NUMBER_FIELD,RULE_TOPICS as GEN_RULE_TOPICS,LINE_KINDS,PER_PERSON_KINDS,LINE_NUMBER_FIELDS,LINE_SETTINGS,ANY_LINE_SETTINGS,RULE_CATALOGUE,RULE_CATALOGUE_V2,NEVER_OVERRIDDEN,BULK_COLLECTIONS} from './generated.js';
 import type {Conditions,PersonAmount,LineSettings,RuleLine} from './generated.js';
 import {tagChoices,tagLabel} from './tags.js';
 import {conditionBuilder,conditionsText,lineMatches,treeMatches,scopeAsConditions,withoutFields,ownLines,RULE_FIELDS,SESSION_FIELDS,type ConditionField} from './conditions.js';
@@ -106,6 +106,12 @@ function lookup(ctx:Context,kind:string,id:string):Row|undefined;
 function lookup(ctx:Context,kind:string,id:string):Row|undefined{return all(ctx,kind).find(r=>r.id===id);}
 const today=(ctx:Context)=>toLocal(new Date().toISOString(),ctx.me.organisation.timezone).slice(0,10);
 const optionalNumber=(input:HTMLInputElement)=>input.value===''?null:Number(input.value);
+/** The one short code field (duty types, services, locations): label, length and pattern from the contract; typing is upper-cased. */
+function codeField(kind:'assignment_types'|'services'|'locations',row?:Row){
+  const spec=BULK_COLLECTIONS[kind].fields.short_code,f=field(spec.label,'text',row?.short_code||'',{maxlength:spec.schema.maxLength,pattern:spec.schema.pattern.replace(/^\^|\$$/g,''),autocomplete:'off'});
+  f.input.addEventListener('input',()=>{f.input.value=f.input.value.toUpperCase().replace(/[^A-Z0-9]/g,'');});
+  return f;
+}
 /** How many people a session of this duty type needs, in words ("2 people · with skills"); the Duty types list says the same. */
 export function staffNeeded(type:Row|undefined){const q=(type?.definition?.requirements||[]) as Row[];if(!q.length)return 'No minimum';
   const min=placesOf(type),skills=q.some(x=>x.capabilities?.length);return `${min} ${min===1?'person':'people'}${skills?' · with skills':''}${type!.definition.supervision?' · supervised trainees':''}`;}
@@ -401,8 +407,9 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
         const mode=select('Consultation mode',[{value:'unspecified',label:'Not specified'},{value:'physical',label:'In person'},{value:'virtual',label:'Virtual'}],row?.mode||'unspecified');
         const calendar=openingHours(ctx,row);
         const colour=colourSwatches(row?.colour||'',true,'Colours this service’s group on the schedule and calendars. Automatic picks a stable colour for you.');
-        form.append(mode.wrap,calendar.wrap,colour.wrap);
-        value=()=>({name:name.input.value,description:description.input.value,active:active.input.checked,starts_on:start.input.value,ends_on:end.input.value||null,mode:mode.input.value,calendar_id:calendar.input.value||null,colour:colour.input.value});
+        const code=codeField('services',row);
+        form.append(code.wrap,mode.wrap,calendar.wrap,colour.wrap);
+        value=()=>({name:name.input.value,description:description.input.value,active:active.input.checked,starts_on:start.input.value,ends_on:end.input.value||null,mode:mode.input.value,calendar_id:calendar.input.value||null,colour:colour.input.value,short_code:code.input.value});
       }else if(kind==='event_types'){
         // An event type's defaults (EventTypeInput): new events of it start from these. also_email keeps its saved value.
         const colour=colourSwatches(row?.colour||'',true,'Shown beside events of this type. Automatic picks a stable colour.');
@@ -429,9 +436,9 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
         const type=select('Location type',options(all(ctx,'location_types')),row?.location_type_id||'');
         const parent=select('Parent location or shared resource',options(all(ctx,'locations').filter(r=>r.id!==row?.id)),row?.parent_id||'',false);
         const capacity=field('Concurrent session capacity','number',row?.capacity??1,{min:1,max:1000,required:true});
-        const calendar=openingHours(ctx,row);
-        form.append(type.wrap,parent.wrap,capacity.wrap,calendar.wrap,note('Capacity counts simultaneous sessions consuming this resource, including sessions in child locations. It does not count people.'));
-        value=()=>({name:name.input.value,active:active.input.checked,starts_on:start.input.value,ends_on:end.input.value||null,location_type_id:type.input.value,parent_id:parent.input.value||null,calendar_id:calendar.input.value||null,capacity:Number(capacity.input.value)});
+        const calendar=openingHours(ctx,row),code=codeField('locations',row);
+        form.append(code.wrap,type.wrap,parent.wrap,capacity.wrap,calendar.wrap,note('Capacity counts simultaneous sessions consuming this resource, including sessions in child locations. It does not count people.'));
+        value=()=>({name:name.input.value,active:active.input.checked,starts_on:start.input.value,ends_on:end.input.value||null,location_type_id:type.input.value,parent_id:parent.input.value||null,calendar_id:calendar.input.value||null,capacity:Number(capacity.input.value),short_code:code.input.value});
       }
       if(kind==='operating_calendars'){
         const calendar=operatingCalendarFields(ctx,row);form.append(calendar.wrap);
@@ -446,8 +453,7 @@ export function catalogueForm(ctx:Context,kind:string,row?:Row,preset?:Record<st
       }
       if(kind==='assignment_types'){
         const d:TypeDefinition=row?.definition||{};
-        const shortCode=field('Short code','text',row?.short_code||'',{maxlength:6,pattern:'[A-Z0-9]{0,6}',autocomplete:'off'});
-        shortCode.input.addEventListener('input',()=>{shortCode.input.value=shortCode.input.value.toUpperCase().replace(/[^A-Z0-9]/g,'');});
+        const shortCode=codeField('assignment_types',row);
         const purpose=select('Purpose',[{value:'staffed',label:'Staffed timed duty'},{value:'group',label:'Group activity'},{value:'protected',label:'Protected time'}],d.purpose||'staffed');
         const colour=colourSwatches(d.colour||'',true,'Colours this duty on the schedule, calendars and rotas. Automatic picks a stable colour; changing it never needs the draft refreshed.');
         const maximumDuration=field('Maximum duration · minutes','number',d.maximum_duration_minutes||720,{required:true,min:15,max:2160});

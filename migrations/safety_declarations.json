@@ -709,5 +709,10 @@
     "class": "additive",
     "sha256": "a3e70259840574baba7c0b7ee498e1a1aeac2e299feb06927434c44267c172cc",
     "review": "Adds partial unique indexes for active calendar feeds and live validation and generation jobs. Read-only preflight checks retained duplicates and the migration preserves existing rows."
+  },
+  "0159_service_location_codes": {
+    "class": "additive",
+    "sha256": "9ea53b676b9e03181d180f0c84b97678b9260658484115d49e2f15532e066049",
+    "review": "Adds an optional short code to services and locations with an empty default and preserves every existing row without a backfill."
   }
 }

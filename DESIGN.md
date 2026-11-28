@@ -351,6 +351,10 @@ and a desktop window narrowed below it gets the same rule at once.
   administrator can always sign in with a password) shows only with institutional only. Programme set-up stays on Programmes & rotations
   (programme leads own it). The auto-schedule options are one component in five visible groups,
   used for the department defaults and for one run (Schedule › Auto-schedule).
+- Short codes (Places & services): a service or location may carry an optional short code by the duty type's rule (A–Z
+  and 0–9, up to 6; `ShortCode` in the contracts), set in its form or in place on one row or many, with Undo; a grid
+  chip says the code while its tip and accessible name keep the name, print's service pill says it with the name in the
+  key, and a blank code shows the name.
 - Score weights are relative: each part shows its share ("35%"); any total is fine and is not said. The warning line
   speaks only when the weights cannot be used, and says why.
 - Score review (`score_review.ts`): Configuration › Auto-schedule & scoring ›

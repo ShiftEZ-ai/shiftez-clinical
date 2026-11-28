@@ -48,9 +48,10 @@ function weeksOf(days:string[],weekStart:number):string[][]{
   const starts=new Set(days.map(x=>weekOf(x,weekStart)));
   return [...starts].map(start=>Array.from({length:7},(_,i)=>addDays(start,i)));
 }
-/** The registry from the catalogues, until GET /api/legend answers (same shape, same sources). */
+/** The registry from the catalogues, until GET /api/legend answers (same shape, same sources). A service's pill says
+ *  its short code where it has one (the key pairs it with the name); a blank code says the name. */
 function registryOf(d:PrintData):LegendItem[]{
-  const svc=[...d.services.values()].map((r,order):LegendItem=>({kind:'service',key:String(r.id),label:labelOf(r),short:String(r.short_label||r.short_name||labelOf(r)),colour:colourOf(r,String(r.id)),order}));
+  const svc=[...d.services.values()].map((r,order):LegendItem=>({kind:'service',key:String(r.id),label:labelOf(r),short:String(r.short_code||labelOf(r)),colour:colourOf(r,String(r.id)),order}));
   const duty=[...d.types.values()].map((r,order):LegendItem=>({kind:'duty',key:String(r.id),label:labelOf(r),short:dutyCode(r as {name?:string;short_code?:string}),colour:typeColour(String(r.id),r.definition?.colour),order}));
   return [...svc,...duty,...MARK_DEFAULTS,WEEKEND];
 }

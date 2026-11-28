@@ -434,6 +434,7 @@ class Location(Record, Effective, DepartmentRecord, Base):
     parent_id: Mapped[str | None] = mapped_column(ForeignKey("locations.id"))
     calendar_id: Mapped[str | None] = mapped_column(ForeignKey("operating_calendars.id"))
     capacity: Mapped[int] = mapped_column(Integer, default=1)
+    short_code: Mapped[str] = mapped_column(String(6), default="", server_default="")
     __table_args__ = (CheckConstraint("capacity > 0 AND capacity <= 1000"),)
 
 
@@ -479,6 +480,7 @@ class Service(InsertionOrdered, Record, Effective, DepartmentRecord, Base):
     mode: Mapped[str] = mapped_column(String(16), default="unspecified", server_default="unspecified")
     calendar_id: Mapped[str | None] = mapped_column(ForeignKey("operating_calendars.id"))
     colour: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    short_code: Mapped[str] = mapped_column(String(6), default="", server_default="")
     __table_args__ = (CheckConstraint("mode IN ('unspecified','physical','virtual')"),)
 
 
