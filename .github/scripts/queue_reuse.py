@@ -14,7 +14,6 @@ from zlib import error as ZipDataError
 TRUSTED = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(Path(__file__).resolve().parent), str(TRUSTED / "ci")]
 import hosted_ci as hosted
-from quarantine_registry import utc_today
 import stale_evidence as evidence
 from trusted_ci import output
 from trusted_verdict import assert_inventory
@@ -125,6 +124,9 @@ def verified_reports(push_plan, required_run=None):
         raise ValueError("Expected a protected main queue landing")
     tree = revision(sha + "^{tree}")
     bind_plan(push_plan, sha, tree, base)
+    allowance_date = push_plan.get("allowance_date")
+    if not allowance_date:
+        raise ValueError("Main push plan lacks a pinned allowance date")
     check_controls(base, sha, revision("HEAD"))
 
     repository = event["repository"]["full_name"]
@@ -146,7 +148,7 @@ def verified_reports(push_plan, required_run=None):
             or gates[0]["status"] != "completed" or gates[0]["conclusion"] != "success"
             or (gates[0]["run_id"], gates[0]["run_attempt"], gates[0]["head_sha"]) != (run_id, attempt, sha)):
         raise ValueError("The required queue gate did not complete successfully")
-    if not gates[0]["started_at"].startswith(utc_today().isoformat() + "T"):
+    if not gates[0]["started_at"].startswith(allowance_date + "T"):
         raise ValueError("Queue verdict predates today's allowance evaluation")
 
     gate_id = gates[0]["id"]
@@ -187,6 +189,8 @@ def verified_reports(push_plan, required_run=None):
     if (proof["plan_sha256"] != hosted.digest(queue_plan)
             or any(queue_plan[key] != push_plan[key] for key in ("inventory_sha256", "duration_sha256"))):
         raise ValueError("Queue plan seal or planner inputs differ")
+    if queue_plan.get("allowance_date") != allowance_date:
+        raise ValueError("Queue and push plans have different allowance dates")
     inventory = git("ls-tree", "-r", "-z", sha, "--", "tests")
     for plan in (queue_plan, push_plan):
         # Both plans cover the committed files, with event-specific shard widths.

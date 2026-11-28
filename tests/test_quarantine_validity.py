@@ -1,6 +1,6 @@
 """One visible gate for malformed reviewed quarantines."""
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date
 import hashlib
 import json
 from pathlib import Path
@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from ci.quarantine_registry import decode_registry, expired_entries
+from ci.quarantine_registry import decode_registry, expired_entries, utc_today
 
 from tests.quarantine import entries
 
@@ -18,7 +18,7 @@ MOVED_REGISTRY = FIXTURES / "quarantine_after_migration.json"
 
 
 def test_reviewed_quarantine_is_valid_and_current():
-    today = datetime.now(timezone.utc).date()  # real clock: quarantine expiry is wall-clock policy
+    today = utc_today()
     registry = entries(Path(__file__).with_name("quarantine.json"), today)
     for row in expired_entries(registry, today):
         print(f"Expired quarantine remains active: {row['nodeid']}, issue {row['issue']}")
@@ -56,6 +56,13 @@ def registry_row(name, issue, *, expires="2000-01-02", kind="baseline", blocker=
     return {"nodeid": f"tests/test_example.py::test_{name}", "reason": f"{kind}: reviewed",
             "owner": "maintainers", "issue": issue, "blocker": blocker,
             "added": "2000-01-01", "expires": expires}
+
+
+@pytest.mark.parametrize("value", ["", "20260101", "2026-W01-4", "2026-02-30"])
+def test_allowance_date_rejects_invalid_or_noncanonical_input(monkeypatch, value):
+    monkeypatch.setenv("CI_ALLOWANCE_DATE", value)
+    with pytest.raises(ValueError, match="Invalid CI allowance date"):
+        utc_today()
 
 
 def test_quarantine_report_groups_expiry_classes_and_blockers(tmp_path):

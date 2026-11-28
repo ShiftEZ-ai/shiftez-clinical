@@ -1,5 +1,5 @@
 """Failed-node retry and reviewed quarantine contracts, without databases or browsers."""
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 import importlib.util
 import json
 import os
@@ -10,17 +10,19 @@ import sys
 
 import pytest
 
+from ci.quarantine_registry import utc_today
 from tests.quarantine import entries
 
 
 @pytest.fixture
-def classified_script(tmp_path):
+def classified_script(tmp_path, monkeypatch):
     root = tmp_path / "wrapper"
     script = root / ".github/scripts/pytest_ci.py"
     script.parent.mkdir(parents=True)
     shutil.copyfile(Path(__file__).parents[1] / ".github/scripts/pytest_ci.py", script)
     (root / "tests").mkdir()
-    today = datetime.now(timezone.utc).date()  # real clock: synthetic reviewed entries must be current
+    today = date(2026, 1, 1)
+    monkeypatch.setenv("CI_ALLOWANCE_DATE", today.isoformat())
     (root / "tests/quarantine.json").write_text(json.dumps([
         {**entry("tests/test_sample.py::" + name), "added": today.isoformat(),
          "expires": (today + timedelta(days=1)).isoformat()} for name in ("test_retry", "test_flaky")]))
@@ -236,7 +238,7 @@ def test_teardown(bad_teardown):
 def test_blocking():
     assert False
 ''')
-    today = datetime.now(timezone.utc).date()  # real clock: this subprocess fixture is relative to quarantine expiry
+    today = utc_today()
     rows = [{**entry("tests/test_sample.py::test_" + name), "added": today.isoformat(), "expires": (today + timedelta(days=1)).isoformat()}
             for name in ("fail", "pass", "setup", "teardown")]
     (tmp_path / "quarantine.json").write_text(json.dumps(rows))

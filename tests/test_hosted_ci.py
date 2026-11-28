@@ -40,8 +40,9 @@ def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
 
     base, head, tree = "a" * 40, "b" * 40, "c" * 40
     inventory = ["tests/test_example.py"]
-    candidate = {"sha": head, "tree": tree, "base_sha": base,
+    candidate = {"sha": head, "tree": tree, "base_sha": base, "allowance_date": "2026-01-01",
                  "inventory_sha256": hosted_ci.digest(inventory)}
+    monkeypatch.setenv("CI_ALLOWANCE_DATE", candidate["allowance_date"])
     artifact = tmp_path / "shard-plan.json"
     artifact.write_text(json.dumps(candidate), encoding="utf-8")
     monkeypatch.setenv("CI_CHECKS_PLAN", str(artifact))
@@ -79,6 +80,11 @@ def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
         artifact.write_text(json.dumps(stale), encoding="utf-8")
         with pytest.raises(ValueError, match="Checks plan differs"):
             run(base, False, "browser", 1, hosted_ci.digest(stale))
+    artifact.write_text(json.dumps(candidate), encoding="utf-8")
+    with monkeypatch.context() as context:
+        context.setenv("CI_ALLOWANCE_DATE", "2026-01-02")
+        with pytest.raises(ValueError, match="allowance date differs from Checks"):
+            run(base, False, "browser", 1, seal)
     artifact.unlink()
     with pytest.raises(FileNotFoundError):
         run(base, False, "browser", 1, seal)
