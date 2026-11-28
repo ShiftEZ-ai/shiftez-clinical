@@ -5,7 +5,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
-from .test_browser import browser, live_server, sign_in, navigate, pick_view, open_rota, planner_tool, press_escape  # noqa: F401
+from .test_browser import browser, live_server, sign_in, navigate, pick_view, open_rota, planner_tool, press_escape, reconnect, wait_held  # noqa: F401
 from .test_rule_templates import propose, activate
 from .rules_support import rule_action, rule_row
 
@@ -670,7 +670,41 @@ def test_a_rules_panel_shows_the_value_a_revised_mandatory_rule_now_binds(browse
         expect(unchanged).not_to_contain_text('now binds')
         expect(unchanged).not_to_contain_text('Captured')
         if status == 'draft':
-            rule_action(revised, 'Adjust for this rota')
+            # The rota is checked again while a refresh is reading it, and More opens before that read answers: the
+            # redrawn panel reads the rule map again before it has rows, and the open menu waits for the row's new
+            # button instead of closing; its item then opens the same numeric form.
+            expect(page.locator('.app-footer').get_by_text(re.compile(r'^Checking the rota'))).to_have_count(0, timeout=20000)
+            head = revised.locator('.rk-row-head')
+            if head.get_attribute('aria-expanded') != 'true':
+                head.click()
+            drafts, maps = [], []
+            draft = re.compile(rf"/api/workspaces/{w['id']}(\?.*)?$")
+            rule_map = re.compile(rf".*/api/workspaces/{w['id']}/rule-map$")
+            page.route(draft, lambda route: drafts.append(route))
+            page.route(rule_map, lambda route: maps.append(route))
+            now = h.detail(w)['workspace']
+            checked = now['validation']['evaluated_at']
+            h.lifecycle(now, 'validate')
+            assert h.detail(w)['workspace']['validation']['evaluated_at'] != checked
+            reconnect(page)
+            wait_held(page, drafts)
+            more = revised.locator('.rk-more')
+            more.evaluate("b => { b.dataset.drawnBefore = '' }")
+            more.click()
+            item = page.get_by_role('menu', name='More actions').get_by_role('menuitem', name=re.compile('^Adjust for this rota'))
+            expect(item).to_be_visible()
+            for route in drafts:
+                route.continue_()
+            page.unroute(draft)
+            wait_held(page, maps)
+            expect(panel.get_by_text('Working out which rules apply', exact=False)).to_be_visible()
+            expect(item).to_be_visible()
+            for route in maps:
+                route.continue_()
+            page.unroute(rule_map)
+            expect(panel.locator('[data-drawn-before]')).to_have_count(0)
+            expect(more).to_have_attribute('aria-expanded', 'true')
+            item.click()
             field = revised.get_by_label(re.compile(r'^New number for .Weekly duty limit. in this rota, captured 5, now binds 2'))
             expect(field).to_have_value('5')
             expect(field.locator('..')).to_contain_text('now binds 2')  # the field's own row: the number, its unit and the binding value

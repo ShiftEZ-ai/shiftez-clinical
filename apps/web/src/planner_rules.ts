@@ -3,7 +3,7 @@ import {sidePanel} from './side_panel.js';
 /* Rules in context on the schedule: what applies to whatever you point at, which rule wins, where something deviates
  * from the general rule, and a highlight of everything one rule applies to. The server decides every match
  * (GET /api/workspaces/{id}/rule-map, the same evaluator the checks use); this file only maps ids to the screen. */
-import {el,icon,plural,overflowMore,hoverCard,refreshHoverCard,notify,reportError,button,guard,labelOf,formatDate,formatTime,note,announce,toLocal,tabs,legend,segmented,menu,menuSource,opens,type Legend,type Child,type MenuEntry,legendAt} from './dom.js';
+import {el,icon,plural,overflowMore,hoverCard,refreshHoverCard,notify,reportError,button,guard,labelOf,formatDate,formatTime,note,announce,toLocal,tabs,legend,segmented,menu,menuSource,awaitAdoption,opens,type Legend,type Child,type MenuEntry,legendAt} from './dom.js';
 import {availabilityPanel} from './rota_availability.js';
 import {personLink,fullNameOf} from './person_label.js';
 import {rotaSentences,unexplainedLine,type ExplainedRule,type Conflict} from './rules_explained.js';
@@ -819,6 +819,8 @@ function ruleRow(i:Item,t:Target,redraw:()=>void,key?:Legend,marked=false):HTMLE
   if(open)li.append(ruleDetail(i,t,redraw));
   return li;
 }
+/** The popover key of a rule row's ⋯ menu (awaitAdoption in mountRules). */
+const RULE_MORE='rule-more';
 /** The opened row (CONTRACT §10): a few short sentences (where the number comes from, what changed here with who, when,
  *  why and its review, what it overrides), then Fix when it fails and ⋯ for the rest (the shared menu). Readers who
  *  can't change it, and phones, get Open rule only. A chosen change opens its short form below. */
@@ -832,7 +834,7 @@ function ruleDetail(i:Item,t:Target,redraw:()=>void):HTMLElement{
   // D-057: a live redraw (the sentences or rule map arriving) rebuilds this row; the open ⋯ moves to its new button and
   // reads that draw's items (menuSource), never closes under the person or acts on the previous draw's rule.
   menuSource(more,()=>ruleMenu(i,t,policy,redraw));
-  more.addEventListener('click',()=>menu(more,'More actions',()=>ruleMenu(i,t,policy,redraw),{keep:`[data-rk-row="${CSS.escape(r.id)}"] .rk-detail .rk-more`}));
+  more.addEventListener('click',()=>menu(more,'More actions',()=>ruleMenu(i,t,policy,redraw),{key:RULE_MORE,keep:`[data-rk-row="${CSS.escape(r.id)}"] .rk-detail .rk-more`}));
   acts.append(more);
   const form=openAct===r.id+':rota'?rotaOnly(r):openAct===r.id+':exc'?exceptionAct(r,t,policy):null;
   if(form?.tagName==='FORM'){
@@ -1006,6 +1008,9 @@ export function mountRules(ctx:Context,data:WorkspaceData,bodyWrap:HTMLElement,m
   observer.observe(mainCol,{childList:true,subtree:true});
   for(const type of ['pointerover','focusin','click','keydown'])mainCol.addEventListener(type,wireAt,true);
   requestAnimationFrame(decorate);
+  // A rota whose check changed (a check landing) shows its panel's rows only once its rule map is read again: an open
+  // row menu waits for its row's new button (awaitAdoption) instead of closing when the page swaps in.
+  const adopt=!keep&&pinned&&!ready()?awaitAdoption(RULE_MORE):()=>{};
   if(keep){host.append(keep);if(focused)requestAnimationFrame(()=>{if(keep.isConnected&&document.activeElement===document.body)focused.focus({preventScroll:true});});}
   else drawPanel();
   // The map is read when it is first needed (a highlight to show, a pinned panel, or the first hover or focus on the
@@ -1019,7 +1024,7 @@ export function mountRules(ctx:Context,data:WorkspaceData,bodyWrap:HTMLElement,m
   function load(){return loadRuleMap(data).then(()=>{if(dataNow!==data)return;
     if(pending){lock={workspace:data.workspace.id,rule:pending};const r=map!.rules.find(x=>x.id===pending);pending='';
       if(r){pin({kind:'rota',label:'Rules in this rota'});openRules=new Set([r.id]);}else{lock=null;notify('That rule does not apply to this rota.','info');}}
-    decorate();refreshHoverCard();if(pinned&&(!keep||panelOf.get(keep)!==pinned))drawPanel();}).catch(e=>{if(pinned)drawPanel();console.warn('Rule map unavailable',e);});}
+    decorate();refreshHoverCard();if(pinned&&(!keep||panelOf.get(keep)!==pinned))drawPanel();}).catch(e=>{if(pinned)drawPanel();console.warn('Rule map unavailable',e);}).finally(adopt);}
 }
 /** The "Why?" list for one person on one session, from the exact per-session check (shift_rules), with the same
  *  rows and change actions as the pinned panel. */
