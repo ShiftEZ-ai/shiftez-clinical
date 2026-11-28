@@ -7727,8 +7727,8 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   const prefetched=jobsEarly?.id===w.id?jobsEarly:null;jobsEarly=null;
   const reused=reuse&&lastJobs?.id===w.id&&lastJobs.activity===seenActivity?lastJobs:null;
   let reload:(()=>Promise<void>)|undefined;
-  const start=async(first=false)=>{
-  const serial=renderSerial,firstWoke=(first?(reused??prefetched)?.woke:undefined)??panelWakes;
+  const start=async(useInitialRead=false)=>{
+  const serial=renderSerial,firstWoke=(useInitialRead?(reused??prefetched)?.woke:undefined)??panelWakes;
   // The panel's place shows its shape while the jobs are read, never an empty column (FD-03).
   const sk=skeleton('panel','Loading auto-schedule…');target.append(sk);
   // The page swaps in with this skeleton; an open People to schedule builder waits for its new button.
@@ -7736,7 +7736,7 @@ async function schedulingPanel(target:HTMLElement,data:WorkspaceData,editable:bo
   try{
   let initialJobs:Row;
   try{
-    const result=first?(reused?{jobs:reused.jobs}:await prefetched?.read):undefined;
+    const result=useInitialRead?(reused?{jobs:reused.jobs}:await prefetched?.read):undefined;
     if(result&&'error' in result)throw result.error;
     initialJobs=result?.jobs??await get<Row>('/api/jobs?workspace_id='+encodeURIComponent(w.id));
   }catch(e){
