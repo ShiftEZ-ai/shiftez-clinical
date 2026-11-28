@@ -7,6 +7,7 @@ from threading import Barrier, Event, Lock
 import pytest
 from sqlalchemy import select
 
+from .governance_support import retire_rule
 from apps.api import models as m
 from apps.api.db import transaction
 from apps.api.services import rule_catalogue
@@ -56,8 +57,7 @@ def test_coordinator_counts_refresh_after_policy_edits(h):
     before = h.get('coordinator', path)['rules_in_force']
     policy = h.policy({'kind': 'minimum_cover', 'minimum': 1})
     assert h.get('coordinator', path)['rules_in_force'] == before + 1
-    h.command('approver', 'policy.retire', {'reason': 'Synthetic count invalidation'},
-              policy['id'], policy['revision'])
+    retire_rule(h, policy, 'Synthetic count invalidation')
     assert h.get('coordinator', path)['rules_in_force'] == before
 
 

@@ -1,6 +1,7 @@
 """Public v3.4 regressions for original named artifacts and private agent controls."""
 import hashlib
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -376,7 +377,7 @@ class ImporterV34Tests(unittest.TestCase):
         self.assertIn('python -I "$GITHUB_WORKSPACE/.trusted-controls/.github/scripts/trusted_ci.py" run', run)
 
     def test_pipeline_keeps_default_limits_until_measurement(self):
-        # Lower limits require new measured runs in ci/hosted-durations.json.
+        # The bootstrap balancing inputs stay fixed. Job limits use the separate hosted timing sample.
         durations = Path(__file__).resolve().parents[1] / 'ci/hosted-durations.json'
         source_runs = json.loads(durations.read_text(encoding='utf-8'))['source_run_ids']
         self.assertCountEqual(source_runs, [44114266718, 44131154009])
@@ -387,7 +388,18 @@ class ImporterV34Tests(unittest.TestCase):
 
         # Only the external packet copy has these sibling YAMLs; public layout resolves workflows from root.
         root=HELPERS if (HELPERS/'ci.yml').is_file() else HELPERS.parent/'workflows'
-        for name in ('ci.yml','ci-tests.yml','working-policy.yml'):
+        sample = json.loads((durations.parents[1] / '.github/ci-timings.json').read_text(encoding='utf-8'))
+        measured = {Path(record['workflow']).name: record['jobs']
+                    for record in (sample, *sample['additional_workflows'])}
+
+        def job_limit(workflow, job_id):
+            record = measured[workflow][job_id]
+            events = record['events']
+            p95_seconds = max(event['p95_seconds'] for event in events.values())
+            self.assertAlmostEqual(record['p95_minutes'], p95_seconds / 60, places=6)
+            return math.ceil(p95_seconds * 1.25 / 60), max(event['max_seconds'] for event in events.values())
+
+        for name in ('ci.yml', 'ci-tests.yml', 'working-policy.yml', 'dependency-graph.yml'):
             doc=yaml.load((root/name).read_text(),Loader=yaml.BaseLoader)
             jobs = doc['jobs']
             if name == 'working-policy.yml':
@@ -417,6 +429,7 @@ class ImporterV34Tests(unittest.TestCase):
                 }
                 for shard, limit in limits.items():
                     self.assertEqual(jobs[shard].get('uses'), './.github/workflows/ci-tests.yml')
+                    self.assertEqual(jobs[shard]['with']['suite'], shard)
                     self.assertEqual(jobs[shard]['strategy'].get('max-parallel'), limit)
                     count = shard + '_count'
                     self.assertEqual(jobs['checks']['outputs'][count],
@@ -432,9 +445,25 @@ class ImporterV34Tests(unittest.TestCase):
                 with self.subTest(workflow=name, job=job_id):
                     if name == 'ci.yml' and job_id in ('unit', 'browser'):
                         self.assertNotIn('timeout-minutes', job)
+                    elif name == 'ci-tests.yml':
+                        unit_limit, unit_max = job_limit('ci.yml', 'unit')
+                        self.assertLessEqual(unit_limit, 60)
+                        self.assertLess(unit_max, unit_limit * 60)
+                        # The observed browser tail still needs the original cap. See DELIVERY.md.
+                        self.assertEqual(job.get('timeout-minutes'),
+                                         "${{ inputs.suite == 'unit' && " + str(unit_limit) + " || 60 }}")
+                    elif name == 'ci.yml' and job_id == 'ci-gate':
+                        # Its artifact downloads share the browser stall (issue 856). See DELIVERY.md.
+                        self.assertEqual(job.get('timeout-minutes'), '10')
+                    elif job_id not in measured.get(name, {}):
+                        # A new job keeps the default cap until the timing sample measures it.
+                        self.assertEqual(job.get('timeout-minutes'), '10',
+                                         f'{name} {job_id} has no timing record: keep 10 until measured')
                     else:
-                        expected = '60' if name == 'ci-tests.yml' else '10'
-                        self.assertEqual(job.get('timeout-minutes'), expected)
+                        limit, measured_max = job_limit(name, job_id)
+                        self.assertLessEqual(limit, 10)
+                        self.assertLess(measured_max, limit * 60)
+                        self.assertEqual(job.get('timeout-minutes'), str(limit))
                     for step in job.get('steps', []):
                         self.assertNotIn('timeout-minutes', step)
         trusted_ci = (HELPERS/'trusted_ci.py').read_text()

@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 
 from apps.api import models as m
 from apps.api.db import transaction
+from .governance_support import retire_rule
 from .test_bulk import REASON, preview
 from .test_bulk_inverse_gates import generations
 from .test_bulk_reverse_transitions import proposal
@@ -64,8 +65,7 @@ def test_declined_policy_restore_reuses_conversion_admission(request, database, 
 def test_retired_policy_restore_reuses_conversion_admission(request, database, kind):
     h = request.getfixturevalue(database)
     original = approve(h, historical_proposal(h, kind))
-    retired = h.command("approver", "policy.retire", {"reason": REASON},
-                        original["id"], original["revision"])["record"]
+    retired = retire_rule(h, original, REASON)["record"]
     convert(h)
     error = h.command("approver", "policy.restore", {"reason": REASON},
                       retired["id"], retired["revision"], status=409)["error"]
@@ -143,7 +143,7 @@ def test_group_retirement_restores_duplicate_legacy_predecessor_only_once(reques
         "starts_on": "2020-01-01", "definition": {"rule": {"kind": "min_rest", "hours": 12},
                                                    "merged_ids": [original["id"], original["id"]]}})["record"]
     current = approve(h, group)
-    retired = h.command("approver", "policy.retire", {"reason": REASON}, current["id"], current["revision"])
+    retired = retire_rule(h, current, REASON)
     assert retired["restored_ids"] == [original["id"]]
     with transaction(h.app.state.engine) as db:
         row = db.get(m.Policy, original["id"])

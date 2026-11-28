@@ -12,7 +12,7 @@ from sqlalchemy import select
 from apps.api import models as m
 from apps.api.db import transaction
 from packages.contracts.schemas import ROLE_NAMES
-from .governance_support import identity
+from .governance_support import identity, retirement_vote
 from .test_browser import add_filter, browser, condition, holding, live_server, fonts_ready, navigate, route_fetch, sign_in, wait_held  # noqa: F401
 from .test_browser_rule_catalogue import flag, rule_action, rules_action
 from .test_browser_rule_filter_builder import pick, rota_this_week
@@ -913,7 +913,8 @@ def test_approver_can_review_a_live_catalogue_rule_from_detail_actions(browser, 
 def test_catalogue_rule_page_has_retire_and_in_draft(browser, live_server, h):
     """UX-16: the catalogue rule page shows how the rule fares in the draft being planned and lets an approver retire it."""
     flag(h, legacy=False)
-    v2_rule(h, 'duty_spacing', [line({'min': {'value': 11, 'level': 'mandatory'}})])
+    rule = v2_rule(h, 'duty_spacing', [line({'min': {'value': 11, 'level': 'mandatory'}})])
+    retirement_vote(h, rule, 'No longer needed')
     h.shift(h.workspace('Retire draft'))
     context, page = sign_in(browser, live_server, 'approver')
     try:
@@ -933,15 +934,14 @@ def test_catalogue_rule_page_has_retire_and_in_draft(browser, live_server, h):
 
 def test_catalogue_retire_waiting_for_a_second_approval_keeps_the_rule(browser, live_server, h):
     """With two approvals required, the first approver's retire says it waits (never "retired") and its Undo withdraws."""
-    from .test_policy_transition_approvals import settings
     flag(h, legacy=False)
     v2_rule(h, 'duty_spacing', [line({'min': {'value': 11, 'level': 'mandatory'}})])
-    settings(h, 2)
     context, page = sign_in(browser, live_server, 'approver')
     try:
         navigate(page, 'rules/duty_spacing')
         rule_action(page, 'Retire rule')
         dialog = page.get_by_role('dialog', name=re.compile('^Retire '))
+        expect(dialog).to_contain_text('Retiring a safety rule needs approval from at least two different people')
         dialog.get_by_label('Reason', exact=True).fill('No longer needed')
         dialog.get_by_role('button', name='Retire rule', exact=True).click()
         waiting = page.locator('.toast').filter(has_text='Retiring approved by you (1 of 2) · 1 more approval needed from a different approver')
@@ -988,7 +988,9 @@ def test_retiring_a_revised_rule_says_the_version_it_replaced_applies_again(brow
     first = v2_rule(h, 'duty_spacing', [line({'min': {'value': 11, 'level': 'mandatory'}})])
     revised = propose_rule(h, 'duty_spacing', [line({'min': {'value': 8, 'level': 'mandatory'}})], catalogue_version=2,
                            policy_id=first['id'], revision=first['revision'])['record']
-    h.command('approver', 'policy.activate', {'reason': 'Independent review'}, revised['id'], revised['revision'])
+    revised = h.command('approver', 'policy.activate', {'reason': 'Independent review'},
+                        revised['id'], revised['revision'])['record']
+    retirement_vote(h, revised, 'Back to the earlier rest')
     context, page = sign_in(browser, live_server, 'approver')
     try:
         navigate(page, 'rules/duty_spacing')

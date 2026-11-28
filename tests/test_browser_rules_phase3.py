@@ -7,6 +7,7 @@ import re
 
 import pytest
 from playwright.sync_api import expect
+from .governance_support import retirement_vote
 from .test_browser import route_fetch, browser, live_server, sign_in, navigate, save_dialog, open_rule  # noqa: F401
 from .test_rule_templates import propose, activate
 from .rules_support import rule_status
@@ -188,6 +189,7 @@ def ended_rule(h):
 
 def test_group_dialog_ended_rules_are_retired_by_an_approver_with_undo(browser, live_server, h):
     old = ended_rule(h)
+    retirement_vote(h, old, f'{ENDED_REASON}: Ended rule')
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')

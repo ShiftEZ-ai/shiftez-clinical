@@ -6,7 +6,7 @@ jobs:
     name: ${{ inputs.suite }}
     if: vars.HOSTED_CI_ENABLED == 'true' && !github.event.repository.private
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.suite == 'unit' && 20 || 60 }}
     env:
       TRUSTED_BOOTSTRAP: ${{ inputs.bootstrap }}
       ROTA_ALLOW_DISPOSABLE_TEST_DB: 'yes'
@@ -142,11 +142,15 @@ jobs:
           fallback_reason='image version mismatch'
         elif [ "${#debs[@]}" -eq 0 ]; then
           fallback_reason='empty set'
-        elif sudo dpkg -i "${debs[@]}" && sudo dpkg --configure -a; then
+        # APT plans the whole set before dpkg runs: it orders a paired upgrade (a data package that Breaks the
+        # installed runtime package) and refuses an unsatisfiable set untouched, so the online fallback starts clean.
+        # APT takes a named .deb as present only inside its archive directory; elsewhere --no-download drops it.
+        elif sudo apt-get install -y --no-download --no-remove --no-install-recommends \
+            -o "Dir::Cache::Archives=$apt_bundle/" "${debs[@]}"; then
           printf '::notice::browser system packages: offline (%s debs, image %s)\n' "${#debs[@]}" "$ImageVersion"
           exit 0
         else
-          fallback_reason='dpkg failed'
+          fallback_reason='offline install failed'
         fi
         printf '::warning::browser system packages: fallback (%s)\n' "$fallback_reason"
         # A stalled package mirror once held this step to the 60-min job limit. Measured over 8,858 runs:

@@ -11,7 +11,7 @@ from apps.api.db import make_engine, transaction
 from apps.api.snapshots import domain_snapshot
 from packages.contracts import schemas as s
 from scripts.manage import alembic_config, migrate
-from .governance_support import identity
+from .governance_support import identity, retire_rule, retirement_vote
 from .test_scheduling_facts_api import decide
 
 
@@ -298,7 +298,7 @@ def test_retired_rules_and_inactive_calendars_do_not_block_date_set_changes(h):
     row = date_set(h)
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [{'field': 'date_set_ids',
         'values': [row['id']], 'entry_names': ['Public holiday']}]}})
-    h.command('approver', 'policy.retire', {'reason': 'Synthetic rule no longer used'}, rule['id'], rule['revision'])
+    retire_rule(h, rule, 'Synthetic rule no longer used')
     h.configure('operating_calendars', {'name': 'Inactive calendar', 'starts_on': '2020-01-01', 'active': False,
         'definition': {'timezone': 'Asia/Riyadh', 'date_set_rules': [
             {'date_set_id': row['id'], 'entry_names': ['Public holiday'], 'windows': []}]}})
@@ -324,8 +324,7 @@ def test_policy_restoration_rechecks_date_set_references(h, grouped, action):
         target = activate(h, propose(h, {'kind': 'restriction'}, name='Grouped restrictions',
                                     merged_ids=[other['id'], rule['id']]))
     else:
-        target = h.command('approver', 'policy.retire', {'reason': 'Synthetic retirement'},
-                           rule['id'], rule['revision'])['record']
+        target = retire_rule(h, rule, 'Synthetic retirement')['record']
     if action in ('rename', 'all_rename'):
         row = change(h, row, 'entry.update', entry={**row['entries'][0], 'name': 'Renamed holiday'})['record']
     elif action == 'entry_delete':
@@ -338,6 +337,8 @@ def test_policy_restoration_rechecks_date_set_references(h, grouped, action):
         history_before = [(item.id, item.object_revision) for item in db.scalars(
             select(m.DefinitionHistory).where(m.DefinitionHistory.kind == 'policy').order_by(m.DefinitionHistory.id))]
     command = 'policy.retire' if grouped else 'policy.restore'
+    if grouped:
+        retirement_vote(h, target, 'Restore synthetic restrictions')
     reply = h.command('approver', command, {'reason': 'Restore synthetic restrictions'},
                       target['id'], target['revision'], status=422)
     assert reply['error']['code'] == ('DATE_SET_INACTIVE' if action == 'set_delete' else 'DATE_SET_ENTRY_NAMES')
@@ -363,8 +364,7 @@ def test_policy_restore_rejects_a_missing_date_set_without_disclosing_its_id(h):
     row = date_set(h)
     rule = h.policy({'kind': 'restriction'}, {'conditions': {'conditions': [
         {'field': 'date_set_ids', 'values': [row['id']]}]}})
-    retired = h.command('approver', 'policy.retire', {'reason': 'Synthetic retirement'},
-                        rule['id'], rule['revision'])['record']
+    retired = retire_rule(h, rule, 'Synthetic retirement')['record']
     with transaction(h.app.state.engine, write=True) as db:
         db.delete(db.get(m.DateSet, row['id']))
     before = [p for state in ('active', 'proposed', 'retired')
