@@ -185,9 +185,9 @@ def minimum_repair_world(h):
     short, incumbent = h.seed['people'][:2]
     duty = h.configure('assignment_types', {'name': 'Synthetic quota repair duty', 'starts_on': '2020-01-01',
         'definition': {'requirements': [{'minimum': 6, 'maximum': 6}]}})['record']['id']
+    h.policy({'kind': 'block_quota', 'comparison': 'minimum', 'amount': 1,
+        'metric': 'duties', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}, {'person_id': short})
     data = h.snapshot(h.shift(h.workspace(), typ=duty, people=[incumbent])['workspace'])
-    data['policies'] = [policy(data, {'kind': 'block_quota', 'comparison': 'minimum', 'amount': 1,
-        'metric': 'duties', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11'}, {'person_id': short})]
     data['generation_options'] = {'diagnostic_seconds': 5}
     checked = evaluate(data)
     partial = {'status': 'candidate_with_gaps', 'input_fingerprint': data['fingerprint'], 'validation': checked,
