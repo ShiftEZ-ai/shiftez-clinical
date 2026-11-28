@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from ci import quarantine_registry
 from ci.quarantine_registry import decode_registry, expired_entries, utc_today
 
 from tests.quarantine import entries
@@ -63,6 +64,22 @@ def test_allowance_date_rejects_invalid_or_noncanonical_input(monkeypatch, value
     monkeypatch.setenv("CI_ALLOWANCE_DATE", value)
     with pytest.raises(ValueError, match="Invalid CI allowance date"):
         utc_today()
+
+
+@pytest.mark.parametrize(("pinned", "accepted"), [
+    ("2026-01-03", True),
+    ("2026-01-02", True),
+    ("2026-01-01", False),
+    ("2026-01-04", False),
+], ids=["today", "yesterday", "two-days-old", "future"])
+def test_allowance_date_is_bounded_by_the_utc_clock(monkeypatch, pinned, accepted):
+    monkeypatch.setattr(quarantine_registry, "utc_calendar_date", lambda: date(2026, 1, 3))
+    monkeypatch.setenv("CI_ALLOWANCE_DATE", pinned)
+    if accepted:
+        assert utc_today() == date.fromisoformat(pinned)
+    else:
+        with pytest.raises(ValueError, match="CI allowance date must be today or yesterday in UTC"):
+            utc_today()
 
 
 def test_quarantine_report_groups_expiry_classes_and_blockers(tmp_path):

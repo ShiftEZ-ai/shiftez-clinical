@@ -30,17 +30,25 @@ def canonical_node(node):
     return base + "[case-" + fingerprint + "]"
 
 
-def utc_today():
-    pinned = os.getenv(ALLOWANCE_DATE_ENV)
-    if pinned is None:
-        return datetime.now(timezone.utc).date()  # real clock: standalone checks use UTC
+def utc_calendar_date():
+    return datetime.now(timezone.utc).date()  # real clock: bound the pinned CI allowance date
+
+
+def validate_allowance_date(pinned):
     try:
         day = date.fromisoformat(pinned)
-    except ValueError:
+    except (TypeError, ValueError):
         raise ValueError("Invalid CI allowance date") from None
     if day.isoformat() != pinned:
         raise ValueError("Invalid CI allowance date")
+    if not 0 <= (utc_calendar_date() - day).days <= 1:
+        raise ValueError("CI allowance date must be today or yesterday in UTC")
     return day
+
+
+def utc_today():
+    pinned = os.getenv(ALLOWANCE_DATE_ENV)
+    return utc_calendar_date() if pinned is None else validate_allowance_date(pinned)
 
 
 def decode_registry(raw, today):

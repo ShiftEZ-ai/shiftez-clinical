@@ -405,6 +405,7 @@ class TwoObservationGateTests(unittest.TestCase):
                                   default=default), \
                      patch.dict(os.environ, {"GITHUB_EVENT_NAME": event, "GITHUB_SHA": candidate, "TRUSTED_BOOTSTRAP": "false",
                                              "GITHUB_REF": "refs/heads/" + branch, "CI_ALLOWANCE_DATE": "2026-01-01"}), \
+                     patch("quarantine_registry.utc_calendar_date", return_value=date(2026, 1, 1)), \
                      patch.object(maker, "at_revision", return_value=self.current) as at_revision, \
                      patch.object(trusted_ci, "TRUSTED", self.folder), \
                      patch.object(trusted_ci.hosted, "git", side_effect=source_git), \

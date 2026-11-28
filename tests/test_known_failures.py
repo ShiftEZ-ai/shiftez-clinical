@@ -17,6 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "ci"))
 import make_known_failures as ratchet
+import quarantine_registry
 from quarantine_registry import decode_registry, utc_today
 
 RED = "tests/test_sample.py::test_red"
@@ -1264,6 +1265,7 @@ def test_deleted_test_file_requires_a_removal_ledger_entry(tmp_path, monkeypatch
 
 
 def test_known_failure_expiry_uses_the_pinned_date_in_preflight_and_evaluation(tmp_path, monkeypatch):
+    monkeypatch.setattr(quarantine_registry, "utc_calendar_date", lambda: date(2026, 1, 2))
     monkeypatch.setattr(ratchet, "load_frozen_baseline", lambda _: (set(), "a" * 64))
     monkeypatch.setattr(ratchet, "load_env_exceptions", lambda _: (set(), "b" * 64))
     monkeypatch.setattr(ratchet, "load_root_evidence", lambda *args: ({"runs": ROOT_RUNS, "counts": {"cleanup": 10}}, ROOT_SEAL))

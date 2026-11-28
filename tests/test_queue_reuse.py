@@ -1,11 +1,10 @@
 """Exercise queue reuse with the same inventory reader as trusted_verdict."""
-from datetime import datetime, timezone
+from datetime import date
 from io import BytesIO
 import json
 from pathlib import Path
 import subprocess
 import sys
-from types import SimpleNamespace
 from zipfile import ZipFile
 
 import pytest
@@ -45,6 +44,7 @@ def archive(files):
 
 @pytest.fixture
 def packet(tmp_path, monkeypatch):
+    monkeypatch.setattr(registry, "utc_calendar_date", lambda: date.fromisoformat(CHECKS_DATE))
     repo = {"id": reuse.policy.REPOSITORY, "full_name": REPO, "default_branch": "main"}
     event = {"repository": repo, "ref": reuse.MAIN, "before": BASE, "after": HEAD,
              "created": False, "deleted": False, "forced": False}
@@ -168,18 +168,29 @@ def test_full_plan_can_reuse_exact_queue_attempt_with_other_shard_width(monkeypa
 
 
 def test_reuse_survives_midnight_between_checks_and_gate(monkeypatch, tmp_path, packet):
-    clock = SimpleNamespace(now=lambda _: datetime(2026, 1, 1, 23, 58, tzinfo=timezone.utc))
     monkeypatch.delenv("CI_ALLOWANCE_DATE", raising=False)
-    monkeypatch.setattr(registry, "datetime", clock)
     assert registry.utc_today().isoformat() == CHECKS_DATE
     invoke(monkeypatch, packet)
     assert (tmp_path / "output").read_text().strip() == "run=30:2"
 
-    clock.now = lambda _: datetime(2026, 1, 2, 0, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(registry, "utc_calendar_date", lambda: date(2026, 1, 2))
     assert registry.utc_today().isoformat() == "2026-01-02"
     reports = tmp_path / "reports"
     invoke(monkeypatch, packet, "--require-run", "30:2", "--reports", str(reports))
     assert json.loads((reports / "verdict.json").read_bytes())["passed"] is True
+
+
+def test_reuse_gate_refuses_a_two_day_old_checks_plan(monkeypatch, tmp_path, packet):
+    invoke(monkeypatch, packet)
+    assert (tmp_path / "output").read_text().strip() == "run=30:2"
+
+    packet["queries"].clear()
+    monkeypatch.setattr(registry, "utc_calendar_date", lambda: date(2026, 1, 3))
+    reports = tmp_path / "reports"
+    with pytest.raises(SystemExit, match="Queue reuse verification failed: CI allowance date must be today or yesterday in UTC"):
+        invoke(monkeypatch, packet, "--require-run", "30:2", "--reports", str(reports))
+    assert not reports.exists()
+    assert not packet["queries"]
 
 
 def test_reuse_refuses_a_queue_plan_pinned_before_its_gate_started(monkeypatch, tmp_path, packet, capsys):

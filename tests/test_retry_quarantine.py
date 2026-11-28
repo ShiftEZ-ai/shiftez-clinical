@@ -21,7 +21,7 @@ def classified_script(tmp_path, monkeypatch):
     script.parent.mkdir(parents=True)
     shutil.copyfile(Path(__file__).parents[1] / ".github/scripts/pytest_ci.py", script)
     (root / "tests").mkdir()
-    today = date(2026, 1, 1)
+    today = utc_today()
     monkeypatch.setenv("CI_ALLOWANCE_DATE", today.isoformat())
     (root / "tests/quarantine.json").write_text(json.dumps([
         {**entry("tests/test_sample.py::" + name), "added": today.isoformat(),

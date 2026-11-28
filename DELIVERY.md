@@ -48,7 +48,8 @@ frozen baseline, unstable seeds and test skips. Engineering rules are in AGENTS.
   A queue push to `main` reuses the successful merge-group reports only after verifying the exact commit, tree, base,
   full test coverage and protected CI controls. Checks seals one UTC allowance date into the shard plan. Reuse
   requires the merge-group gate to have started on that date and its plan to carry the same date. A push without
-  that proof runs both suites using the date from Checks.
+  that proof runs both suites using the date from Checks. Consumers accept only today or yesterday in UTC,
+  including when a rerun retains the original Checks output.
 - The required check is `ci-gate`. It checks producer results on every CI event and verifies the selected test
   reports. On a qualifying main push it independently verifies the queue proof, retains the qualification reports
   with their original run identity, and links to that run for the shard reports. If the nightly capacity check

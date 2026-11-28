@@ -14,6 +14,7 @@ from zlib import error as ZipDataError
 TRUSTED = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(Path(__file__).resolve().parent), str(TRUSTED / "ci")]
 import hosted_ci as hosted
+from quarantine_registry import validate_allowance_date
 import stale_evidence as evidence
 from trusted_ci import output
 from trusted_verdict import assert_inventory
@@ -71,6 +72,8 @@ def bind_plan(plan, sha, tree, base):
     if (plan["schema"] != 1 or (plan["sha"], plan["tree"], plan["base_sha"]) != (sha, tree, base)
             or plan["replicas"] != [1] or plan["smoke"] is not False or "selection" in plan):
         raise ValueError("Expected the full single-replica plan for the candidate and base")
+    if "allowance_date" in plan:
+        validate_allowance_date(plan["allowance_date"])
 
 
 def record(plan, reports, plan_attempt):

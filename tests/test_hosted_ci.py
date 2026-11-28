@@ -1,5 +1,6 @@
 """Offline regression checks for the public CI planner and required aggregate."""
 import importlib.util
+from datetime import date
 import hashlib
 import io
 import json
@@ -37,6 +38,9 @@ def test_invalid_plan_is_refused(files, count):
 def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
     monkeypatch.syspath_prepend(str(Path(hosted_ci.__file__).parent))
     import trusted_ci
+    import quarantine_registry
+
+    monkeypatch.setattr(quarantine_registry, "utc_calendar_date", lambda: date(2026, 1, 2))
 
     base, head, tree = "a" * 40, "b" * 40, "c" * 40
     inventory = ["tests/test_example.py"]
@@ -84,6 +88,10 @@ def test_shard_reuses_only_the_bound_checks_plan(tmp_path, monkeypatch):
     with monkeypatch.context() as context:
         context.setenv("CI_ALLOWANCE_DATE", "2026-01-02")
         with pytest.raises(ValueError, match="allowance date differs from Checks"):
+            run(base, False, "browser", 1, seal)
+    with monkeypatch.context() as context:
+        context.setattr(quarantine_registry, "utc_calendar_date", lambda: date(2026, 1, 3))
+        with pytest.raises(ValueError, match="CI allowance date must be today or yesterday in UTC"):
             run(base, False, "browser", 1, seal)
     artifact.unlink()
     with pytest.raises(FileNotFoundError):
