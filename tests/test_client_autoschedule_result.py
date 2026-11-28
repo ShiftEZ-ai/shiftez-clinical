@@ -463,3 +463,27 @@ def test_a_capacity_cause_without_a_total_names_its_requirements_not_the_engine_
     """, {'proven': True, 'causes': [cause]})
     assert got == named
     assert 'staffing total' not in got
+
+
+def test_a_named_conflict_says_the_limit_of_its_proof_and_a_timed_out_one_its_unknown_cause(client_modules):
+    # The words are the server's (solver_diagnostics.py): the card shows them, never its own.
+    boundary = 'The listed requirements are enough to conflict. They may not be the only cause.'
+    unknown = ('The strict requirements cannot all be met. The cause is unknown: the check ran out of time before it '
+               'could name the rules involved.')
+    rules = [{'kind': 'policy', 'rule_id': 'r1', 'name': 'Night cover'}, {'kind': 'policy', 'rule_id': 'r2', 'name': 'Weekly cap'}]
+    named = {'strict_status': 'INFEASIBLE', 'proven': True, 'message': 'These rules cannot all be met.', 'boundary': boundary,
+             'causes': [{'message': 'Night cover and Weekly cap cannot both be met', 'requirements': rules,
+                         'evidence': {'complete': False}, 'decisions': []}]}
+    timed = {'strict_status': 'INFEASIBLE', 'explanation_status': 'UNKNOWN', 'proven': False, 'message': unknown,
+             'boundary': boundary, 'causes': [], 'timing': {'stop_reason': 'allowance_exhausted'}}
+    got = run(client_modules, """
+        const h={ruleName:id=>id,person:id=>id,clinic:()=>'',openRule:()=>{},eligibility:()=>{},workspace:{id:'w',revision:1},done:async()=>{}};
+        const card=c=>{const n=m.clashCard(c,h);return {text:n.textContent,bound:n.querySelector('.clash-bound')?.textContent??null};};
+        const head=c=>m.resultHead({...a.facts,conflict:c,outcome:{candidate:'none'}},{changes:0,scoreDelta:null}).nodes[0].textContent;
+        console.log(JSON.stringify({named:card(a.named),timed:card(a.timed),timedHead:head(a.timed)}));
+    """, {'named': named, 'timed': timed, 'facts': FACTS})
+    assert got['named']['bound'] == boundary
+    # Timed out: the strict result stands ("can't all be met") and the cause is said to be unknown; no proof limit for
+    # a group that was never named, and no promise that it will be named later.
+    assert got['timed'] == {'text': unknown, 'bound': None}
+    assert 'The rules can’t all be met' in got['timedHead'] and 'not been identified' not in got['timedHead']

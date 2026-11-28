@@ -905,7 +905,7 @@ def _finish(page, h):
             with page.expect_request(lambda r: r.url.endswith('/api/commands') and (r.post_data_json or {}).get('kind') == 'job.continue') as sent:
                 fill.click()
             assert sent.value.post_data_json['target_id'] == job['id']
-            assert sent.value.post_data_json['payload']['reason'] == 'Chosen: Fill everything else (flag every break)'
+            assert sent.value.post_data_json['payload']['reason'] == 'Chosen: Fill everything else (broken rules flagged Must fix)'
         else:
             with page.expect_request(lambda r: r.url.endswith('/api/commands') and (r.post_data_json or {}).get('kind') == 'job.create') as sent:
                 fill.click()

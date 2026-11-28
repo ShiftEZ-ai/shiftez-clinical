@@ -224,7 +224,7 @@ export function resultHead(f:RunFacts,o:{changes:number;scoreDelta:number|null;s
   const cleared=b?Math.max(0,b.must-a.must):0,worse=!!b&&a.must>b.must;
   type Said=[tone:'ok'|'warn'|'err'|'neutral',title:string,...next:Child[]];
   const said:Said=clash?['err',policies(f.conflict!.causes?.[0]).length===2?'Two rules can’t both be met':f.conflict!.proven?'These rules can’t all be met':'The rules can’t all be met',
-      open?`Everything else is filled. ${plural(open,'place')} stay${open===1?'s':''} open.`:'',f.conflict!.proven?'':'The clash has not been identified yet.']
+      open?`Everything else is filled. ${plural(open,'place')} stay${open===1?'s':''} open.`:'']
     :worse?['warn',`Worse: ${plural(a.must-b!.must,'new must-fix cause')}`,'Discard it, or apply it and fix them in the Fix list.']
     // Nothing proposed and nothing to fix: never "once applied" when there is nothing to apply.
     :!o.changes&&!a.must?['ok','Nothing to change',open?`${plural(open,'open place')} left; nothing must be fixed.`:'Every place is filled and every mandatory rule is met.']
@@ -350,7 +350,7 @@ function relaxCard(caps:Row[],h:ClashHooks):HTMLElement{
  *  submitted open (D3). Only choices the server offers; never a relax for a safety kind (D7). */
 export function clashCard(conflict:Row,h:ClashHooks):HTMLElement{
   const cause:Row|undefined=(conflict.causes||[])[0],rules=policies(cause);
-  if(!cause||!conflict.proven)return el('section',{class:'auto-clash','aria-label':'Clash'},el('p',{class:'clash-math'},String(conflict.message||'The strict requirements cannot all be met; the clash has not been identified yet.')));
+  if(!cause||!conflict.proven)return el('section',{class:'auto-clash','aria-label':'Clash'},el('p',{class:'clash-math'},String(conflict.message||'')));
   // The rule's name once: the small line says only what the title does not (another rule name, the line).
   const card=(r:Row)=>{const title=String(r.name||h.ruleName(r.rule_id)),over=[h.ruleName(r.rule_id)||r.name,r.line!=null&&r.line>=0?`line ${r.line+1}`:''].filter(x=>x&&x!==title).join(' · ');
     return el('div',{class:'clash-rule'},over?el('small',{},over):'',
@@ -383,7 +383,9 @@ export function clashCard(conflict:Row,h:ClashHooks):HTMLElement{
   const others=((conflict.causes||[]) as Row[]).slice(1).map(c=>{const at=where(c,h);
     return el('li',{},el('span',{},el('strong',{},String(c.message||c.evidence?.message||'')),at?el('small',{},at):''),smallestFix(c,h)||'');});
   const at=where(cause,h);
+  // The limit of the proof, in the server's words: these requirements are enough to conflict, not shown to be the only cause.
   return el('section',{class:'auto-clash','aria-label':'Clash'},pair,at?el('p',{class:'clash-where muted'},at):'',math?el('p',{class:'clash-math'},math):'',
+    conflict.boundary?el('p',{class:'clash-bound muted'},String(conflict.boundary)):'',
     decisions.length?el('h3',{},'What you can do'):'',decisions.length?el('ul',{class:'decisions'},...decisions):'',
     ...safe.map(r=>el('p',{class:'clash-safety muted'},icon('shield'),`${r.name||h.ruleName(r.rule_id)} is a safety rule, so these places can’t be submitted open.`)),
     others.length?el('h3',{},`${plural(others.length,'more cause')}`):'',others.length?el('ul',{class:'decisions clash-causes'},...others):'');

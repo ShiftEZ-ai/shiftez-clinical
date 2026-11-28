@@ -143,7 +143,7 @@ def _explain_conflict(model, data, control, seconds, started):
                 ', '.join(dict.fromkeys(r['name'] + (f" (line {r['line'] + 1}, {r['slot']})" if r.get('line') is not None and r['line'] >= 0 else '')
                                       for r in requirements))) if keys else
                'The strict requirements cannot all be met, but the proof did not identify a named rule line.' if status == cp_model.INFEASIBLE else
-               'The strict requirements cannot all be met. No named conflict set was established within the explanation allowance.')
+               'The strict requirements cannot all be met. The cause is unknown: the check ran out of time before it could name the rules involved.')
     policies = {p['id']: p for p in data.get('policies', [])}
     sessions_by_id = {s['id']: s for s in data.get('shifts', [])}
 
@@ -231,6 +231,6 @@ def _explain_conflict(model, data, control, seconds, started):
         'timing': {'budget_seconds': seconds, 'elapsed_seconds': elapsed,
                    'stop_reason': 'model_error' if implementation_error else 'completed' if keys else
                                   'no_named_set' if status == cp_model.INFEASIBLE else 'allowance_exhausted'},
-        'boundary': 'This explanation also depends on the fixed scheduling requirements, including clinical permissions, availability and protected work. This may not be the smallest or only conflicting group. Changing one listed requirement alone is not proven to make the rota possible.'}
+        'boundary': 'The listed requirements are enough to conflict, given clinical permissions, availability and protected work. They may not be the only cause: fixing them may still leave another conflict.'}
     result['elapsed_seconds'] = result['timing']['elapsed_seconds'] = time.monotonic() - started
     return result

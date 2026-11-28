@@ -333,7 +333,7 @@ def test_a_rules_conflict_offers_each_cause_its_smallest_fix_and_two_choices(bro
             with _commands(page, 'job.continue') as continued:
                 press()  # no dialog: the press is the choice, recorded as the run's reason
             assert continued.value.post_data_json['target_id'] == job['id']
-            assert continued.value.post_data_json['payload'] == {'reason': 'Chosen: Fill everything else (flag every break)'}
+            assert continued.value.post_data_json['payload'] == {'reason': 'Chosen: Fill everything else (broken rules flagged Must fix)'}
             expect(page.get_by_role('dialog')).to_have_count(0)
             expect(panel.get_by_role('region', name='Rules conflict')).to_be_visible()  # the refused start leaves the card
         assert len(sent) == 2  # nothing started
