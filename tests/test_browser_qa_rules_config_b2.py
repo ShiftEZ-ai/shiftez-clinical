@@ -1,15 +1,16 @@
 """QA stream B2 (Rules & configuration): Fairness re-reads only the sections a Measure or Group change affects; exact
 duplicate rules are retired from Group similar rules; Undo after proposing and after activating a rule (governed:
 withdraw, retire-and-restore) and after removing a line; a proposed rule is brought into view; the settings save bar
-on a phone; a save reloads only the lists it changed."""
+on a phone; a save, and a live rule change, reload only the lists they changed."""
 import re
 
 import pytest
 from playwright.sync_api import expect
 
 from .governance_support import identity, retirement_vote
-from .test_browser import route_fetch, browser, live_server, sign_in, navigate, open_config, save_dialog, open_rule  # noqa: F401
+from .test_browser import PAGE_LOAD_MS, route_fetch, browser, live_server, sign_in, navigate, open_config, save_dialog, open_rule  # noqa: F401
 from .test_browser_fairness_dashboard import october, group_by, section, published_month
+from .test_browser_live_scopes import RECORD_PULSES, command
 from .test_rule_templates import activate, propose
 
 pytestmark = pytest.mark.browser
@@ -230,6 +231,34 @@ def test_a_rule_save_reloads_only_the_lists_it_changed(browser, live_server, h):
         assert not [u for u in asked if u.startswith('table-views')], asked  # saved views are read once per list
     finally:
         context.close()
+
+
+def test_a_live_rule_change_reads_no_rota_list(browser, live_server, h):
+    """A rules-only pulse (another tab proposes a rule) re-reads the counts a rule can move, never the rota list behind
+    the Schedule's open-places count: a rule save's own pulse took that path and read the list (issue 1939)."""
+    planner = sign_in(browser, live_server, 'coordinator')[1]
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        context.add_init_script(RECORD_PULSES)
+        page.reload()
+        expect(page.locator('#main[data-loaded-view]')).to_have_count(1, timeout=PAGE_LOAD_MS)
+        navigate(page, 'rules')
+        page.wait_for_function('() => window.livePulses.length > 0', timeout=15000)  # the stream's starting point
+        asked = []
+        page.on('request', lambda r: asked.append(r.url.split('/api/')[-1]) if '/api/' in r.url else None)
+        since = page.evaluate('window.livePulses.length')
+        # Through the live server (another tab), so its stream announces it: a harness write stays in the test process.
+        command(planner, 'policy.create', {'name': 'Live rule change', 'owner': 'Test policy owner', 'source': 'Constructed fixture',
+            'starts_on': '2020-01-01', 'ends_on': None, 'definition': {'rule': {'kind': 'min_rest', 'hours': 11}, 'scope': {}, 'severity': 'mandatory'}})
+        page.wait_for_function("""since => window.livePulses.slice(since).some(p => (p.changes || []).some(c => c.scope === 'rules'))""",
+                               arg=since, timeout=15000)
+        # The waiting-requests count (a rule can move it) is read in the same step, after where the rota list would be.
+        with page.expect_request(lambda r: '/api/requests/all?status=waiting' in r.url):
+            page.clock.run_for(1000)  # past the pushed pulse's burst window (app.ts queuePulse)
+        assert not [u for u in asked if u.startswith('workspaces?limit=50')], asked
+    finally:
+        context.close()
+        planner.context.close()
 
 
 def test_staff_read_their_own_wording_and_a_perfect_score_has_no_empty_breakdown(browser, live_server, h):
