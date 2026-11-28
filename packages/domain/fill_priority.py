@@ -2,13 +2,11 @@
 from collections import defaultdict
 from math import gcd
 
+from packages.contracts.schemas import GENERATION_STAGE_LABELS
+
 
 STAGE_ORDER = ('mandatory_cover', 'mandatory_quota', 'desired')
-STAGE_LABELS = {
-    'mandatory_cover': 'required cover',
-    'mandatory_quota': 'minimum quotas',
-    'desired': 'desired cover',
-}
+STAGE_LABELS = {stage: GENERATION_STAGE_LABELS[stage].lower() for stage in STAGE_ORDER}
 
 
 def stage_label(name):

@@ -1,10 +1,10 @@
-import {el,button,icon,badge,plural,formatDay,formatTime,departmentTimeZone,formDialog,field,area,type Child,needText,needCount,needRow,legend,disabledWhy,helpButton} from './dom.js';
+import {el,button,icon,badge,plural,formatDay,formatTime,departmentTimeZone,formDialog,field,area,type Child,needText,needCount,needRow,legend,disabledWhy,helpButton,type Tone} from './dom.js';
 import {fixRow,type FixCause,type FixSummary,type FixHooks} from './fix_list.js';
 import {issueList,type Issue} from './issue_marker.js';
 import {issueKey} from './findings.js';
 import {command,applyWrote} from './api.js';
 import {relaxSeed as readRelax,previewAdjustment,applyAdjustment,type Adjustment,type RankedFit} from './rule_check_api.js';
-import {GENERATION_STOP_REASONS} from './generated.js';
+import {GENERATION_STAGE_LABELS,GENERATION_STOP_REASONS} from './generated.js';
 import {shownScore,scoreDelta} from './score.js';
 import {currency} from './planning_context.js';
 import type {Row} from './types.js';
@@ -72,8 +72,42 @@ export function solverReceipt(job:Row):HTMLElement|null{
   const score=value==null
     ?(r.score_completed===false&&String(r.status).startsWith('candidate_')?'score unfinished':'no score: nothing placed')
     :`score: ${value}`;
-  return el('p',{class:'solver-receipt',role:'status'},[`${statusLabel}: ${status}`,stop&&`Stop reason: ${stop}`,score].filter(Boolean).join(' · '),
-    ...(model&&model!==status?[' ',helpButton('About Solver status',`The solver's own model ended ${model}, but the final proposal after checks is ${status}${status==='OPTIMAL'?'':', so it is not proven best'}.`)]:[]));
+  return el('div',{class:'solver-receipt',role:'status'},
+    el('p',{},el('span',{},`${statusLabel}: `),badge(status,STATUS_TONES[status]||'neutral'),el('span',{},[stop&&` · Stop reason: ${stop}`,` · ${score}`].filter(Boolean).join('')),
+      ...(model&&model!==status?[el('span',{},' '),helpButton('About Solver status',`The solver's own model ended ${model}, but the final proposal after checks is ${status}${status==='OPTIMAL'?'':', so it is not proven best'}.`)]:[])),
+    stageReceipt(r)||'');
+}
+/** The overall badge says the status as CP-SAT names it; its tone (never the only signal) keeps FEASIBLE apart from OPTIMAL. */
+const STATUS_TONES:Record<string,Tone>={OPTIMAL:'ok',FEASIBLE:'warn',INFEASIBLE:'err',UNKNOWN:'neutral'};
+/** A stage's name: the contract's (GENERATION_STAGE_LABELS); a fill stage ('fill:<group>:<order>') its group's, with its order. */
+function stageName(name:string):string{
+  const labels=GENERATION_STAGE_LABELS as Record<string,string>,[kind,group='',order]=name.split(':');
+  return kind==='fill'?`${labels[group]||group.replaceAll('_',' ')} · order ${order}`:labels[name]||name.replaceAll('_',' ');
+}
+const RUN_STOPS=new Set(['time_limit','clock','operator_stop','gap','score','plateau']);
+/** Why one stage stopped, in the contract's words, from what the engine recorded on its row: proven, its own search's stop,
+ *  stopped improving, the run's stop for the last stage searched, or a CP-SAT FEASIBLE/UNKNOWN (its time ran out). A stage
+ *  not run, or one whose row does not say, has no clause (never guessed). */
+function stageStop(row:Row,last:boolean,run:string):string{
+  const words=GENERATION_STOP_REASONS as Record<string,string>,own=String(row.search?.stop_reason||'');
+  if(row.proven_optimal===true)return words.optimal;
+  if(row.search_status==='NOT_RUN')return '';
+  if(own==='slice_limit')return words.time_limit;
+  if(words[own])return words[own];
+  if(row.stopped_without_improvement)return words.plateau;
+  if(last&&RUN_STOPS.has(run))return words[run];
+  return ['FEASIBLE','UNKNOWN'].includes(String(row.search_status))?words.time_limit:'';
+}
+/** Each priority stage in the order the engine searched it (result.objectives), with the proof it recorded: "Best proven"
+ *  only for a stage proven optimal, else "A better one may exist". No worker count: it is an engine detail. */
+export function stageReceipt(r:Row):HTMLElement|null{
+  const rows=Array.isArray(r.objectives)?r.objectives as Row[]:[];
+  if(!rows.length)return null;
+  const run=String(r.search_stop?.reason||''),last=rows.map(x=>x.search_status!=='NOT_RUN').lastIndexOf(true);
+  return el('ol',{class:'stage-receipt',role:'list'},...rows.map((row,i)=>{const stop=stageStop(row,i===last,run);
+    return el('li',{},el('span',{class:'stage-n','aria-hidden':'true'},String(i+1)),
+      el('span',{class:'stage-name'},stageName(String(row.name||'')),stop?el('small',{},stop):''),
+      row.proven_optimal===true?badge('Best proven','ok','',{icon:'check'}):badge('A better one may exist','warn','',{icon:'clock'}));}));
 }
 
 /** D16 "Relax for this rota" reviewed:

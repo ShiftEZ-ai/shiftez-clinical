@@ -4899,6 +4899,12 @@ p.rc-balance .hint{flex-basis:100%;color:var(--muted)}
 .auto-outcome.ok{border-color:var(--ok-line);background:var(--ok-soft)}.auto-outcome.ok .auto-outcome-icon{color:var(--ok-text)}
 .auto-outcome.warn{border-color:var(--warn-line);background:var(--warn-soft)}.auto-outcome.warn .auto-outcome-icon{color:var(--warn-text)}
 .auto-outcome.err{border-color:var(--err-line);background:var(--err-soft)}.auto-outcome.err .auto-outcome-icon{color:var(--err-text)}
+.solver-receipt>p{margin:0}
+.stage-receipt{list-style:none;margin:8px 0 0;padding:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.stage-receipt li{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);font-size:13.5px}
+.stage-receipt li:last-child{border-bottom:0}
+.stage-receipt .stage-n{width:20px;height:20px;border-radius:var(--r-full);display:grid;place-items:center;background:var(--sub);font-size:11px;font-weight:700;color:var(--ink-2)}
+.stage-receipt small{display:block;color:var(--muted);font-size:12px}
 .auto-review h3,.auto-result h3{margin:0 0 6px;font-size:13.5px}
 .auto-changes,.auto-needs{display:flex;flex-direction:column}
 .auto-session{display:flex;flex-direction:column}.auto-session small{color:var(--muted);font-size:11.5px}

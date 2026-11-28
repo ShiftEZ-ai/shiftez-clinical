@@ -209,6 +209,7 @@ def render():
     content += "export const GENERATION_STOP_FIELDS = " + json.dumps(described(s.GenerationOptions, ('stop_without_improvement_seconds', 'target_gap_percent', 'target_score', 'stop_by', 'on_conflict'))) + " as const;\n"
     content += "export const GENERATION_CONFLICT_CHOICES = " + json.dumps(s.GENERATION_CONFLICT_CHOICES) + " as const;\n"
     content += "export const GENERATION_STOP_REASONS = " + json.dumps(s.GENERATION_STOP_REASONS) + " as const;\n"
+    content += "export const GENERATION_STAGE_LABELS = " + json.dumps(s.GENERATION_STAGE_LABELS) + " as const;\n"
     content += "export const WISH_KINDS = " + json.dumps(list(s.WISH_KINDS)) + " as const;\n"
     content += "export const SWAP_KINDS = " + json.dumps(list(s.SWAP_KINDS)) + " as const;\n"
     content += "export const PATTERN_WISH_KINDS = " + json.dumps([k for k in s.WISH_KINDS if k in s.PATTERN_WISH_KINDS]) + " as const;\n"

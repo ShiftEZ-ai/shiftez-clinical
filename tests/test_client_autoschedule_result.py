@@ -388,6 +388,54 @@ def test_solver_receipt_reports_requirements_conflict_without_diagnostic_model(c
     assert 'diagnostic model:' not in got
 
 
+def stages(client_modules, result):
+    """The receipt's overall badge, its text and each stage row: number, hidden from assistive tech, name, stop clause,
+    badge class and words."""
+    return run(client_modules, "const r=m.solverReceipt(a),ol=r.querySelector('.stage-receipt');"
+               "console.log(JSON.stringify({status:r.querySelector('.badge').className,text:r.textContent,"
+               "rows:ol&&ol.children.map(li=>{const [n,name,b]=li.children;"
+               "return [n.textContent,n.getAttribute('aria-hidden'),name._t,name.children[0]?.textContent??'',b.className,b.textContent];})}));",
+               {'kind': 'generation', 'result': result})
+
+
+def row(name, status, proven=False, stalled=False, **extra):
+    return {'name': name, 'value': 0, 'proven_optimal': proven, 'stopped_without_improvement': stalled,
+            'search_status': status, **extra}
+
+
+def test_receipt_lists_each_stage_in_search_order_with_the_proof_the_engine_recorded(client_modules):
+    from packages.contracts.schemas import GENERATION_STOP_REASONS as STOP
+    got = stages(client_modules, {
+        'status': 'candidate_feasible', 'solver_status': 'FEASIBLE', 'workers': 8, 'score': 75,
+        'search_stop': {'reason': 'operator_stop', 'search_seconds': 90, 'detail': ''},
+        'objectives': [row('coverage', 'OPTIMAL', proven=True), row('fill:mandatory_quota:3', 'FEASIBLE'),
+                       row('desired_coverage', 'FEASIBLE', stalled=True),
+                       row('staffing', 'FEASIBLE', search={'stop_reason': 'slice_limit'}),
+                       row('weighted_prefix', 'OPTIMAL'), row('weighted', 'FEASIBLE'),
+                       row('later_stage', 'NOT_RUN')]})
+    better = ['badge warn', 'A better one may exist']
+    assert got['rows'] == [
+        ['1', 'true', 'Required cover', STOP['optimal'], 'badge ok', 'Best proven'],
+        ['2', 'true', 'Minimum quotas · order 3', STOP['time_limit'], *better],  # CP-SAT FEASIBLE: its time ran out
+        ['3', 'true', 'Desired cover', STOP['plateau'], *better],
+        ['4', 'true', 'Requested work', STOP['time_limit'], *better],
+        ['5', 'true', 'Schedule score, largest losses', '', *better],  # OPTIMAL in a shortlist is no proof: no clause
+        ['6', 'true', 'Schedule score', STOP['operator_stop'], *better],  # the last stage searched takes the run's stop
+        ['7', 'true', 'later stage', '', *better],  # not run: nothing is guessed
+    ]
+    assert 'worker' not in got['text'].lower() and '8' not in got['text']
+    assert got['text'].startswith('Solver status: FEASIBLE · Stop reason: ')
+
+
+@pytest.mark.parametrize(('status', 'tone'), [('OPTIMAL', 'ok'), ('FEASIBLE', 'warn'), ('INFEASIBLE', 'err'), ('UNKNOWN', 'neutral')])
+def test_receipt_badges_the_true_cp_sat_status(client_modules, status, tone):
+    got = stages(client_modules, {'status': 'candidate_feasible', 'solver_status': status,
+                                  'generation_outcome': {'status': status}})
+    assert got['status'] == 'badge ' + tone
+    assert got['rows'] is None  # a result without stage rows lists none
+    assert got['text'].startswith(f'Solver status: {status}')
+
+
 def test_solver_receipt_reports_valid_feasible_without_proven_best(client_modules):
     job = {'kind': 'generation', 'input_fingerprint': 'f', 'result_stale': False, 'currency': 'current', 'result': {
         'status': 'candidate_feasible', 'validation': {'valid': True}, 'solver_status': 'OPTIMAL',

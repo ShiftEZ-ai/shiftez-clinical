@@ -7883,6 +7883,13 @@ GENERATION_STOP_REASONS = {'optimal': 'proven best for these priorities', 'time_
     'model_proven': 'search finished, then the checks changed the proposal', 'cancelled': 'cancelled',
     'failed': 'stopped by an error', 'no_search': 'nothing to search',
     'conflict': 'rules conflict'}
+# The name of each priority stage a run searches, in the receipt's words (cp_sat objectives rows, `name`). A fill stage
+# ('fill:<group>:<order>') takes its group's name; the engine's first tiers are those groups' own stages.
+GENERATION_STAGE_LABELS = {'mandatory_cover': 'Required cover', 'mandatory_quota': 'Minimum quotas',
+    'desired': 'Desired cover', 'staffing_targets': 'Staffing targets', 'staffing': 'Requested work',
+    'weighted_prefix': 'Schedule score, largest losses', 'weighted': 'Schedule score'}
+GENERATION_STAGE_LABELS |= {tier: GENERATION_STAGE_LABELS[group] for tier, group in
+    (('coverage', 'mandatory_cover'), ('diagnostic_minima', 'mandatory_quota'), ('desired_coverage', 'desired'))}
 
 
 class GenerationSearchStop(Schema):
