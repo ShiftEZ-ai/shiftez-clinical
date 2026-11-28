@@ -1342,7 +1342,11 @@ function applyNavBadges(){
 }
 // The commands each nav count can change (by prefix): after saves, only those counts are read again.
 // What can move each count: the saves (by command kind) and the live changes (by scope).
-const BADGE_SOURCES:Record<string,{kinds:string[];live:LiveScope[]}>={schedule:{kinds:['workspace.','shift.','draft.','generation.','series.','job.','review_route.','review_delegation.'],live:['workspace','rules','availability']},
+// The Schedule's dot has two reads: the rota list (draft open places) moves only with rotas; the actionable reviews (Home)
+// also with rules and availability, which can make a rota's inputs stale.
+const ROTA_KINDS=['workspace.','shift.','draft.','generation.','series.','job.'];
+const BADGE_SOURCES:Record<string,{kinds:string[];live:LiveScope[]}>={schedule:{kinds:ROTA_KINDS,live:['workspace']},
+  reviews:{kinds:[...ROTA_KINDS,'review_route.','review_delegation.'],live:['workspace','rules','availability']},
   requests:{kinds:['request.','availability_pattern.','availability.','swap.','person.workload.','person.overtime.','calendar.protection.'],live:['requests','swaps','availability','rules']}};
 /** The coordinator's draft session count. Actionable reviews come from Home. */
 function scheduleBadge(rotas:Row[]):{text:string;label:string}|undefined{
@@ -1367,7 +1371,7 @@ async function loadNavBadges(force=false,saved?:string[],scopes?:Set<LiveScope>|
     if(reads('schedule')&&permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))jobs.push((list||background<RotaList>('/api/workspaces?limit=50&offset=0')).then(r=>{rotaTotal=r.total;
       const b=scheduleBadge(r.workspaces);if(b)next.schedule=b;
     }).catch(()=>{}));
-    if(view!=='home'&&reads('schedule')&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD))jobs.push(background<HomeData>('/api/home').then(r=>{
+    if(view!=='home'&&reads('reviews')&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD))jobs.push(background<HomeData>('/api/home').then(r=>{
       if(me===account&&run===badgesRun&&view!=='home')setScheduleReviews(reviewAttention(r)?.count??0);
     }).catch(()=>{}));
     // The dot on Requests counts what waits on you (requests to decide, weekly availability to approve, swaps to answer or prepare).
