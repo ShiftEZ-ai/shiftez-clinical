@@ -104,6 +104,28 @@ def choose(page, scope, label, option):
     expect(picker).to_have_count(0)
 
 
+def test_spread_settings_offer_the_additive_calendar_week_scope(browser, live_server, h):
+    flag(h, legacy=False)
+    v2_rule(h, 'spread_evenly', [line({'max': {'value': 1, 'level': 'mandatory'}})],
+            settings={'spread_evenly': {'within': 'session'}})
+    context, page = themed(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules/spread_evenly')
+        page.get_by_role('button', name='Settings', exact=True).click()
+        settings = page.locator('.rc-settings')
+        within = settings.get_by_label('Within', exact=True)
+        expect(within).to_have_value('session')
+        choose(page, settings, 'Within', 'Each session and calendar week')
+        with page.expect_response(lambda response: response.request.method == 'POST'
+                                  and response.url.endswith('/api/rules/catalogue/spread_evenly/check')) as checked:
+            settings.get_by_role('button', name='Keep', exact=True).click()
+        assert checked.value.ok
+        assert checked.value.request.post_data_json['settings']['spread_evenly']['within'] == 'calendar_week'
+        expect(settings).to_have_count(0)
+    finally:
+        context.close()
+
+
 def collection_filter(page, main, field, value):
     """The Rules collection's Filter is the shared condition builder: "Where <field> is <value>"."""
     main.get_by_role('button', name=re.compile('^Filter')).click()

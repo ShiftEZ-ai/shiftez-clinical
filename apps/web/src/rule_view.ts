@@ -4,7 +4,7 @@
 import {formatDay,el,icon,plural,pluralWord,formatDate,badge,field,select,button,iconButton,armed,announce,compact,WEEKDAYS,weekOrder,avatar} from './dom.js';
 import {dateRange,lastDayIncluded} from './date_picker.js';
 import {addDays} from './planner_logic.js';
-import {RULE_NUMBERS,STRENGTH_LABELS} from './generated.js';
+import {RULE_CATALOGUE_V2,RULE_NUMBERS,STRENGTH_LABELS} from './generated.js';
 import {quotaUnits} from './quotas.js';
 import {SESSION_FIELDS,RULE_FIELDS,scopeAsConditions,conditionsText} from './conditions.js';
 import type {Row} from './types.js';
@@ -231,7 +231,10 @@ export function ruleSentence(rule:Row,definition:Row|undefined,name:Name):string
     case 'maximum_participants':return `${rule.overflow_maximum?'Normally at most':'At most'} ${rule.maximum} ${who(rule.maximum)}${at} ${rule.aggregation==='service'?'per clinic at a time':'per session'}.`;
     case 'supervision_limit':return rule.mode==='allowed_ranks'?`Supervisors supervise only ${ranks(rule.trainee_category_ids)||'no ranks'}.`
       :`${rule.overflow_maximum?'Normally at most':'At most'} ${plural(rule.maximum,'trainee')} per supervisor${rule.trainee_category_ids?.length?` (${ranks(rule.trainee_category_ids)})`:''}.`;
-    case 'spread_evenly':return `${rule.mode==='maximum_gap'?`Keep holder loads within ${rule.maximum_gap}`:'Level holder loads'} across ${rule.holder||'the supported holders'} per ${rule.within||'session'}.`;
+    case 'spread_evenly':{
+      const weekly=RULE_CATALOGUE_V2.find(entry=>entry.id==='spread_evenly')?.setting_option_labels?.within?.calendar_week;
+      const period=rule.within==='calendar_week'&&weekly?weekly.toLowerCase():'per session';
+      return `${rule.mode==='maximum_gap'?`Keep holder loads within ${rule.maximum_gap}`:'Level holder loads'} across ${rule.holder||'the supported holders'} ${period}.`;}
     case 'forbidden_transition':return `No ${types(rule.to_type_ids)} the day after ${types(rule.from_type_ids)}.`;
     case 'restriction':{const days=daysWords(rule.weekdays);return `No duties${at} ${days==='every day'?days:'on '+days}, ${rule.start_time}–${rule.end_time}.`;}
     case 'travel_buffer':return `At least ${plural(rule.minutes,'minute')} to travel from ${name('locations',rule.from_location_id)} to ${name('locations',rule.to_location_id)}.`;

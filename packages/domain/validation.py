@@ -1308,6 +1308,113 @@ def rule_coverage_people(data, shift, a, b, *, presence=None, definition=None):
         and not restriction_blocks(data, p['person_id'], shift, a, b)]
 
 
+def weekly_spread(data, shifts, focus, policies, people_at, chosen, paired, check, *, touched=None):
+    """Collect matching trainee duties once, with the opportunities that make holders comparable.
+
+    Each duty belongs to the department-local week of its start. Interval observations preserve changes
+    in eligibility and capacity within the duty without counting the same pairing twice.
+    """
+    spreads = [p for p in policies if p['definition']['rule'].get('within') == 'calendar_week'
+               and p['definition']['rule']['kind'] == 'spread_evenly' and p['status'] == 'active']
+    if not spreads or not focus:
+        return
+    limits = [p for p in policies if p['definition']['rule']['kind'] == 'supervision_limit']
+    zone = data['organisation']['timezone']
+    local = ZoneInfo(zone)
+    week_start = data['organisation']['week_start']
+
+    def week_of(shift):
+        day = aware(shift['start']).astimezone(local).date()
+        return day - timedelta(days=(day.weekday() - week_start) % 7)
+
+    requested = focus if touched is None else touched
+    weeks = {week_of(shift) for shift in data['shifts'] if shift['id'] in requested}
+    inputs = coverage_boundary_inputs(data)
+    buckets = {}
+    for shift in shifts:
+        week, sid = week_of(shift), shift['id']
+        if week not in weeks:
+            continue
+        check()
+        definition = effective_type_definition(data, shift)
+        supervision = definition.get('supervision')
+        if not supervision:
+            continue
+        bounds = sorted(coverage_boundaries(data, shift, shift['start'], shift['end'], inputs=inputs))
+        for a, b in zip(bounds, bounds[1:]):
+            people = people_at(shift, definition, a, b)
+            trainees = [p for p in people if is_trainee(data, supervision, p, a, b)]
+            if not trainees:
+                continue
+            supervisors = {}
+            for person in people:
+                pid = person['person_id']
+                if not qualified_supervisor(data, shift, person, a, b, definition=definition):
+                    continue
+                rules = [p['definition']['rule'] for p in supervision_limit_policies(data, shift, pid, a, b,
+                                                                                     policies=limits)]
+                allowed = [set(rule['trainee_category_ids']) for rule in rules if rule['mode'] == 'allowed_ranks']
+                capacity = tuple(sorted({(tuple(sorted(rule['trainee_category_ids'])), rule['maximum'],
+                                          rule.get('overflow_maximum', 0), tuple(sorted(rule.get('overflow_category_ids', ()))))
+                                         for rule in rules if rule['mode'] == 'capacity'}))
+                supervisors[pid] = allowed, capacity
+            for trainee in trainees:
+                tid = trainee['person_id']
+                applicable = session_spread_policies(spreads,
+                    lambda policy, member, duty, lo, hi: (
+                        policy['definition'].get('workspace_id') in (None, duty.get('workspace_id'))
+                        and policy_applies(data, policy, member, duty, lo, hi)), tid, shift, a, b)
+                if not applicable:
+                    continue
+                ranks = categories_for(data, tid, a, b)
+                eligible = {pid: (capacity, chosen(sid, pid)) for pid, (allowed, capacity) in supervisors.items()
+                            if all(ranks.intersection(group) for group in allowed)
+                            and all(maximum > 0 or overflow > 0 and ranks.intersection(overflow_ranks)
+                                    for selected, maximum, overflow, overflow_ranks in capacity
+                                    if not selected or ranks.intersection(selected))}
+                for policy in applicable:
+                    _, sessions, opportunities, loads = buckets.setdefault(
+                        (week, spread_policy_key(policy)), (policy, set(), [], defaultdict(dict)))
+                    sessions.add(sid)
+                    opportunities.append((chosen(sid, tid), eligible))
+                    for pid in eligible:
+                        term = paired(sid, tid, pid)
+                        if term is not None:
+                            loads[pid][sid, tid] = term
+    for (week, _), (policy, sessions, opportunities, loads) in buckets.items():
+        if sessions & focus:
+            yield policy, sessions, opportunities, loads, local_midnight(week, zone), local_midnight(week + timedelta(days=7), zone)
+
+
+def weekly_spread_findings(data, shifts, focus, policies, add, check, *, selected, touched):
+    def people_at(shift, definition, a, b):
+        return rule_coverage_people(data, shift, a, b, definition=definition)
+
+    assignments = {(shift['id'], p['person_id']): p.get('supervisor_person_id')
+                   for shift in shifts for p in shift['participants'] if p.get('supervisor_person_id')}
+    for policy, sessions, opportunities, loads, start, end in weekly_spread(
+            data, shifts, focus, policies, people_at, lambda *_: 1,
+            lambda sid, tid, pid: int(assignments.get((sid, tid)) == pid), check, touched=touched):
+        profiles = defaultdict(list)
+        for opportunity, (_, holders) in enumerate(opportunities):
+            for pid, (capacity, _) in holders.items():
+                profiles[pid].append((opportunity, capacity))
+        peers = defaultdict(list)
+        for pid, profile in profiles.items():
+            peers[tuple(profile)].append(pid)
+        gap = spread_gap(policy)
+        for comparable in peers.values():
+            actual = {pid: sum(loads[pid].values()) for pid in sorted(comparable)}
+            minimum, maximum = min(actual.values()), max(actual.values())
+            if maximum - minimum > gap:
+                add('SUPERVISION_LEVEL', 'Selected members are not spread evenly across calendar-week supervisors',
+                    pooled_anchor(sessions, selected, focus), a=start, b=end, rule=policy,
+                    severity='error' if policy['definition']['severity'] == 'mandatory' else 'warning',
+                    extra={'within': 'calendar_week', 'reason': 'imbalance', 'actual': actual,
+                           'minimum': minimum, 'maximum': maximum, 'maximum_gap': gap,
+                           'affected_shift_ids': sorted(sessions)})
+
+
 def staffing_peers(data, policy, a, b, *, shifts=None):
     """Overlapping sessions selected by a staffing line, shared by validation and reach."""
     selector = session_scope(policy['definition']['scope'])
@@ -2440,6 +2547,17 @@ def evaluate(data: dict, *, quota_only=False, session_cache=None, explain_findin
     session_keys = {tuple(f.get(key) for key in ('code', 'shift_id', 'person_id', 'rule_id', 'start'))
                     for f in findings[non_session_found:]} if session_parts else set()
     session_found = len(findings)
+    if (not data.get('skip_coverage') and (partial is None or complete_partial or partial['shifts'])
+            and any(p['definition']['rule'].get('within') == 'calendar_week'
+                    and p['definition']['rule']['kind'] == 'spread_evenly' for p in counted_policies)):
+        # Cross-session findings are refreshed independently of cached session checks.
+        touched = data.get('_published_session_checks')
+        if partial is not None and not complete_partial and person_shifts is None:
+            touched = partial['shifts'] if touched is None else touched & partial['shifts']
+        weekly_data = ({**data, '_supervision_commitments': supervision_commitments(data)}
+                       if person_shifts is not None else data)
+        weekly_spread_findings(weekly_data, shifts, focus, counted_policies, add, check,
+                               selected=selected_session_ids(data), touched=touched)
     personal_parts = {}
     retained_people = (partial['previous'].get('_person_parts') if complete_partial else None)
     signatures = {pid: (frozenset(focus), tuple((id(s), repr(p)) for s, p, _, _ in entries))
