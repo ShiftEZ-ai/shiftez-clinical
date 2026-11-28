@@ -33,6 +33,19 @@ def observed(policies):
             for p in policies]
 
 
+def test_weekend_buckets_use_local_presence_and_exclude_the_end_instant():
+    from packages.domain.patterns import presence_weekends
+    from packages.domain.time import aware
+
+    rule = {'weekend_start': 5, 'weekend_days': 2}
+    friday = aware('2027-03-05T18:00:00+03:00')
+    saturday = aware('2027-03-06T00:00:00+03:00')
+    sunday = aware('2027-03-07T12:00:00+03:00')
+    monday = aware('2027-03-08T01:00:00+03:00')
+    assert not presence_weekends([(friday, saturday)], 'Asia/Riyadh', rule)
+    assert presence_weekends([(friday, sunday), (sunday, monday)], 'Asia/Riyadh', rule) == {date(2027, 3, 6)}
+
+
 def test_anchor_keeps_partial_blocks_on_both_sides_and_before_the_anchor():
     windows = blocks(rule(comparison='target'))
     assert observed(windows) == [

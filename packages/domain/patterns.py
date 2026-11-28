@@ -47,6 +47,21 @@ def weekend_of(day, rule):
     return day - timedelta(days=offset) if offset < rule['weekend_days'] else None
 
 
+def presence_weekends(intervals, zone, rule):
+    """Weekend starts touched by half-open intervals of local presence."""
+    zone = ZoneInfo(zone)
+    weekends = set()
+    for lo, hi in intervals:
+        day = lo.astimezone(zone).date()
+        last = (hi - timedelta(microseconds=1)).astimezone(zone).date()
+        while day <= last:
+            first = weekend_of(day, rule)
+            if first is not None:
+                weekends.add(first)
+            day += ONE
+    return weekends
+
+
 def runs(days, step=ONE):
     """Maximal runs of consecutive days, as (first, last)."""
     out = []

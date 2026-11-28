@@ -14,7 +14,8 @@ import io
 import json
 import math
 from zoneinfo import ZoneInfo
-from packages.contracts.schemas import TypeDefinition
+from packages.contracts.schemas import TypeDefinition, WEEKEND_START_DEFAULT, WEEKEND_DAYS_DEFAULT
+from .patterns import presence_weekends
 from .recurrence import inactive
 from .participation import presence_intervals
 from .conditions import (active_rules, bind_level_window, conditions_match, scope_tree, counting_key, counting_views,
@@ -109,7 +110,9 @@ def applicable_policies(data):
             if rule['comparison'] == 'target':
                 # The rota window clips the evaluation without changing the accepted rule.
                 window['_target_rule_fingerprint'] = digest([
-                    policy.get('_source_policy_id', policy['id']), rule, full, policy.get('starts_on'), policy.get('ends_on'),
+                    policy.get('_source_policy_id', policy['id']),
+                    (rule if rule['metric'] == 'weekends' else
+                     {k: v for k, v in rule.items() if k not in {'weekend_start', 'weekend_days'}}), full, policy.get('starts_on'), policy.get('ends_on'),
                     quota_target_scope(policy['definition']['scope'])])
             result.append(window)
             continue
@@ -386,8 +389,11 @@ def quota_contribution(data, policy, pid, shift, participant, members, a, b):
     credits = (union_hours(windows) * definition.get(
         rule['metric'] + '_per_hour', TypeDefinition.model_fields[rule['metric'] + '_per_hour'].default)
                if rule['metric'] in {'workload_credit', 'training_credit'} else 0)
+    weekends = (presence_weekends(windows, data['organisation']['timezone'],
+                                  {'weekend_start': WEEKEND_START_DEFAULT, 'weekend_days': WEEKEND_DAYS_DEFAULT, **rule})
+                if rule['metric'] == 'weekends' else ())
     return {'duty': duty, 'session_units': units, 'intervals': intervals,
-            'presence': windows, 'credits': credits}
+            'presence': windows, 'credits': credits, 'weekends': weekends}
 
 
 def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, line_id=None, explain=None,
@@ -524,10 +530,10 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             signature = (a, b, tuple((id(s), repr(p)) for s, p in by_person[pid])) if contribution_cache is not None else None
             known = contribution_cache.get((id(policy), pid)) if contribution_cache is not None else None
             if known is not None and known[0] is policy and known[1] == signature:
-                intervals, credits, duties, invalid, session_units = known[3]
+                intervals, credits, duties, invalid, session_units, weekends = known[3]
             else:
                 intervals, credits, duties, invalid = [], 0.0, set(), False
-                session_units = {}
+                session_units, weekends = {}, set()
                 for shift, p in by_person[pid]:
                     try:
                         contribution = quota_contribution(data, policy, pid, shift, p, members, a, b)
@@ -541,16 +547,17 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
                     session_units[(shift['id'], p['id'])] = contribution['session_units']
                     intervals.extend(contribution['intervals'])
                     credits += contribution['credits']
+                    weekends.update(contribution['weekends'])
                 if contribution_cache is not None:
                     contribution_cache[id(policy), pid] = (policy, signature, tuple(s for s, _ in by_person[pid]),
-                        (intervals, credits, duties, invalid, session_units))
+                        (intervals, credits, duties, invalid, session_units, weekends))
             metric, comparison, amount = rule["metric"], rule["comparison"], rule["amount"]
             calculation = None
             if rule.get('prorate_department_days'):
                 full_start, full_end = policy.get('_quota_full_window') or (rule['starts_on'], rule['ends_on'])
                 full_days = (date.fromisoformat(full_end) - date.fromisoformat(full_start)).days
                 raw = amount * full_days / rule['reference_days']
-                amount = (math.floor(raw) if rule['rounding'] == 'down' else math.ceil(raw) if rule['rounding'] == 'up' else math.floor(raw + .5)) if metric in {'duties', 'lead_turns'} else round(raw, 4)
+                amount = (math.floor(raw) if rule['rounding'] == 'down' else math.ceil(raw) if rule['rounding'] == 'up' else math.floor(raw + .5)) if metric in {'duties', 'lead_turns', 'weekends'} else round(raw, 4)
                 calculation = {'default_amount': rule['amount'], 'reference_days': rule['reference_days'],
                                'department_days': full_days, 'unrounded_amount': round(raw, 4), 'rounding': rule['rounding'],
                                'calculated_amount': amount, 'rule_fingerprint': rule_fingerprint}
@@ -577,7 +584,8 @@ def evaluate_quotas(data, add, ancestor_ids, exception_for, *, policy_ids=None, 
             except ValueError as error:
                 unresolved('QUOTA_PRORATION_UNRESOLVED', str(error), policy, pid)
                 continue
-            actual = (len(duties) if metric in {"duties", "lead_turns"} else sum(session_units.values()) if metric == "session_units"
+            actual = (len(duties) if metric in {"duties", "lead_turns"} else len(weekends) if metric == "weekends"
+                      else sum(session_units.values()) if metric == "session_units"
                       else credits if metric.endswith("credit") else union_hours(intervals))
             delta = actual - amount
             state = "met"

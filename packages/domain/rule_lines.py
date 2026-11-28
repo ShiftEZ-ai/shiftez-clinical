@@ -993,6 +993,18 @@ def _kinds(rule, line):
     return sorted({_slot(entry, k, rule, line, keys)['kind'] for k in keys})
 
 
+def _measure_settings(entry, kind, settings, *, block=False):
+    fields = entry['line_settings'][kind]
+    if kind == 'balance_goal':
+        fields = [f for f in fields if f not in FAIR_SHARE_DIALS]
+    if kind == 'block_quota':
+        omitted = set() if block else {'starts_on', 'ends_on'}
+        if settings.get('metric') != 'weekends':
+            omitted.update(('weekend_start', 'weekend_days'))
+        fields = [f for f in fields if f not in omitted]
+    return {f: settings.get(f) for f in fields}
+
+
 def measure(rule, line, block=False):
     """What a line counts: the settings (the defaults, the rule's, then the line's) of the old kinds its numbers write —
     a window, a metric, overtime, participation... Two lines measure the same thing only when these are equal. A quota's
@@ -1001,9 +1013,7 @@ def measure(rule, line, block=False):
     out = {}
     for k in _kinds(rule, line):
         given = resolved_settings(k, settings.get(k, {}))
-        out[k] = {f: given.get(f) for f in entry['line_settings'][k]
-                  if not (k == 'balance_goal' and f in FAIR_SHARE_DIALS)
-                  and (block or k != 'block_quota' or f not in ('starts_on', 'ends_on'))}
+        out[k] = _measure_settings(entry, k, given, block=block)
     return out
 
 
@@ -1072,9 +1082,7 @@ def _group(rule, line, k, keys, *, default_partition=None):
     kind = slot['kind']
     settings = _settings(rule, line)
     given = resolved_settings(kind, settings.get(kind, {}))
-    counts = {f: given.get(f) for f in entry['line_settings'][kind]
-              if not (kind == 'balance_goal' and f in FAIR_SHARE_DIALS)
-              and (kind != 'block_quota' or f not in ('starts_on', 'ends_on'))}
+    counts = _measure_settings(entry, kind, given)
     if kind == 'allocation_overtime':
         counts.pop('volunteer_required', None)  # Volunteering changes permission, not the duty a line applies to.
     bindings = line.get('source_bindings') or {}

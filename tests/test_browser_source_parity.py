@@ -281,6 +281,31 @@ def test_counting_period_is_apart_from_validity_and_its_early_end_needs_attentio
 
 
 @pytest.mark.parametrize('theme', THEMES)
+def test_weekend_workload_measure_saves_an_anchored_block(browser, live_server, h, theme):
+    flag(h, legacy=False)
+    rule = v2_rule(h, 'workload_limit', [line({'max': {'value': 1, 'level': 'mandatory'}}, measure='duties',
+        starts_on='2026-09-01', period={'kind': 'fixed', 'days': 28, 'starts_on': '2026-09-01', 'ends_on': '2026-12-01'})])
+    line_id = rule['definition']['rule']['lines'][0]['id']
+    context, page = themed(browser, live_server, 'coordinator', 1440, theme)
+    try:
+        navigate(page, f'rules/workload_limit/{line_id}')
+        panel = page.locator('.rc-line-panel')
+        panel.get_by_label('Measure', exact=True).select_option('weekends')
+        panel.get_by_label('Blocks start on', exact=True).fill('2026-09-03')
+        panel.get_by_role('button', name='Keep change', exact=True).click()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
+        propose(page, 'Cap worked weekends per block')
+        [saved] = entry(h, 'workload_limit')['proposed']['definition']['rule']['lines']
+        quota = saved['settings']['block_quota']
+        assert (quota['metric'], quota['window_days'], quota['window_anchor_on']) == ('weekends', 28, '2026-09-03')
+        activate(h, 'workload_limit')
+        navigate(page, f'rules/workload_limit/{line_id}')
+        expect(panel.get_by_label('Measure', exact=True)).to_have_value('weekends')
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('theme', THEMES)
 def test_fair_share_distribution_share_with_its_duties_and_weight(browser, live_server, h, theme):
     flag(h, legacy=False)
     v2_rule(h, 'fair_share', [line({'apply': {'value': None, 'level': 'medium'}})], settings={'balance_goal': {'metric': 'duties'}})

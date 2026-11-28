@@ -360,7 +360,8 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
         need, have = ('needs', 'has') if len(pids) == 1 else ('need', 'have')
         people_subject = people if len(pids) == 1 else f'{len(pids)} people' if pids else 'These duties'
         metrics = {row['detail'].get('metric') for row in evidence}
-        quantity = ('clinic time' if metrics <= {'session_units', 'scheduled_hours', 'reserved_hours', None}
+        quantity = ('worked weekends' if metrics == {'weekends'} else
+                    'clinic time' if metrics <= {'session_units', 'scheduled_hours', 'reserved_hours', None}
                     else 'duties and clinic time' if metrics & {'session_units', 'scheduled_hours', 'reserved_hours'} else 'duties')
         codes = {findings[i]['code'] for i in indices}
         # SW3-A-15: a double booking has no rule template; it is two duties at once, not a mix of duties.

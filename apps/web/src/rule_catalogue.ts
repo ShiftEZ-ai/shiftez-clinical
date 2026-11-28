@@ -1061,7 +1061,7 @@ function lineEditor(ctx:Context,e:Entry,draft:Draft,names:Namer,o:Options,s:{edi
           const withLine=(value:Settings)=>{const lines=fresh?[...draft.lines,{...w,settings:value}]:draft.lines.map(l=>l.id===w.id?{...w,settings:value}:l);
             return checkLines(e,{on:true,lines,settings:draft.settings}).then(r=>settingIssues(r,`rule.catalogue.lines.${lines.findIndex(l=>l.id===w.id)}.settings.`));};
           const edit:HTMLButtonElement=button(s.editable?'Edit…':'Details…',()=>settingsPopover(ctx,e,edit,own,s.editable,value=>{w.settings=fresh?suggestedSettings(e,own,value):value;d.body.dispatchEvent(new Event('change',{bubbles:true}));settingsSection.replaceWith(settingsSection=lineSettings());paint();reach.changed();},
-            0,undefined,s.editable&&canCheck?withLine:undefined,true,draft.settings),'secondary small');
+            0,undefined,s.editable&&canCheck?withLine:undefined,true,draft.settings,w.measure),'secondary small');
           const reset=s.editable&&rows.length?button('Use the rule’s settings',()=>{delete w.settings;settingsSection.replaceWith(settingsSection=lineSettings());d.body.dispatchEvent(new Event('change',{bubbles:true}));paint();reach.changed();},'ghost small'):null;
           const sec=section(el('span',{},'Settings for this line'),rows.length?list:el('p',{class:'muted'},'Uses the rule’s settings.'),el('div',{class:'rc-lp-tools-row'},edit,reset));
           return sec;
@@ -1552,7 +1552,7 @@ export const missingNeeds=(e:Entry,settings:Settings,lines:RuleLine[]=[])=>{
  *  beside its setting (a pair set halfway, a share without its duties) and keeps the popover open. */
 export type SettingIssue={field:string;message:string};
 export async function settingsPopover(ctx:Context,e:Entry,anchor:HTMLElement,current:Settings,editable:boolean,keep:(value:Settings,balance?:boolean)=>void,overriding=0,balance?:boolean,
-  validate?:(value:Settings)=>Promise<SettingIssue[]>,forLine=false,inherited:Settings={}){
+  validate?:(value:Settings)=>Promise<SettingIssue[]>,forLine=false,inherited:Settings={},measure?:RuleLine['measure']){
   const defs=await definitionSchema(),mapping=defs.properties.rule.discriminator.mapping as Record<string,string>;
   const read:(()=>[string,string,unknown])[]=[],slots=new Map<string,HTMLElement>(),readers=new Map<string,()=>[string,string,unknown]>();
   const kinds=Object.keys(e.line_settings).filter(k=>settingFields(k,e,forLine).length);
@@ -1640,7 +1640,7 @@ export async function settingsPopover(ctx:Context,e:Entry,anchor:HTMLElement,cur
     panel.append(...kinds.flatMap(section),el('div',{class:'actions rc-settings-actions'},button(editable?'Cancel':'Close',close,'ghost small'),
       ...(editable?[keepBtn]:[])));
     // A setting as chosen here, else the line's rule, else the entry's default, else the contract's.
-    const valueOf=(kind:string,f:string)=>{const r=readers.get(`${kind}.${f}`);
+    const valueOf=(kind:string,f:string)=>{if(kind==='block_quota'&&f==='metric'&&measure)return measure;const r=readers.get(`${kind}.${f}`);
       return String((r?r()[2]:current[kind]?.[f])??inherited[kind]?.[f]??e.default_settings?.[kind]?.[f]??defs.$defs[mapping[kind]?.split('/').pop()||'']?.properties?.[f]?.default);};
     const applies={...APPLIES_UNMARKED,...Object.assign({},...kinds.map(k=>appliesMarked(k,defs.$defs[mapping[k]?.split('/').pop()||'']?.properties||{})))} as Record<string,Applies>;
     const fit=()=>{for(const [key,when] of Object.entries(applies)){
