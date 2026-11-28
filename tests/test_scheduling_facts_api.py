@@ -37,6 +37,61 @@ def replace(h, row, maximum):
     return h.command("coordinator", "person.workload.propose", value)["fact"]
 
 
+@pytest.mark.parametrize('cap', [-1, 1.5, True, "2", s.QUOTA_AMOUNT_MAX + 1, 0, 2])
+def test_overtime_cap_contract_accepts_only_whole_nonnegative_counts_with_dates(cap):
+    value = {"kind": "overtime_offer", "catalogue_id": "overtime_offers", "person_id": str(uuid.uuid4()),
+             "line": {"id": str(uuid.uuid4()), "starts_on": "2026-10-04", "ends_on": "2026-10-11",
+                      "numbers": {"apply": {"level": "medium"}}},
+             "reason": "Synthetic overtime proposal", "overtime_duty_cap": cap}
+    from pydantic import ValidationError
+
+    if type(cap) is not int or not 0 <= cap <= s.QUOTA_AMOUNT_MAX:
+        with pytest.raises(ValidationError, match="overtime_duty_cap"):
+            s.SchedulingFactInput.model_validate(value)
+        return
+    assert s.SchedulingFactInput.model_validate(value).overtime_duty_cap == cap
+    del value["line"]["ends_on"]
+    with pytest.raises(ValidationError, match="needs a start date and a last day"):
+        s.SchedulingFactInput.model_validate(value)
+
+
+def test_overtime_cap_uses_only_an_approved_fact_and_can_be_cleared(h):
+    from packages.domain.quotas import applicable_policies
+
+    person = h.seed["people"][0]
+    payload = {"kind": "overtime_offer", "catalogue_id": "overtime_offers", "person_id": person,
+               "line": {"id": str(uuid.uuid4()), "starts_on": "2026-10-04", "ends_on": "2026-10-11",
+                        "numbers": {"apply": {"level": "medium"}}},
+               "reason": "Synthetic overtime proposal", "overtime_duty_cap": 0}
+    draft = h.workspace()
+
+    def caps():
+        return [r for r in applicable_policies(h.snapshot(draft)) if r.get("_overtime_cap_fact_id")]
+
+    pending = h.command("coordinator", "person.overtime.propose", payload)["fact"]
+    item = h.get("approver", "/api/requests/all?id=" + pending["id"])["item"]
+    assert item["overtime_duty_cap"] == 0 and item["can_decide"]
+    assert caps() == []
+    approved = decide(h, pending)["fact"]
+    [cap] = caps()
+    assert cap["_overtime_cap_fact_id"] == approved["id"]
+    assert cap["definition"]["severity"] == "mandatory"
+    assert cap["definition"]["scope"]["person_ids"] == [person]
+    assert cap["definition"]["rule"]["amount"] == 0
+
+    replacement = {**payload, "replaces_id": approved["id"], "expected_revision": approved["revision"]}
+    del replacement["overtime_duty_cap"]
+    preserved = h.command("coordinator", "person.overtime.propose", replacement)["fact"]
+    assert preserved["data"]["overtime_duty_cap"] == 0
+    decide(h, preserved, action="undo", role="coordinator")
+
+    removed = h.command("coordinator", "person.overtime.propose", {**replacement, "overtime_duty_cap": None})["fact"]
+    assert "overtime_duty_cap" not in removed["data"]
+    assert len(caps()) == 1
+    decide(h, removed)
+    assert caps() == []
+
+
 def test_fact_waits_for_independent_decision_then_undo_restores_predecessor(h):
     w = h.workspace()
     payload = workload(h)

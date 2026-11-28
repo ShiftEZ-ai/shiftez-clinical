@@ -33642,6 +33642,20 @@
         "$ref": "#/$defs/RuleLine",
         "bulk": true
       },
+      "overtime_duty_cap": {
+        "anyOf": [
+          {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Overtime Duty Cap"
+      },
       "goal_ref": {
         "anyOf": [
           {
@@ -34189,6 +34203,20 @@
         "description": "Fact line numbers keyed by catalogue number.",
         "title": "Numbers",
         "type": "object"
+      },
+      "overtime_duty_cap": {
+        "anyOf": [
+          {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Overtime Duty Cap"
       },
       "measure": {
         "anyOf": [

@@ -250,6 +250,34 @@ def test_staff_withdraw_an_approved_overtime_offer(browser, live_server, h):
     assert facts(h) == []  # withdrawing retires the offer it granted
 
 
+def test_coordinator_authors_an_overtime_cap_and_an_approver_can_read_it(browser, live_server, h):
+    person = h.seed['people'][0]
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, f"people?open={person}&tab=facts")
+        page.get_by_role('button', name='Add an overtime offer').click()
+        dialog = page.get_by_role('dialog', name='Add an overtime offer')
+        cap = dialog.get_by_role('spinbutton', name='Maximum overtime duties')
+        expect(cap).to_have_value('')
+        cap.fill('2')
+        dialog.get_by_role('group', name='Valid').get_by_label('From', exact=True).fill('2027-01-04')
+        dialog.get_by_label('Last day (included)', exact=True).fill('2027-01-10')
+        dialog.get_by_label('Reason', exact=True).fill('Synthetic overtime cap')
+        dialog.get_by_role('button', name='Propose', exact=True).click()
+        expect(dialog).to_be_hidden()
+        expect(page.get_by_text('At most 2 overtime duties in this period', exact=False)).to_be_visible()
+    finally:
+        context.close()
+    [proposal] = h.get('approver', f'/api/people/{person}/scheduling-facts')['proposed']
+    context, page = sign_in(browser, live_server, 'approver')
+    try:
+        navigate(page, f"requests?open={proposal['id']}")
+        panel = page.get_by_role('region', name='Overtime offer')
+        expect(panel.get_by_text('At most 2 overtime duties in this period', exact=False)).to_be_visible()
+    finally:
+        context.close()
+
+
 def test_editing_an_older_overtime_offer_keeps_it_whenever_free(browser, live_server, h):
     """An offer saved before the volunteer setting existed reads as off, and changing it keeps it off."""
     person = h.seed['people'][0]

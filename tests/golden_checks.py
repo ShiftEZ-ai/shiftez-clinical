@@ -294,6 +294,25 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
+def check_overtime_cap(data, ids, spec):
+    expected = spec['expect']
+    [cap] = [p for p in data['policies'] if p.get('_overtime_cap_fact_id') == ids['offer']]
+    assert evaluate(data)['valid']
+    excess = copy.deepcopy(data)
+    [second] = shift(excess, ids['next'])['participants']
+    second['overtime'] = True
+    findings = [row for row in finding_observations(evaluate(excess)) if row['rule_id'] == cap['id']]
+    assert [(f['code'], f['person_id'], f['detail']['actual'], f['detail']['amount']) for f in findings] == [
+        (expected['validator'], ids['p0'], 2, 1)]
+    uncapped = disabled(excess, cap['id'])
+    assert evaluate(uncapped)['valid']
+    for seed in expected['seed_robustness']['seeds']:
+        feasible(data, solve(data, seed, feasibility_only=True))
+        assert solve(excess, seed, feasibility_only=True)['status'] == expected['counterfactual']
+        feasible(uncapped, solve(uncapped, seed, feasibility_only=True))
+    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'offer': len(findings)}}
+
+
 def check_scenario(data, ids, spec):
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
@@ -311,5 +330,5 @@ def check_scenario(data, ids, spec):
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
-            'A-WEEKLY-LIMIT-01': check_weekly_limit,
+            'A-WEEKLY-LIMIT-01': check_weekly_limit, 'A-OVERTIME-CAP-01': check_overtime_cap,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

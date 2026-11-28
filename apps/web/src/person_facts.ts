@@ -3,8 +3,8 @@
  *  person approves (person.workload.* / person.overtime.*), audited, with Undo; the server resolves what applies. */
 import {el,button,confirmAction,field,formDialog,area,notify,select,multiPick,check,labelOf,statusBadge,formatDate,type Child,CAPABILITY} from './dom.js';
 import {get,command,WITHDRAWN} from './api.js';
-import {RULE_CATALOGUE,RULE_CATALOGUE_V2,type RuleCatalogueEntry,type RuleLine} from './generated.js';
-import {namer,treeText,daysText,validText,numbersText,measureText,periodText,validEditor,daysEditor,countFields,newLine,numberFields,settingsPopover,wire,countingEndText,type Entry,type Inherited} from './rule_catalogue.js';
+import {QUOTA_AMOUNT_MAX,RULE_CATALOGUE,RULE_CATALOGUE_V2,type RuleCatalogueEntry,type RuleLine} from './generated.js';
+import {namer,treeText,daysText,overtimeCapWords,validText,numbersText,measureText,periodText,validEditor,daysEditor,countFields,newLine,numberFields,settingsPopover,wire,countingEndText,type Entry,type Inherited} from './rule_catalogue.js';
 import {conditionBuilder,SESSION_FIELDS} from './conditions.js';
 import {ruleConditionFields,catalogueEntryOf} from './forms.js';
 import {ruleReview} from './rule_review.js';
@@ -34,7 +34,7 @@ export async function personFacts(ctx:Context,p:Row,target:HTMLElement,redraw:()
     const ref=value as Row;return ref.policy_id===g.policy_id&&(ref.line_id??null)===(g.template_line?.id??null);}));
   /** "≤ 5! duties per calendar week · Clinic A · Sun–Thu", an offer "Evening shift at Clinic A · Tue, Fri". */
   const what=(f:Row)=>{const l=f.data.line as RuleLine;
-    if(f.kind==='overtime_offer')return `${treeText(l.where,names,'Any session')} · ${daysText(l)}`;
+    if(f.kind==='overtime_offer')return [treeText(l.where,names,'Any session'),daysText(l),overtimeCapWords(f.data.overtime_duty_cap)].filter(Boolean).join(' · ');
     const goal=l.settings?.balance_goal as Row|undefined;
     const over=goal?.period==='custom'?validText({...l,starts_on:goal.starts_on,ends_on:goal.ends_on}):goal?.period==='rolling'?`over the last ${goal.period_days} days`
       :goal?`over ${GOAL_PERIODS.find(x=>x.value===goal.period)?.label||goal.period||'this rota'}`:'';
@@ -142,13 +142,15 @@ function change(ctx:Context,p:Row,f:Row|null,after:(message:string)=>void,kind='
         el('div',{class:'field span-2'},el('label',{},'Days'),days.node),start.wrap,end.wrap,el('div',{class:'span-2'},valid.node));
       reads.push(()=>{base.who=who.read();base.where=where.read();base.weekdays=days.read();base.start_time=start.input.value;base.end_time=end.input.value;Object.assign(base,valid.read());});
     }
-    if(kind==='overtime_offer'){
+    const cap=kind==='overtime_offer'?field('Maximum overtime duties','number',f?.data.overtime_duty_cap??'',
+      {name:'overtime_duty_cap',min:0,max:QUOTA_AMOUNT_MAX,step:1}):null;
+    if(cap){
       const selected=(base.settings?.allocation_overtime?.required_policy_ids||[]) as string[],policies=ctx.catalogues.policies||[];
       const caps=multiPick('Required overtime limits',policies.map(r=>({value:r.id,label:labelOf(r)+(r.status==='active'?'':' · '+r.status)})),selected,undefined,'No required limits');
       const volunteer=check('Only when they volunteer',f?base.settings?.allocation_overtime?.volunteer_required===true:true,
         'On: overtime only within their approved Available for overtime request. Off: whenever they are free.');
       volunteer.input.setAttribute('role','switch');volunteer.wrap.classList.add('span-2');
-      form.append(el('div',{class:'field span-2'},el('label',{},'Required overtime limits'),caps.wrap),volunteer.wrap);
+      form.append(cap.wrap,el('div',{class:'field span-2'},el('label',{},'Required overtime limits'),caps.wrap),volunteer.wrap);
       reads.push(()=>{base.settings={...base.settings,allocation_overtime:{...base.settings?.allocation_overtime,required_policy_ids:caps.values(),volunteer_required:volunteer.input.checked}};});
     }else if(!linked){const edit=button('Settings…',()=>settingsPopover(ctx,e as Entry,edit,base.settings||{},true,value=>{base.settings=value;}),'secondary small');form.append(el('div',{class:'span-2'},edit));}
     if(linked)form.append(el('p',{class:'span-2 muted'},'Scope, period and strength come from the approved Fair-share goal.'));
@@ -158,9 +160,11 @@ function change(ctx:Context,p:Row,f:Row|null,after:(message:string)=>void,kind='
     return async()=>{
       for(const r of reads)r();
       if(!Object.keys(base.numbers).length)throw new Error(kind==='overtime_offer'?'Enable the offer.':'Give it a minimum, maximum or target.');
+      if(cap?.input.value&&(!base.starts_on||!base.ends_on))throw new Error('Choose a start date and a last day for the overtime cap.');
       const line=wire([base],f?[f.data.line]:[])[0];
       await command(`${FAMILY[kind]}.propose`,{kind,person_id:p.id,catalogue_id:e.id,
         catalogue_version:f?.data.catalogue_version??e.catalogue_version,line,goal_ref:f?.data.goal_ref??(goal?{policy_id:goal.policy_id,revision:goal.revision,line_id:goal.template_line?.id??null}:null),on:enabled.input.checked,
+        ...(cap?{overtime_duty_cap:cap.input.value===''?null:cap.input.valueAsNumber}:{}),
         ...(f?{replaces_id:f.id,expected_revision:f.revision}:{}),reason:reason.input.value});
       after(f?'Change proposed; it applies once another authorised person approves it.':kind==='overtime_offer'?'Offer proposed for independent approval.':kind==='target'?'Target proposed for independent approval.':'Quota proposed; it applies once another authorised person approves it.');};
   },'Propose');

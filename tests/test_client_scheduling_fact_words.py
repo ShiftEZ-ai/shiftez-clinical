@@ -59,7 +59,11 @@ def test_title_is_the_structured_title(client_modules):
 def test_times_are_omitted_when_the_line_has_none(client_modules):
     assert words(client_modules, 0, {**PROTECTION, 'start_time': None, 'end_time': None})[1] == 'Mon, Sun'
     offer = {**PROTECTION, 'kind': 'overtime_offer', 'title': 'Overtime offer', 'weekdays': [1, 2, 3], 'start_time': '16:00', 'end_time': '20:00'}
-    assert words(client_modules, 0, offer)[1:] == ['Tue–Thu 16:00–20:00', 'Overtime offer']
+    assert words(client_modules, 0, offer)[1:] == ['Tue–Thu 16:00–20:00 · No offer cap', 'Overtime offer']
+    assert words(client_modules, 0, {**offer, 'overtime_duty_cap': 0})[1] == (
+        'Tue–Thu 16:00–20:00 · At most 0 overtime duties in this period')
+    assert words(client_modules, 0, {**offer, 'overtime_duty_cap': 1})[1] == (
+        'Tue–Thu 16:00–20:00 · At most 1 overtime duty in this period')
 
 
 def test_workload_and_target_numbers_use_the_rules_line_sentence(client_modules):

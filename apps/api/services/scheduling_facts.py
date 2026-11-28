@@ -127,7 +127,7 @@ def approval_item(db, actor, row, names):
         proposed_by=row.proposed_by, proposer_name=proposer.display_name, proposed_at=json_value(row.created_at),
         starts_on=starts_on, ends_on=ends_on, start_time=rule_line.start_time, end_time=rule_line.end_time,
         weekdays=weekdays, numbers=rule_line.numbers, measure=rule_line.measure, period=rule_line.period,
-        goal_measure=goal_measure, goal_period=goal_period,
+        overtime_duty_cap=row.data.get("overtime_duty_cap"), goal_measure=goal_measure, goal_period=goal_period,
         link_target="#requests?open=" + row.id, can_decide=can_decide).model_dump(mode="json")
 
 
@@ -228,6 +228,9 @@ def propose(db, actor, command):
         require((previous.data["catalogue_id"], previous.data["line"]["id"], previous.data.get("goal_ref")) ==
                 (value.catalogue_id, value.line.id, value.goal_ref.model_dump(mode="json") if value.goal_ref else None),
                 "FACT_SOURCE", "A replacement retains its source identity")
+        if previous.data.get("overtime_duty_cap") is not None and "overtime_duty_cap" not in command.payload:
+            value = s.SchedulingFactInput.model_validate({**command.payload,
+                "overtime_duty_cap": previous.data["overtime_duty_cap"]})
         supplied = (command.payload["line"].get("settings") or {}).get("allocation_overtime") or {}
         if value.kind == "overtime_offer" and "volunteer_required" not in supplied:
             prior = s.CatalogueRule.model_validate({"kind": "catalogue", "id": "overtime_offers",
@@ -249,6 +252,8 @@ def propose(db, actor, command):
     _references(db, actor, value, exception_allowed=bool(previous and previous.data.get('exception_allowed')))
     data = {**(previous.data if previous else {}), **value.model_dump(mode="json", exclude={
         "reason", "replaces_id", "expected_revision", "kind", "person_id", "calendar_entry_id", "on"})}
+    if value.overtime_duty_cap is None:
+        data.pop("overtime_duty_cap", None)
     data["catalogue_version"] = 1 if value.catalogue_id in ("overtime_offers", "protected_time") else value.catalogue_version
     if value.calendar_entry_id:
         data["programme_id"] = scoped(db, m.ProgrammeCalendarEntry, value.calendar_entry_id, actor).programme_id
@@ -492,8 +497,8 @@ def read_person_facts(db, actor, person_id, on=None):
     with_tags(data)
     effective = [{"policy_id": p["id"], "revision": p["revision"], "name": p["name"],
                   "template_line": p.get("template_line"), "definition": p["definition"]}
-        for p in active_rules(data["policies"], context=data) if within_dates(p, a, b, data["organisation"]["timezone"])
-        and scope_applies(data, p['definition']['scope'], person_id, None, a, b)]
+        for p in active_rules(data["policies"], context=data) if not p.get('_overtime_cap_fact_id')
+        and within_dates(p, a, b, data["organisation"]["timezone"]) and scope_applies(data, p['definition']['scope'], person_id, None, a, b)]
     result = {"person_id": person_id, "department_id": actor.department_id, "on": day.isoformat(),
             "active": [r for r in rows if r["status"] == "active"],
             "proposed": [r for r in rows if r["status"] == "proposed"],

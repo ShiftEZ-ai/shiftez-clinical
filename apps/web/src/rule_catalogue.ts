@@ -2068,6 +2068,8 @@ export function validEditor(l:Pick<RuleLine,'starts_on'|'ends_on'>,label='Valid'
   const from=field('From','date',l.starts_on||''),until=field('Last day (included)','date',l.ends_on||'');lastDayIncluded(until.input);
   return {node:dateRange(label,from,until),read:()=>({starts_on:from.input.value||null,ends_on:until.input.value||null})};
 }
+export const overtimeCapWords=(cap:number|null|undefined)=>cap==null?'':`At most ${plural(cap,'overtime duty')} in this period`;
+
 // ---- One rule per idea (catalogue v2): a Workload line's mode, measure and period; Rest between duties' modes ----
 /** "duty"/"duties", "scheduled hour"/"scheduled hours": a measure (the server's ids) in words. */
 export const measureWords=(m:string,n=2)=>{const base=m.replaceAll('_',' ');return n===1?base.replace(/ies$/,'y').replace(/s$/,''):base.endsWith('s')?base:base+'s';};
