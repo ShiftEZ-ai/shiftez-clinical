@@ -377,16 +377,16 @@ and a desktop window narrowed below it gets the same rule at once.
   Stop when (`stopFields` in `generation_options.ts`, the same component in Configuration › Timing) sits in
   Setup › Change: one line ("After 5 min, or 10 s without improvement") while every stop condition is the department's,
   the conditions under it (no improvement, within % of the best possible, a target score, Stop by — a time today, per
-  run only — and If rules conflict: Stop and show me / Continue with fewest rules broken, which warns that every broken
+  run only — and If rules conflict: Stop and show me / Continue with fewest broken rules, which warns that every broken
   rule is a must-fix and blocks publishing); a changed condition stays open and is said on the setup line. Words and bounds are the
   contract's (`GENERATION_STOP_FIELDS`, `GENERATION_CONFLICT_CHOICES`); a run sends options only when one differs. Why a
   search stopped is said once, in the solver receipt above the result, in the contract's words (`GENERATION_STOP_REASONS`,
   from `search_stop.reason`). A
   run that stopped with a saved checkpoint (`resume_available`) shows "Best found before it stopped" with More search
-  time and Continue (`job.continue`); a run continued past a conflict says "Continued with N rules broken · each must be
-  fixed before publishing". A rules conflict's clash card says where and when each cause is (clinics, dates) and its smallest
+  time and Continue (`job.continue`); a run continued past a conflict says "Continued with N must fix · each blocks publishing
+  until fixed". A rules conflict's clash card says where and when each cause is (clinics, dates) and its smallest
   fix as one button (an exception for one person, Allow for this rota — never a safety rule — or Leave as open place),
-  then two choices: Stop and fix rules (Rules in this rota) or Continue with fewest rules broken (a new run, same options).
+  then two choices: Stop and fix rules (Rules in this rota) or Continue with fewest broken rules (a new run, same options).
 - Show, don't hide: prefer tabs (`tabs()` in `dom.ts`), labelled facts and tables to `<details>`.
 - No dead ends: a state that stops the work says why where it happens, with the way forward one
   click away. A choice with nothing to choose from yet says so under the field with its setup step (`missingSetup` in

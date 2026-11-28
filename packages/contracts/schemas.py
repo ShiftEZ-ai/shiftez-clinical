@@ -7876,7 +7876,7 @@ class GenerationContinuation(Schema):
 
 # The words for each choice and each stop reason (GenerationOptions.on_conflict, GenerationSearchStop.reason): the
 # client says them as they are written here (tests/test_contracts_generation_stop.py keeps the keys complete).
-GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged': 'Continue with fewest rules broken'}
+GENERATION_CONFLICT_CHOICES = {'report': 'Stop and show me', 'continue_flagged': 'Continue with fewest broken rules'}
 GENERATION_STOP_REASONS = {'optimal': 'proven best for these priorities', 'time_limit': 'search time used up',
     'plateau': 'stopped when it stopped improving', 'gap': 'close enough to the best possible',
     'score': 'target score reached', 'clock': 'stop time reached', 'operator_stop': 'stopped with Stop and keep best',

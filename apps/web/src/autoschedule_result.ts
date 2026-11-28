@@ -211,7 +211,7 @@ export function searchEnded(r:Row|null|undefined):string{
 }
 /** A run continued past a rule conflict (on_conflict continue_flagged): its breaks are must-fixes, said where the result is. */
 export const breaksNote=(r:Row|null|undefined)=>{const n=r?.on_conflict==='continue_flagged'?((r.breaks||[]) as Row[]).length:0;
-  return n?el('p',{class:'auto-stale auto-breaks',role:'status'},icon('alert'),`Continued with ${plural(n,'rule broken','rules broken')} · each must be fixed before publishing`):'';};
+  return n?el('p',{class:'auto-stale auto-breaks',role:'status'},icon('alert'),`Continued with ${n} must fix · each blocks publishing until fixed`):'';};
 /** A score change as the other tiles say a change: "+3.2", "−1", and "±0" when nothing moved. */
 const scoreChangeWords=(d:number)=>{const r=round(d);return r?`${r>0?'+':'−'}${Math.abs(r)}`:'±0';};
 /** The run in Fix-list terms (A3): one outcome sentence and three numbers. Null when the result has no Fix list yet.

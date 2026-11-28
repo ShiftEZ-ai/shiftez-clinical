@@ -445,8 +445,8 @@ def test_a_run_continued_past_a_conflict_counts_its_rules_broken(client_modules)
     texts = run(client_modules, "console.log(JSON.stringify(a.map(r=>m.breaksNote(r)?.textContent ?? '')));", [
         {'on_conflict': 'continue_flagged', 'breaks': [{}]}, {'on_conflict': 'continue_flagged', 'breaks': [{}, {}]},
         {'on_conflict': 'report', 'breaks': [{}]}])
-    assert texts == ['Continued with 1 rule broken · each must be fixed before publishing',
-                     'Continued with 2 rules broken · each must be fixed before publishing', '']
+    assert texts == ['Continued with 1 must fix · each blocks publishing until fixed',
+                     'Continued with 2 must fix · each blocks publishing until fixed', '']
 
 
 def test_a_capacity_cause_without_a_total_names_its_requirements_not_the_engine_note(client_modules):
