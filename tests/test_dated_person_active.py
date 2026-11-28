@@ -9,7 +9,7 @@ from apps.api.db import transaction
 from apps.api.snapshots import snapshot_inputs
 from apps.api.workspace_baselines import latest, live_safety_inputs, verify
 from packages.domain.candidate_evidence import candidate_evidence
-from packages.domain.time import now
+from packages.domain.time import UTC, now
 from packages.domain.validation import evaluate, qualification_failures
 from tests.clock_support import freeze_clock
 from tests.test_schedule_score import data, shift
@@ -232,12 +232,12 @@ def test_departing_person_keeps_short_code_and_import_match(h, monkeypatch):
 
     with transaction(h.app.state.engine) as db:
         zone = ZoneInfo(db.get(m.Organisation, h.seed['organisation_id']).timezone)
-    before = datetime(2026, 10, 1, 23, 58, tzinfo=zone)
+    before = datetime(2026, 10, 1, 23, 58, tzinfo=zone).astimezone(UTC)
     after = before + timedelta(minutes=3)
     freeze_clock(monkeypatch, before)
     person = h.configure('people', {'display_name': 'Synthetic departing person', 'short_code': 'DEPART',
                                     'staff_number': 'SYN-501'})['record']
-    cutoff = after.date().isoformat()
+    cutoff = after.astimezone(zone).date().isoformat()
     departing = h.configure('people', {'display_name': person['display_name'], 'active': False, 'inactive_from': cutoff},
                              person['id'], person['revision'])['record']
     sheet = csv_of(row(display_name=person['display_name'], staff_number='SYN-501', short_code='DEPART'))
