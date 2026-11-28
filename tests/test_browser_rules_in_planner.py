@@ -569,6 +569,8 @@ def test_clinic_skills_and_leave_buffers_are_exact_on_the_planner(browser, live_
         open_planner(page, w)
         # The people view's chips read the rule map: the Review session counts one rule more than the Continuity one.
         pick_view(page, 'People')
+        # The People layout can appear before its two-week range, which changes the chip positions.
+        expect(page.locator('.people-grid .pg-head .pg-day')).to_have_count(14)
         chips = page.locator('.pg-chip[data-rk]')
         expect(chips).to_have_count(4)
         targets = [json.loads(chips.nth(i).get_attribute('data-rk')) for i in range(4)]
