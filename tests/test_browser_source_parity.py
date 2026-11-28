@@ -281,6 +281,33 @@ def test_counting_period_is_apart_from_validity_and_its_early_end_needs_attentio
 
 
 @pytest.mark.parametrize('theme', THEMES)
+def test_workload_line_saves_the_proration_basis(browser, live_server, h, theme):
+    flag(h, legacy=False)
+    rule = v2_rule(h, 'workload_limit', [line({'min': {'value': 2, 'level': 'mandatory'}}, measure='duties',
+        period={'kind': 'block', 'starts_on': '2026-09-01', 'ends_on': '2026-12-01'})])
+    line_id = rule['definition']['rule']['lines'][0]['id']
+    context, page = themed(browser, live_server, 'coordinator', 1440, theme)
+    try:
+        navigate(page, f'rules/workload_limit/{line_id}')
+        panel = page.locator('.rc-line-panel')
+        panel.locator('.rc-lp-tools-row').get_by_role('button', name='Edit…', exact=True).click()
+        settings = page.locator('.rc-settings')
+        settings.get_by_role('radiogroup', name='Proration basis').get_by_role('radio', name='Own value').click()
+        settings.get_by_label('Proration basis', exact=True).select_option('rotation_weekdays')
+        settings.get_by_role('button', name='Keep', exact=True).click()
+        panel.get_by_role('button', name='Keep change', exact=True).click()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
+        propose(page, 'Prorate by the rotation weekday pattern')
+        [saved] = entry(h, 'workload_limit')['proposed']['definition']['rule']['lines']
+        assert saved['settings']['block_quota']['proration_basis'] == 'rotation_weekdays'
+        activate(h, 'workload_limit')
+        navigate(page, f'rules/workload_limit/{line_id}')
+        expect(panel.locator('.rc-lp-settings')).to_contain_text('Rotation weekdays')
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('theme', THEMES)
 def test_fair_share_distribution_share_with_its_duties_and_weight(browser, live_server, h, theme):
     flag(h, legacy=False)
     v2_rule(h, 'fair_share', [line({'apply': {'value': None, 'level': 'medium'}})], settings={'balance_goal': {'metric': 'duties'}})

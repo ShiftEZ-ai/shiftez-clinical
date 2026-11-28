@@ -55,6 +55,35 @@ def assert_proration(data, row, *, days, full=5, amount=2, configured=6,
         'calendar_id': data['department']['operating_calendar_id'], 'rounding': 'up'}
 
 
+def test_session_basis_rejects_an_incomplete_nominal_window(working_data):
+    data, pid = working_data
+    add_quota(data, pid, starts_on='2026-10-01', proration_basis='countable_session_days')
+    data['quota_context']['start'] = '2026-10-01T00:00:00+03:00'
+    checked = evaluate(data)
+    assert checked['quota_report']['complete'] is False
+    assert 'QUOTA_CONTEXT_MISSING' in {finding['code'] for finding in checked['findings']}
+
+
+def test_session_basis_counts_distinct_matching_days_and_the_effective_overlap(working_data):
+    data, pid = working_data
+    current = data['shifts'][0]
+    earlier = {**current, 'id': uid('earlier-counted-duty'), 'start': '2026-09-27T08:00:00+03:00',
+               'end': '2026-09-27T12:00:00+03:00'}
+    repeated = {**earlier, 'id': uid('same-counted-day')}
+    other_type = uid('excluded-duty-type')
+    data['types'][other_type] = {**data['types'][current['assignment_type_id']], 'id': other_type}
+    excluded = {**earlier, 'id': uid('excluded-duty'), 'start': '2026-09-28T08:00:00+03:00',
+                'end': '2026-09-28T12:00:00+03:00', 'assignment_type_id': other_type,
+                'type_snapshot': data['types'][other_type]}
+    data['shifts'] += [earlier, repeated, excluded]
+    data['workspace']['starts_on'] = '2026-10-01'
+    add_quota(data, pid, proration_basis='countable_session_days', comparison='target',
+              assignment_type_ids=[current['assignment_type_id']])
+    _, row = checked_row(data)
+    assert (row['amount'], row['proration']['basis'], row['proration']['working_days'],
+            row['proration']['full_working_days']) == (3, 'countable_session_days', 1, 2)
+
+
 @pytest.mark.parametrize('first,last,days,amount', [
     ('2026-10-01', '2026-10-04', 1, 2), ('2026-09-27', '2026-10-01', 4, 5)])
 def test_partial_rule_week_uses_full_department_week_and_rounds_up(working_data, first, last, days, amount):

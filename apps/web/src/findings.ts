@@ -7,7 +7,7 @@ export const publishedAbsenceLabel=(count:number,own=false)=>own
 import type {Row} from './types.js';
 import type {Issue} from './issue_marker.js';
 import {clashText,type Clash} from './double_booking.js';
-import {FINDING_MESSAGES,TEAM_PROBLEM_WORDS,type FindingCause,type FindingCauseGroup,type FindingFixHint,type RotaRepairTask} from './generated.js';
+import {FINDING_MESSAGES,TEAM_PROBLEM_WORDS,type FindingCause,type FindingCauseGroup,type FindingFixHint,type QuotaProration,type RotaRepairTask} from './generated.js';
 /** Plain wording for rule-check findings, by code: what is wrong and, where useful, what to do.
  *  Applied once to every server response (api.ts), so every screen says the same thing.
  *  The engine's own text stays on the finding as `technical`. */
@@ -193,7 +193,8 @@ export const hintDates=(hints:Hint[]=[])=>{const p=hints.map(h=>h.prefill).filte
 const sessionsOf=(n:number,what:string)=>`${n} ${what?what+' ':''}session${n===1?'':'s'}`;
 /** How a bound the server prorated by working days says so, the same everywhere (findings, quota reports, previews):
  *  " (prorated: 1 of 5 days)", or '' when it was not prorated. Never recalculated here. */
-export const prorated=(p?:{working_days:number;full_working_days:number}|null)=>p?` (prorated: ${num(p.working_days)} of ${num(p.full_working_days)} days)`:'';
+export const prorated=(p?:Pick<QuotaProration,'working_days'|'full_working_days'|'basis'>|null)=>p?
+  ` (prorated: ${num(p.working_days)} of ${num(p.full_working_days)} ${p.basis==='countable_session_days'?'matching session days':p.basis==='rotation_weekdays'?'days by rotation schedule':'days'})`:'';
 const needs=(c:FindingCause)=>c.proration?num(c.proration.amount)+prorated(c.proration):num(c.required);
 const CAUSES:Record<string,{head:(what:string)=>string;why:(c:FindingCause,what:string,dates:string)=>string}>={
   no_candidate_sessions:{head:w=>`there are no ${w||'matching'} sessions in this rota`,why:(c,w,d)=>`Needs ${needs(c)}; ${sessionsOf(c.sessions_found,w)} exist ${d}`.trim()},

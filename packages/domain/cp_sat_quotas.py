@@ -4,6 +4,8 @@ from collections import defaultdict
 from datetime import timedelta
 from fractions import Fraction
 
+from packages.contracts.schemas import DEFAULT_QUOTA_PRORATION_BASIS
+
 from .quotas import applicable_policies, evaluate_quotas, membership_overlaps, period_bounds, quota_contribution, quota_identity, quota_window_amount
 from .fairness import quota_target_key
 from .time import aware, overlaps
@@ -13,7 +15,8 @@ from .generation_scope import selected_session_ids
 
 
 def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, leads=None, score_items=None, score_strengths=None, target_group=None,
-               strict_minima=None, diagnostic_domains=None, staffing_targets=None, staffing_demand=None):
+               strict_minima=None, diagnostic_domains=None, staffing_targets=None, staffing_demand=None,
+               structural_shortfalls=None):
     # Targets, rotation proration, overrides, subjects and context checks stay in
     # the reporting evaluator, including the canonical planning-population audience.
     # Empty work reveals targets without trial schedules.
@@ -68,6 +71,12 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
         terms, intervals, priority_terms, session_ids = [], [], [], set()
         context_terms = []
         context_hours = []
+        check_shortfall = (structural_shortfalls is not None and row['comparison'] == 'minimum'
+                           and row['severity'] == 'mandatory'
+                           and rule.get('proration_basis', DEFAULT_QUOTA_PRORATION_BASIS) != DEFAULT_QUOTA_PRORATION_BASIS
+                           and any(overlaps(a, b, lo, hi) for lo, hi in selected_intervals))
+        potential_by_session = {}
+        potential_hours = Fraction(0)
         target = quota_window_amount(policy, row['amount'])
         needs_staff = staffing_demand is not None and row['comparison'] in {'minimum', 'target'} and target > 0
         for shift, participant, _, _, x in by_person.get(pid, []):
@@ -113,6 +122,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                 weight = Fraction(presence, 3_600_000_000) * Fraction(str(definition[metric + '_per_hour']))
             if weight:
                 terms.append((weight, x))
+                if check_shortfall and (x > 0 if isinstance(x, int) else x.domain.max() > 0):
+                    potential_by_session[shift['id']] = max(potential_by_session.get(shift['id'], 0), weight)
                 if can_add_credit:
                     staffing_demand.add(shift['id'])
                 if shift['id'] not in editable and hasattr(x, 'domain') and x.domain.min() == x.domain.max() == 1:
@@ -128,6 +139,8 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
                 model.add_max_equality(present, [x for x, _ in covering])
                 weight = Fraction((hi - lo) // timedelta(microseconds=1), 3_600_000_000)
                 terms.append((weight, present))
+                if check_shortfall and any(x > 0 if isinstance(x, int) else x.domain.max() > 0 for x, _ in covering):
+                    potential_hours += weight
                 if any(key[0] not in editable and hasattr(x, 'domain') and x.domain.min() == x.domain.max() == 1
                        for x, key in covering):
                     context_hours.append((lo, hi))
@@ -150,6 +163,13 @@ def add_quotas(model, data, by_person, penalise, *, diagnostic_proposal=False, l
             targets[quota_target_key(row)].append((row, policy, actual, scale, maximum, int(target * scale)))
         tolerance = Fraction(1, 1_000_000_000)
         lower, upper = math.ceil((target - tolerance) * scale), math.floor((target + tolerance) * scale)
+        if check_shortfall:
+            potential = sum(potential_by_session.values(), potential_hours)
+            if potential * scale < lower:
+                structural_shortfalls.append({'code': 'QUOTA_STRUCTURAL_SHORTFALL', 'rule_id': policy['id'], 'person_id': pid,
+                    'message': f"{policy['name']} needs {float(target):g}; known assignments can supply at most {float(potential):g}.",
+                    'required': float(target), 'available_upper_bound': float(potential),
+                    'proven': True, 'proof_kind': 'necessary_condition'})
         if target_group and row['comparison'] in {'minimum', 'target'}:
             target_group([(int(weight * scale), x, sources) for weight, x, sources in priority_terms], lower,
                          stage='mandatory_quota' if row['severity'] == 'mandatory' and row['comparison'] == 'minimum' else 'desired')

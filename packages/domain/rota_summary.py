@@ -308,8 +308,12 @@ def fix_list(check, places, accepted_issues=(), *, context=None):
                 proration = detail.get('proration') or (observation.get('cause') or {}).get('proration')
                 explanation = None
                 if proration:
-                    explanation = (f"{proration['configured_amount']:g} × {proration['working_days']} / "
-                        f"{proration['full_working_days']} working days, rounded up to {proration['amount']:g}. "
+                    day_unit, full_unit = {
+                        'rotation_weekdays': (' rotation days', 'department days'),
+                        'countable_session_days': ('', 'matching session days'),
+                    }.get(proration.get('basis'), ('', 'working days'))
+                    explanation = (f"{proration['configured_amount']:g} × {proration['working_days']}{day_unit} / "
+                        f"{proration['full_working_days']} {full_unit}, rounded up to {proration['amount']:g}. "
                         f"The check covers {human_date_range(proration['starts_on'], proration['ends_on'])}, "
                         'including published duties outside this draft; only this draft’s days can be replanned here.')
                 session_evidence = [context['sessions'][sid] for sid in sorted(evidence_ids) if sid in context.get('sessions', {})]

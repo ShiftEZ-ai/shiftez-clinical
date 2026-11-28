@@ -1,0 +1,401 @@
+{
+  "id": "A-QUOTA-PRORATION-01",
+  "revision": 1,
+  "title": "A workload minimum follows part-week rotation days",
+  "intent": "A clinician on a two-day rotation can meet a minimum based on the clinic calendar.",
+  "pressure": "The usual department basis keeps the full minimum. The rotation basis lowers it to two duties and still forces both assignments.",
+  "covers": {
+    "kind.block_quota": [
+      "validator",
+      "counterfactual"
+    ],
+    "kind.block_quota.proration_basis": [
+      "validator",
+      "counterfactual",
+      "precheck"
+    ]
+  },
+  "commands": [
+    {
+      "key": "rank",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "categories",
+        "value": {
+          "name": "A-QUOTA-PRORATION-01 Clinician",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "clinic_calendar",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "operating_calendars",
+        "value": {
+          "name": "Part-week opening",
+          "starts_on": "2020-01-01",
+          "definition": {
+            "timezone": "Asia/Riyadh",
+            "week": [
+              {
+                "weekday": 0,
+                "windows": [
+                  {
+                    "start_time": "08:00",
+                    "end_time": "12:00"
+                  }
+                ]
+              },
+              {
+                "weekday": 2,
+                "windows": [
+                  {
+                    "start_time": "08:00",
+                    "end_time": "12:00"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "service",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "services",
+        "value": {
+          "name": "A-QUOTA-PRORATION-01 Continuity clinic",
+          "starts_on": "2020-01-01",
+          "calendar_id": "$clinic_calendar"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location_kind",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "location_types",
+        "value": {
+          "name": "A-QUOTA-PRORATION-01 Clinic room",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "locations",
+        "value": {
+          "name": "A-QUOTA-PRORATION-01 Duty room",
+          "starts_on": "2020-01-01",
+          "location_type_id": "$location_kind",
+          "capacity": 3
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "p0",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-QUOTA-PRORATION-01 Clinician 1",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member0",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p0",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible0",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p0",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p1",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-QUOTA-PRORATION-01 Clinician 2",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member1",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p1",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible1",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p1",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "type",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "assignment_types",
+        "value": {
+          "name": "A-QUOTA-PRORATION-01 Half-day clinic",
+          "starts_on": "2020-01-01",
+          "definition": {
+            "requirements": [
+              {
+                "minimum": 1,
+                "maximum": 1
+              }
+            ]
+          }
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "programme",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "programmes",
+        "value": {
+          "name": "Synthetic programme",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "cohort",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "cohorts",
+        "value": {
+          "name": "Synthetic rotation group",
+          "programme_id": "$programme",
+          "starts_on": "2027-03-01",
+          "ends_on": "2027-03-08"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "programme_person",
+      "role": "coordinator",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "programme_memberships",
+        "value": {
+          "person_id": "$p0",
+          "programme_id": "$programme",
+          "starts_on": "2027-03-01",
+          "ends_on": "2027-03-08"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "rotation",
+      "role": "coordinator",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "rotations",
+        "value": {
+          "person_id": "$p0",
+          "cohort_id": "$cohort",
+          "service_id": "$service",
+          "starts_on": "2027-03-01",
+          "ends_on": "2027-03-08"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "workspace",
+      "role": "coordinator",
+      "kind": "workspace.create",
+      "payload": {
+        "name": "Part-week quota",
+        "starts_on": "2027-03-01",
+        "ends_on": "2027-03-08"
+      }
+    },
+    {
+      "key": "workload",
+      "role": "coordinator",
+      "kind": "rule.propose",
+      "payload": {
+        "catalogue_id": "workload_limit",
+        "catalogue_version": 2,
+        "lines": [
+          {
+            "id": "00000000-0000-4000-8000-000000009150",
+            "who": {
+              "conditions": [
+                {
+                  "field": "person_ids",
+                  "values": [
+                    "$p0"
+                  ]
+                }
+              ]
+            },
+            "starts_on": "2027-03-01",
+            "ends_on": "2027-03-08",
+            "measure": "duties",
+            "period": {
+              "kind": "block",
+              "starts_on": "2027-03-01",
+              "ends_on": "2027-03-08"
+            },
+            "settings": {
+              "block_quota": {
+                "proration_basis": "rotation_weekdays"
+              }
+            },
+            "numbers": {
+              "min": {
+                "value": 4,
+                "level": "mandatory"
+              }
+            }
+          }
+        ],
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "s0",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-03-01T08:00:00+03:00",
+        "end": "2027-03-01T12:00:00+03:00",
+        "participants": []
+      }
+    },
+    {
+      "key": "s1",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-03-03T08:00:00+03:00",
+        "end": "2027-03-03T12:00:00+03:00",
+        "participants": []
+      }
+    },
+    {
+      "key": "workload_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "target": "$workload",
+      "revision": "$workload.revision",
+      "payload": {
+        "acknowledge_unresolved": true,
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    }
+  ],
+  "expect": {
+    "binding_rules": [
+      "workload"
+    ],
+    "validator": {
+      "basis": "rotation_weekdays",
+      "amount": 2,
+      "rotation_days": 2,
+      "department_days": 5,
+      "default_amount": 4
+    },
+    "counterfactual": {
+      "on": "candidate_feasible",
+      "person": "p0",
+      "sessions": [
+        "s0",
+        "s1"
+      ]
+    },
+    "precheck": {
+      "basis": "countable_session_days",
+      "code": "QUOTA_STRUCTURAL_SHORTFALL",
+      "required": 4,
+      "available": 2
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1,
+      "orders": "shuffle inputs for each seed"
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0
+    }
+  }
+}

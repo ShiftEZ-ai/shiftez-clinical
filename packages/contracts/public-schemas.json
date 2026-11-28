@@ -4682,6 +4682,16 @@
             "title": "Prorate Department Days",
             "type": "boolean"
           },
+          "proration_basis": {
+            "default": "department_days",
+            "enum": [
+              "department_days",
+              "rotation_weekdays",
+              "countable_session_days"
+            ],
+            "title": "Proration Basis",
+            "type": "string"
+          },
           "reference_days": {
             "default": 28,
             "maximum": 366,
@@ -17896,6 +17906,16 @@
             "title": "Prorate Department Days",
             "type": "boolean"
           },
+          "proration_basis": {
+            "default": "department_days",
+            "enum": [
+              "department_days",
+              "rotation_weekdays",
+              "countable_session_days"
+            ],
+            "title": "Proration Basis",
+            "type": "string"
+          },
           "reference_days": {
             "default": 28,
             "maximum": 366,
@@ -25326,6 +25346,23 @@
             "default": "up",
             "title": "Rounding",
             "type": "string"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "department_days",
+                  "rotation_weekdays",
+                  "countable_session_days"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Basis"
           }
         },
         "required": [
@@ -71870,6 +71907,23 @@
             "default": "up",
             "title": "Rounding",
             "type": "string"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "department_days",
+                  "rotation_weekdays",
+                  "countable_session_days"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Basis"
           }
         },
         "required": [
@@ -72850,6 +72904,23 @@
             "default": "up",
             "title": "Rounding",
             "type": "string"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "department_days",
+                  "rotation_weekdays",
+                  "countable_session_days"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Basis"
           }
         },
         "required": [
@@ -74321,6 +74392,23 @@
             "default": "up",
             "title": "Rounding",
             "type": "string"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "department_days",
+                  "rotation_weekdays",
+                  "countable_session_days"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Basis"
           }
         },
         "required": [
@@ -75034,6 +75122,23 @@
             "default": "up",
             "title": "Rounding",
             "type": "string"
+          },
+          "basis": {
+            "anyOf": [
+              {
+                "enum": [
+                  "department_days",
+                  "rotation_weekdays",
+                  "countable_session_days"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Basis"
           }
         },
         "required": [

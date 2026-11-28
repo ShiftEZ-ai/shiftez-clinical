@@ -1496,10 +1496,10 @@ def _snapshot_window_inputs(db, department_ids, people, lo, hi, availability_lo,
 
 
 def _quota_window(lo, hi, policies, zone):
-    from packages.domain.quotas import MAX_ROWS, period_bounds
+    from packages.domain.quotas import MAX_ROWS, quota_context_bounds
     for policy in policies[:MAX_ROWS]:
         try:
-            a, b = period_bounds(policy, zone)
+            a, b = quota_context_bounds(policy, zone)
         except ValueError:
             continue  # The evaluator emits the explicit ambiguous-time finding.
         lo, hi = min(lo, a), max(hi, b)

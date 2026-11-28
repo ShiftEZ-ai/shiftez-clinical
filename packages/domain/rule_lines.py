@@ -20,7 +20,7 @@ from pydantic import ValidationError
 from pydantic_core import to_jsonable_python
 
 from packages.contracts.rule_catalogue import _MODELS, CATALOGUE_BY_ID, NUMBER_ORDER, catalogue_entry, slot_for_number as _slot
-from packages.contracts.schemas import NEVER_OVERRIDDEN, SAFETY_STRICTNESS, PolicyDefinition, RuleLine, _canonical_tree, safety_rule
+from packages.contracts.schemas import DEFAULT_QUOTA_PRORATION_BASIS, NEVER_OVERRIDDEN, SAFETY_STRICTNESS, PolicyDefinition, RuleLine, _canonical_tree, safety_rule
 from .conditions import INHERITED_LEVEL, OUTRANKED, absolute_values, active_rules
 
 LEVELS = ('off', 'low', 'medium', 'high', 'critical', 'mandatory')
@@ -1003,7 +1003,8 @@ def measure(rule, line, block=False):
         given = resolved_settings(k, settings.get(k, {}))
         out[k] = {f: given.get(f) for f in entry['line_settings'][k]
                   if not (k == 'balance_goal' and f in FAIR_SHARE_DIALS)
-                  and (block or k != 'block_quota' or f not in ('starts_on', 'ends_on'))}
+                  and (block or k != 'block_quota' or f not in ('starts_on', 'ends_on'))
+                  and (k != 'block_quota' or f != 'proration_basis' or given.get(f) != DEFAULT_QUOTA_PRORATION_BASIS)}
     return out
 
 
@@ -1059,7 +1060,9 @@ def _weekly_workload(kind, settings):
         metric = settings.get('metric')
         if (metric in ('duties', 'scheduled_hours') and not settings['assignment_type_ids']
                 and not settings['participation'] and not settings['prorate_partial_windows']
-                and not settings['prorate_department_days']):
+                and not settings['prorate_department_days']
+                and (settings.get('comparison') == 'maximum'
+                     or settings.get('proration_basis') == DEFAULT_QUOTA_PRORATION_BASIS)):
             return metric, settings['overtime']
     return None
 
@@ -1074,7 +1077,9 @@ def _group(rule, line, k, keys, *, default_partition=None):
     given = resolved_settings(kind, settings.get(kind, {}))
     counts = {f: given.get(f) for f in entry['line_settings'][kind]
               if not (kind == 'balance_goal' and f in FAIR_SHARE_DIALS)
-              and (kind != 'block_quota' or f not in ('starts_on', 'ends_on'))}
+              and (kind != 'block_quota' or f not in ('starts_on', 'ends_on'))
+              and (kind != 'block_quota' or f != 'proration_basis'
+                   or k != 'max' and given.get(f) != DEFAULT_QUOTA_PRORATION_BASIS)}
     if kind == 'allocation_overtime':
         counts.pop('volunteer_required', None)  # Volunteering changes permission, not the duty a line applies to.
     bindings = line.get('source_bindings') or {}
