@@ -3,12 +3,12 @@ import {sameControl,type ControlKey} from './focus_key.js';
 import {checkingWords,waitingWord,footerCheck,checkUnfinished,checkEndedStopped,rotaCheckCurrent,checkCancellable,checkRefused,checkTakeover,checkStoppedWords,CHECK_STOPPED_WHY,CHECK_TAKEN_OVER,takeOverJob,CHECK_NOT_STARTED,CHECK_AGAIN,checkBoundMs} from './rule_check_api.js';
 import type {CheckWorker} from './rule_check_api.js';
 import {recordError} from './feedback_context.js';
-import {homePage,seeNotices,dutyButtons,reportedDuty} from './home.js';
+import {homePage,seeNotices,dutyButtons,reportedDuty,reviewAttention,type HomeData} from './home.js';
 import {quotaPanel, quotaUnits} from './quotas.js';
 import {staffingDialog} from './staffing.js';
 import {draftImpact} from './draft_impact.js';
 import {configurationImpact,coverLines,type Impact,type Impacts} from './configuration_impact.js';
-import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,keepHover,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote} from './dom.js';
+import {bidi,isolate,awaitAdoption,footerAct,duration,desktopNotice,helpButton,closeDialogs,brandEmblem,bootEmblem,brandRow,brandShort,envBadge,focusQuietly,markTag,inlineCheck,grants,type Permission,ruleFacts,phoneQuery,spanLabel,legend,statusLabel,pairWords,announce,compact,relabel,fitRow,trackStatusFooter,closeOrphanPopover,closePopover,adoptPopover,footerStatus,liftFooterStatus,alive,buildingPage,reportError,dropHoverCard,keepHover,enhanceTooltips,roleLabel,multiPick,plural,agree,setTypeColours,setRankColours,rankColour,setWeekStart,setWeekend,weekdayOptions,typeColour,icon,el,field,area,select,check,multi,button,note,badge,empty,emptyLine,sectionHead,notify,labelOf,table,showDialog,formDialog,confirmAction,leaveGuard,askDirtyDialog,dateUnits,formatDate,formatTime,formatDay,toLocal,iconButton,popover,menuItem,hoverCard,tagChip,colourOf,autoCode,uniqueCodes,codeRules,withIcon,routineReason,armed,saveBar,tabs,type IconName,type Child,type Field,type Choice,WEEKDAYS,weekOrder,weekdayNames,statusBadge,statusTone,historyDialog,type Tone,approvalPending as pendingApproval,readFailed,errorWords,releaseToasts,holdsLists,refused,notifyWaiting,notifyUndone,departmentToday,toastClause,type Legend,hasAccess,CAPABILITY,roleForCapability,avatar,factLine,disabledWhy,PAGE_WHY,failedNote,checkTarget} from './dom.js';
 import {pillList,trackWidths} from './table_menu.js';
 import {teamOrder,teamGroups} from './planner_teams.js';
 import {teamView,teamProblem,rankOn} from './team_view.js';
@@ -614,7 +614,7 @@ function wrongOrigin(err:unknown,card:HTMLElement){
  *  and what was drawn beside the app (dialogs, messages, a result card): nothing of the account stays on the page. */
 function forgetSession(){setTableAccount();watchPanelJob('');leaveCheck=null;
   trackStatusFooter(null);
-  navBadges={};badgesLoaded=0;badgesRun++;badgesLoading=false;badgesOwed=null;lastSaved=0;forgetNames();
+  navBadges={};scheduleReviews=0;badgesLoaded=0;badgesRun++;badgesLoading=false;badgesOwed=null;lastSaved=0;forgetNames();
   inboxSnapshot='';inboxPulseKey='';inboxPending=null;publishedCache=null;
   deferredPulse=null;burst=null;seenActivity=null;seenUnread=null;streamSeen=0;streamFailures=0;streamResume=0;lastPoll=0;booting=false;
   document.querySelector('#toast-tray')?.replaceChildren();
@@ -1249,13 +1249,17 @@ function shell(){
   applyNavBadges();
 }
 // Small counts on the sidebar and bell: what is waiting where. Loaded in the background, at most once a minute.
-let navBadges:Record<string,{text:string;label:string}>={},badgesLoaded=0,badgesRun=0,badgesLoading=false;
+let navBadges:Record<string,{text:string;label:string}>={},scheduleReviews=0,badgesLoaded=0,badgesRun=0,badgesLoading=false;
+const setScheduleReviews=(count:number)=>{if(count!==scheduleReviews){scheduleReviews=count;applyNavBadges();}};
 /** A forced load asked for while one runs: run once more afterwards with what was asked (none named: every count). */
 let badgesOwed:{saved?:string[];scopes?:Set<LiveScope>|null}|null=null;
 function applyNavBadges(){
   document.querySelectorAll<HTMLElement>('#department-nav [data-route]').forEach(b=>{
     const words=`nav-badge-${b.dataset.route}`;
-    b.querySelector('.nav-count')?.remove();document.getElementById(words)?.remove();const badge=navBadges[b.dataset.route!];b.classList.toggle('has-badge',!!badge);
+    b.querySelector('.nav-count')?.remove();document.getElementById(words)?.remove();
+    const badge=b.dataset.route==='schedule'&&scheduleReviews
+      ?{text:String(scheduleReviews),label:`${plural(scheduleReviews,'rota')} waiting for review`}:navBadges[b.dataset.route!];
+    b.classList.toggle('has-badge',!!badge);
     // The frame is kept between pages, so a count that has gone takes its tip and its words with it.
     // The words describe the button in every layout (aria-describedby: aria-description is still a draft): the collapsed
     // rail hides the number (a dot instead), and the visible number is decoration. The words are aria-hidden so they add
@@ -1272,14 +1276,12 @@ function applyNavBadges(){
 }
 // The commands each nav count can change (by prefix): after saves, only those counts are read again.
 // What can move each count: the saves (by command kind) and the live changes (by scope).
-const BADGE_SOURCES:Record<string,{kinds:string[];live:LiveScope[]}>={schedule:{kinds:['workspace.','shift.','draft.','generation.','series.','job.'],live:['workspace']},
+const BADGE_SOURCES:Record<string,{kinds:string[];live:LiveScope[]}>={schedule:{kinds:['workspace.','shift.','draft.','generation.','series.','job.','review_route.','review_delegation.'],live:['workspace','rules','availability']},
   requests:{kinds:['request.','availability_pattern.','availability.','swap.','person.workload.','person.overtime.','calendar.protection.'],live:['requests','swaps','availability','rules']}};
-/** The Schedule's count: draft sessions with open places (coordinators; each rota summary's sessions_with_gaps, a count of
- *  sessions, not places or causes), else rotas waiting for review (approvers). */
+/** The coordinator's draft session count. Actionable reviews come from Home. */
 function scheduleBadge(rotas:Row[]):{text:string;label:string}|undefined{
-  const open=rotas.filter(w=>w.status==='draft').reduce((a,w)=>a+(w.health?.summary?.sessions_with_gaps||0),0),waiting=rotas.filter(w=>w.status==='submitted').length;
+  const open=rotas.filter(w=>w.status==='draft').reduce((a,w)=>a+(w.health?.summary?.sessions_with_gaps||0),0);
   if(permits(CAPABILITY.COORDINATOR)&&open)return {text:open>99?'99+':String(open),label:`${plural(open,'session')} with open places in drafts`};
-  if(permits(CAPABILITY.APPROVER)&&waiting)return {text:String(waiting),label:`${waiting} rota${waiting>1?'s':''} waiting for review`};
 }
 /** `list`: the rota list already being read (boot's read-ahead), so the counts never ask for it a second time. */
 async function loadNavBadges(force=false,saved?:string[],scopes?:Set<LiveScope>|null,list?:Promise<RotaList>|null){
@@ -1298,6 +1300,9 @@ async function loadNavBadges(force=false,saved?:string[],scopes?:Set<LiveScope>|
     const jobs:Promise<void>[]=[];
     if(reads('schedule')&&permits(CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))jobs.push((list||background<RotaList>('/api/workspaces?limit=50&offset=0')).then(r=>{rotaTotal=r.total;
       const b=scheduleBadge(r.workspaces);if(b)next.schedule=b;
+    }).catch(()=>{}));
+    if(view!=='home'&&reads('schedule')&&permits(CAPABILITY.APPROVER,CAPABILITY.PROGRAMME_LEAD))jobs.push(background<HomeData>('/api/home').then(r=>{
+      if(me===account&&run===badgesRun&&view!=='home')setScheduleReviews(reviewAttention(r)?.count??0);
     }).catch(()=>{}));
     // The dot on Requests counts what waits on you (requests to decide, weekly availability to approve, swaps to answer or prepare).
     if(reads('requests')&&permits(CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))jobs.push(background<{counts:{to_decide:number}}>('/api/requests/all?status=waiting&limit=1').then(r=>{const n=r.counts.to_decide;if(n)next.requests={text:n>99?'99+':String(n),label:`${n} waiting for you`};}).catch(()=>{}));
@@ -1779,7 +1784,7 @@ async function renderPage(live=false){
   // Pages that use deferred lists wait for them; Home and messages read their own bounded endpoints.
   try{if(needsDeferredCatalogues())await ensureCatalogues();
     const content=el('div',{});buildingPage(content);const renderer:Record<string,(target:HTMLElement)=>Promise<void>>={
-    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,selfApproved:selfApprovedPanel,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
+    home:t=>{const phone=phoneLite();return homePage(ctx(),t,{openCatalogue:k=>setupOpeners().catalogue(k),auditWords,selfApproved:selfApprovedPanel,subscription:subscriptionPanel,phone,fixList:id=>openIssues(id),reviewCount:setScheduleReviews,allowed:phone?id=>allowed(id)&&fitsPhone(id):allowed});},
     schedule:schedulePage,
     requests:t=>requestsPage(ctx(),t,{query:routeQuery,setQuery:q=>{routeQuery=q;history.replaceState(null,'',routeHash(view,routeParts,q));},
       showDay:(day,person)=>navigate(routeHash('schedule',['week',day],{person}).slice(1))}),
@@ -6560,7 +6565,7 @@ async function rulesPage(target:HTMLElement){
     const who=el('span',{class:'rl-who'},el('span',{class:'rl-who-text',title:whoAll},el('span',{'aria-hidden':'true'},whoShort(scope,name)),el('span',{class:'sr-only'},whoAll)),
       ...(counted?[el('span',{class:'rl-count','data-reach':counted},people==null?'':` · ${plural(people,'person','people')}`)]:[]));
     const pick=ruleBulk?(()=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':'Select '+ruleName,checked:family.every(v=>ruleBulk.selected.has(v.id))}) as HTMLInputElement;
-      b.addEventListener('change',()=>{for(const v of family)b.checked?ruleBulk.selected.add(v.id):ruleBulk.selected.delete(v.id);ruleBulk.show([]);});return b;})():el('span');
+      b.addEventListener('change',()=>{for(const v of family)b.checked?ruleBulk.selected.add(v.id):ruleBulk.selected.delete(v.id);ruleBulk.show([]);});return checkTarget(b);})():el('span');
     const primary=review?button(single?'Review':`Review ${waiting.length}`,review,'primary small')
       :trouble.length&&canPropose?button('Switch back on…',()=>fixOvertime(family.filter(p=>problems.get(p.id)?.length)),'secondary small'):null;
     const toCheck=single?[policy]:live.slice(0,100);

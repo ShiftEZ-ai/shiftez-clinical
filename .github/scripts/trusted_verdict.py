@@ -15,7 +15,8 @@ import known_skips
 import canary_evidence
 import node_census
 import hardening
-from trusted_ci import PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy, settings
+from trusted_ci import (PR_SMOKE, census_files, pr_changed_files, pr_scope, quarantine_policy,
+                        require_plan_allowance_date, settings)
 from quarantine_registry import QUARANTINE, QUARANTINE_RETIRED, expired_issue_summary, utc_today
 from latest_reports import earlier_reports, validate_selected_reports
 import stale_evidence
@@ -153,6 +154,7 @@ def main():
     required_producers(os.environ["NEEDS_JSON"])
     plan_path, reports, output = args.plan.resolve(), args.reports.resolve(), args.output.resolve()
     plan = policy.decode(plan_path.read_bytes())
+    require_plan_allowance_date(plan)
     candidate = policy.commit(os.environ["CANDIDATE_SHA"])
     policy.git = git
     policy.fetch(candidate, candidate)

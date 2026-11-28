@@ -1743,13 +1743,16 @@ export function saveBar(save:HTMLButtonElement,discard:()=>unknown):HTMLElement{
  *  first press arms it (solid red, "Confirm?"), the second press acts. No time limit (WCAG 2.2.1): it stays armed until
  *  the mouse pointer moves off it, focus leaves it, Escape, or a tap elsewhere; it keeps at least its width so a shorter
  *  "Confirm?" never slides out from under the pointer. Works on any button, menu item or submit button. `when`: for a
- *  button whose press is irreversible only sometimes (a preview found a loss), it arms only while this says so. */
-export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', when?: () => boolean): T {
+ *  button whose press is irreversible only sometimes (a preview found a loss), it arms only while this says so. `key`:
+ *  the action's identity (a session id): a redraw that replaces the armed button (a live update, a late read) arms the
+ *  replacement with the same key, so the second press still confirms. */
+export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', when?: () => boolean, key?: string): T {
   let saved: Node[] | null = null, name: string | null = null, tip: string | undefined;
   // A tap anywhere else disarms it: a touch browser may not move focus off a tapped button (iOS Safari never focuses one).
   const elsewhere = (e: Event) => { if (!b.contains(e.target as Node | null)) disarm(); };
   const disarm = () => {
     if (!saved) return;
+    if (armedNow?.b === b) armedNow = null;
     document.removeEventListener('pointerdown', elsewhere, true); b.replaceChildren(...saved); saved = null; b.classList.remove('armed'); b.style.removeProperty('min-width'); delete b.dataset.armedFrom;
     if (name === null) b.removeAttribute('aria-label'); else b.setAttribute('aria-label', name);
     if (tip !== undefined) b.dataset.tip = tip;
@@ -1760,29 +1763,40 @@ export function armed<T extends HTMLElement>(b: T, confirmLabel = 'Confirm?', wh
     // A submit button with an incomplete form lets the browser say what is missing first.
     if (b instanceof HTMLButtonElement && b.type === 'submit' && b.form && !b.form.checkValidity()) return;
     e.stopImmediatePropagation(); e.preventDefault();
+    announce(`Press again to confirm: ${arm(b.getBoundingClientRect().width + 'px')}`);
+    // F16 (T2): no time limit; a press that quietly undid itself read as nothing happening. Leaving, focus or Escape disarm.
+  }, {capture: true});
+  function arm(width: string) {
     name = b.getAttribute('aria-label'); tip = b.dataset.tip;
     const plain = (name || b.textContent || '').trim();
-    b.style.setProperty('min-width', b.getBoundingClientRect().width + 'px');
+    b.style.setProperty('min-width', width);
     saved = [...b.childNodes];
     b.replaceChildren(icon('alert'), el('span', {class: 'armed-label'}, confirmLabel));
     // "Confirm retract?" already names the action: its name is not "Confirm retract? Retract".
     const said = confirmLabel.toLowerCase().includes(plain.toLowerCase()) ? confirmLabel : `${confirmLabel} ${plain}`;
     b.classList.add('armed'); b.setAttribute('aria-label', said); b.dataset.armedFrom = plain;
     if (tip !== undefined) b.dataset.tip = said;
-    announce(`Press again to confirm: ${plain}`);
     document.addEventListener('pointerdown', elsewhere, true);
-    // F16 (T2): no time limit; a press that quietly undid itself read as nothing happening. Leaving, focus or Escape disarm.
-  }, {capture: true});
+    if (key) armedNow = {key, b, width, at: () => at};
+    return plain;
+  }
   // Leaving means changing one's mind. Touch has no hover: a finger lifting is not the pointer leaving. A leave at the
   // pointer's last position is the button moving (a layout change above or below it), not the user: it stays armed.
   let at = '';
   const track = (e: PointerEvent) => { at = `${e.clientX},${e.clientY}`; };
   b.addEventListener('pointermove', track); b.addEventListener('pointerdown', track);
   b.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && `${e.clientX},${e.clientY}` !== at) disarm(); });
-  b.addEventListener('focusout', e => { if (!b.contains(e.relatedTarget as Node | null)) disarm(); });
+  // A button removed by a redraw has not lost focus to the user: its replacement may take its armed state over.
+  // Chromium blurs a focused button while removing it, still connected, so whether it went is read after the redraw.
+  b.addEventListener('focusout', e => { if (!b.contains(e.relatedTarget as Node | null)) queueMicrotask(() => { if (b.isConnected) disarm(); }); });
   b.addEventListener('keydown', e => { if (e.key === 'Escape' && saved) { e.preventDefault(); e.stopPropagation(); disarm(); } });
+  // Drawn after a redraw removed the armed button with this key: armed too, at its width and pointer position.
+  const was = key && armedNow?.key === key && !armedNow.b.isConnected ? armedNow : null;
+  if (was) { const pointer = was.at(); arm(was.width); at = pointer; }
   return b;
 }
+/** The armed confirm that has a key (one at a time: a press anywhere else disarms it). */
+let armedNow: {key: string; b: HTMLElement; width: string; at: () => string} | null = null;
 /** The field's own minlength (one number, the input's), counted without outer spaces; the words are problemWords'. */
 export const reasonProblem=(value:string,min:number)=>value&&value.trim().length<min?`At least ${min} characters`:'';
 /** RUL-E04: one person's reason to be assigned against a rule, then the same-button armed confirm: the fill panel's
@@ -2077,6 +2091,9 @@ export function check(label: string, checked=false, hint=''): Field {
   const input=el('input',{type:'checkbox',name:label,checked,...(hint?{'aria-label':label,'aria-describedby':id}:{})});
   return {wrap:el('label',{class:'checkbox'},input,el('span',{class:'check-text'},el('span',{},label),hint?el('span',{class:'hint',id},hint):'')),input};
 }
+/** A selection box with no visible label of its own (a row's, a group's, select-all): a native label around it is its
+ *  target, at least 24 px (WCAG 2.2 SC 2.5.8) and 44 px on a phone (DESIGN.md Touch targets). */
+export const checkTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
 /** One option of any dropdown: `hint` shows beside it, `keywords` are searched but not shown. */
 export type Choice={value:string;label:string;group?:string;hint?:string;keywords?:string;disabled?:boolean;
   /** The group is a fact about the row with a configured place (a person's rank, in the department's rank order): a

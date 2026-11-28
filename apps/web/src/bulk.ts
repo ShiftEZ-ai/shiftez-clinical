@@ -1,4 +1,4 @@
-import {el,icon,notify,popover,menu,opens,menuItem,button,showDialog,plural,note,select,latestReading,type IconName,type Choice} from './dom.js';
+import {el,checkTarget,icon,notify,popover,menu,opens,menuItem,button,showDialog,plural,note,select,latestReading,type IconName,type Choice} from './dom.js';
 import {request,onSessionReset,sessionChanged} from './api.js';
 import {selectionBar} from './selection_bar.js';
 import {setTriState,triStateOf} from './check_tree.js';
@@ -165,7 +165,7 @@ export function bulkSelection(noun:[string,string],actions:(ids:string[])=>BulkA
   const sel=selectionBar({label:'Bulk actions'}),bar=sel.root;
   const all=el('input',{type:'checkbox',class:'bulk-check','aria-label':`Select all ${noun[1]} shown`}) as HTMLInputElement;
   const caret=opens(el('button',{type:'button',class:'dt-check-menu','aria-label':'Selection options','data-tip':'Selection options'},icon('chevronDown')),'menu');
-  const head=el('span',{class:'dt-check-head'},all,caret);
+  const head=el('span',{class:'dt-check-head'},checkTarget(all),caret);
   const banner=el('div',{class:'dt-select-banner',role:'status','aria-live':'polite',hidden:true});
   const held=()=>!!o.held?.();
   // Unknown matches are no matches: a list still resolving shows every row, but none of them is "matching" yet.

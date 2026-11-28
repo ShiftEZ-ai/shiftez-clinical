@@ -863,13 +863,14 @@ def test_each_workload_department_validation_and_scheduler_cpu_budget(department
 
 @pytest.fixture(scope='module')
 def department_preparation_163_people(scale_harness):
-    return seed_department_preparation(scale_harness('pg'))
+    data, _ = seed_department_preparation(scale_harness('pg'))
+    return data
 
 
 def seed_department_preparation(h):
     """Persist the preparation profile's active rules and retired history in PostgreSQL."""
     from datetime import date
-    from sqlalchemy import select
+    from sqlalchemy import func, select
     from apps.api import models as m
     from apps.api.db import transaction
     from packages.contracts.schemas import PolicyDefinition
@@ -901,7 +902,8 @@ def seed_department_preparation(h):
         db.flush()
         active = list(db.scalars(select(m.Policy).where(m.Policy.department_id == h.seed['department_id'],
                                                        m.Policy.status == 'active')))
-        assert len(active) == 12
+        active_ids = {policy.id for policy in active}
+        assert len(active_ids) == 12
         for index, source in enumerate(active):
             for revision in range(83 if index < 5 else 82):
                 db.add(m.Policy(department_id=h.seed['department_id'], name=f'Retired {source.kind} {revision}',
@@ -909,13 +911,19 @@ def seed_department_preparation(h):
                     revision=revision + 1, starts_on=date(2018, 1, 1), ends_on=date(2019, 1, 1),
                     created_by=h.seed['identities']['coordinator'], approved_by=h.seed['identities']['approver'],
                     owner='Synthetic policy owner', source='Preparation fixture'))
+        db.flush()
+        stored = dict(db.execute(
+            select(m.Policy.status, func.count()).where(m.Policy.department_id == h.seed['department_id'])
+            .group_by(m.Policy.status)).all())
+        assert stored == {'active': 12, 'retired': 989}
     workspace = h.refresh_draft_baseline(h.detail(workspace)['workspace'])
     data = h.snapshot(workspace)
     assert h.app.state.engine.dialect.name == 'postgresql'
     assert len(data['people']) == 163 and len(data['shifts']) == 768
-    assert len(data['policies']) == 1001 and sum(p['status'] == 'active' for p in data['policies']) == 12
+    assert len(data['policies']) == len(active_ids)
+    assert {(p['id'], p['status']) for p in data['policies']} == {(pid, 'active') for pid in active_ids}
     assert not any(s['participants'] for s in data['shifts'])
-    return data
+    return data, sum(stored.values())
 
 
 @pytest.mark.cpu_budget
