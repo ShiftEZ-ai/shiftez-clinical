@@ -7,7 +7,7 @@ import pytest
 from playwright.sync_api import expect
 
 from apps.worker.main import process_one
-from .test_browser import browser, live_server, sign_in, navigate, new_draft, save_dialog  # noqa: F401
+from .test_browser import browser, holding, live_server, sign_in, navigate, new_draft, save_dialog  # noqa: F401
 from .test_browser_cp_sat import cp_server  # noqa: F401
 from .test_series_reconciliation import template
 
@@ -63,6 +63,8 @@ def test_new_rota_creates_a_draft_without_starting_auto_schedule(browser, live_s
         automate = dialog.get_by_label('Run auto-schedule after setup', exact=True)
         expect(automate).to_be_visible()
         expect(automate).not_to_be_checked()
+        # The name follows the dates from the server's suggestion; a person presses Create once it is there.
+        expect(dialog.get_by_label('Rota name', exact=True)).to_have_value(re.compile(r'^Rota '))
 
         with page.expect_response(lambda r: r.url.endswith('/api/commands') and r.request.method == 'POST'
                                   and r.request.post_data_json.get('kind') == 'workspace.create') as created:
@@ -104,5 +106,29 @@ def test_new_rota_with_auto_schedule_opens_on_its_run_and_result(browser, cp_ser
         expect(panel.locator('.auto-body')).to_have_attribute('data-state', 'run')
         process_one(h.app.state.engine)
         expect(panel.get_by_role('region', name='Review')).to_be_visible(timeout=20000)
+    finally:
+        context.close()
+
+
+def test_create_before_the_suggested_name_lands_clears_its_error_when_it_does(browser, live_server, h):
+    context, page = sign_in(browser, live_server, 'coordinator')
+    overlaps = '**/api/schedule/overlaps?**'
+    try:
+        with holding(page) as held:
+            navigate(page, 'planner')
+            held.hold(overlaps)
+            with page.expect_request(lambda r: '/api/schedule/overlaps?' in r.url):
+                new_draft(page)
+            dialog = page.get_by_role('dialog', name='New rota', exact=True)
+            name = dialog.get_by_label('Rota name', exact=True)
+            expect(name).to_have_value('')
+            dialog.get_by_role('button', name='Create draft', exact=True).click()
+            expect(name).to_have_attribute('aria-invalid', 'true')
+            expect(dialog.get_by_text('Add a rota name', exact=True)).to_be_visible()
+            # Release answers what is held, then unroutes: unrouting first already lets them through (Playwright 1.63+).
+            held.release(overlaps)
+            expect(name).to_have_value(re.compile(r'^Rota '))
+            expect(name).not_to_have_attribute('aria-invalid', 'true')
+            expect(dialog.get_by_text('Add a rota name', exact=True)).to_be_hidden()
     finally:
         context.close()
