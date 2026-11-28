@@ -21,10 +21,15 @@ def creates(route_list):
 def test_run_shows_its_progress_at_once_and_a_second_press_starts_no_second_run(browser, cp_server, h):
     w, _ = rota(h, [(4, 8, []), (5, 8, [])], name='Instant auto-schedule')
     context, page = sign_in(browser, cp_server, 'coordinator', viewport={'width': 1440, 'height': 900})
-    held, posted = [], []
+    held, posted, listed = [], [], []
     try:
         open_rota(page, w['id'])
+
+        def hold_list(route):
+            listed.append(route)  # the read the panel makes on opening: answered only after Run is pressed
+        page.route(lambda url: '/api/jobs?workspace_id=' in url, hold_list, times=1)
         open_scheduling(page)
+        wait_held(page, listed)
 
         def hold(route):
             posted.append(route)
@@ -37,10 +42,23 @@ def test_run_shows_its_progress_at_once_and_a_second_press_starts_no_second_run(
         run = panel.get_by_role('button', name='Run auto-schedule', exact=True)
         run.dblclick()
         wait_held(page, held)
+        # The opening read answers (no runs yet) while job.create is still held: it must not replace the pending progress.
+        with page.expect_response(lambda r: '/api/jobs?workspace_id=' in r.url):
+            listed[0].continue_()
         # Within a second of the press, with the server still holding job.create: the footer's step and the panel's progress.
         expect(page.locator('.app-footer .footer-status > .asl-strip ' + STEP)).to_have_text('1/5 Checking rules', timeout=1000)
         expect(panel.get_by_text('Waiting for the scheduler to start', exact=True)).to_be_visible(timeout=1000)
         expect(run).to_have_count(0)
+        # A jobs read that lands while job.create is held has no run in it yet: the run stays shown as starting, in the
+        # panel and the footer, never "No auto-schedule runs" (issue 1793). Back on the tab, the open panel reads at once.
+        with page.expect_response(lambda r: '/api/jobs?workspace_id=' in r.url) as listed:
+            page.evaluate("document.dispatchEvent(new Event('visibilitychange'))")
+        # Not Response.finished(): this read is often a 304 answered from the cache, which never reports finishing.
+        assert listed.value.status in (200, 304), listed.value.status
+        page.evaluate("() => new Promise(r => requestAnimationFrame(() => setTimeout(r, 100)))")
+        expect(panel.get_by_text('No auto-schedule runs for this rota yet.', exact=True)).to_have_count(0)
+        expect(panel.get_by_text('Waiting for the scheduler to start', exact=True)).to_be_visible()
+        expect(page.locator('.app-footer .footer-status > .asl-strip ' + STEP)).to_have_text('1/5 Checking rules')
         # Back on What to fill, the way on leads to the run going, not to a second one.
         auto_setup(panel)
         panel.get_by_role('button', name='Show run', exact=True).click()

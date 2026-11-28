@@ -619,19 +619,22 @@ def _applied_reasons(db, workspace, data, wishes):
             if ordered(expected) == ordered(actual) and external(job.input_snapshot) == external(data) else None)
 
 
-def planner_effects(data, zone, *, external_shifts=()):
-    """Annotate the planner response, without scoring or changing stored wishes/assignments."""
+def planner_effects(data, zone, *, external_shifts=(), outcomes=True):
+    """Annotate the planner response, without scoring or changing stored wishes/assignments.
+
+    A date window passes outcomes=False: a draft outcome needs every session of the rota, a day effect only its own."""
     from collections import defaultdict
     from packages.domain.patterns import day_of, wish_day_effect, wish_days, wish_outcomes
     data['wishes'] = [dict(wish) for wish in data['wishes']]
     context = {**data, 'organisation': {'timezone': zone}, 'shifts': [*data['shifts'], *external_shifts]}
-    outcomes = wish_outcomes(context)
+    scored = wish_outcomes(context) if outcomes else None
     by_day = defaultdict(list)
     for wish in data['wishes']:
-        honoured, n = outcomes[wish['id']]
-        wish['draft_outcome'] = {
-            'outcome': 'granted' if honoured == 1 else 'declined' if honoured == 0 else 'partly',
-            'honoured_days': round(honoured * n), 'total_days': n}
+        if scored is not None:
+            honoured, n = scored[wish['id']]
+            wish['draft_outcome'] = {
+                'outcome': 'granted' if honoured == 1 else 'declined' if honoured == 0 else 'partly',
+                'honoured_days': round(honoured * n), 'total_days': n}
         for day in wish_days(wish, context):
             by_day[wish['person_id'], day].append(wish)
     for shift in data['shifts']:

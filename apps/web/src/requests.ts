@@ -7,7 +7,7 @@ import {readFailed,alive} from './dom.js';  // a failed read: refused (403) or a
 import {skeleton} from './loading.js';
 import {statusLabel,footerStatus,el,icon,button,armed,badge,note,notify,plural,field,area,select,multi,check,withIcon,iconButton,sectionHead,formDialog,confirmAction,
   dateUnits,formatDate,formatTime,formatDay,toLocal,statusBadge,weekdayOptions,labelOf,phoneQuery,showDialog,grants,type IconName,emptyLine} from './dom.js';
-import {get,background,command,newest,sessionKey,sessionChanged,holdUndo,onSessionReset,rotaMeta} from './api.js';
+import {get,background,command,newest,sessionKey,sessionChanged,holdUndo,onSessionReset,rotaMeta,pageReadSignal} from './api.js';
 import {dateRange,dateList,lastDayIncluded} from './date_picker.js';
 import {dataTable,openFiltered,tableFilters,tableFiltered,tableAsOf,tableSearch,tableSearchOptions,tableSort,tableServerConditions,type RowAction} from './table_view.js';
 import {dockPanel,rowMark,type Dock,type PanelPosition} from './side_panel.js';
@@ -104,6 +104,11 @@ const NOT_BLOCKING='Does not block duties';
 const shortDay=(day:string)=>formatDay(day,'UTC');
 // Rows shown on this visit: "Show more" adds a page; a refresh reloads as many as were shown.
 const pageState={shown:SIZE,loaded:'',loadedSession:-1};
+// The first page a render is reading. A render that starts meanwhile on the same visit for the same session, list, query
+// and size (a refresh overlapping the route's render) waits for that read instead of sending the same one again.
+// shortcut: a change committed while that read was on its way can be missed until the next refresh; share only reads sent
+// after the refresh's change (the live activity a read was sent at) if a stale list is ever seen.
+let firstRead:{key:string;signal:AbortSignal;read:Promise<Page>}|null=null;
 // Filters from the address (#requests?type=swap&status=waiting): applied on top of the person's own filters, shown as
 // their own chips and never saved, so the saved view comes back once they are cleared.
 type RequestLink={type:string[];status:string[];person:string};
@@ -169,7 +174,11 @@ export async function requestsPage(ctx:Context,target:HTMLElement,hooks:RequestH
   state.loaded=firstQuery;state.loadedSession=sessionKey();
   // The page draws from its list; whether this person may offer overtime (a slow read) adds that kind when it lands.
   const offered=person?Promise.resolve(false):overtimeOffered(ctx);
-  let page=await load(state.shown,firstQuery),requested=firstQuery;
+  // A page left meanwhile (api.ts leavePage) aborted that read: this visit never shares it.
+  const readKey=JSON.stringify([visit,key,firstQuery,state.shown]),shared=firstRead?.key===readKey&&firstRead.signal===pageReadSignal()?firstRead:null;
+  const first=shared||{key:readKey,signal:pageReadSignal(),read:load(state.shown,firstQuery)};
+  if(!shared){firstRead=first;const done=()=>{if(firstRead===first)firstRead=null;};void first.read.then(done,done);}
+  let page=await first.read,requested=firstQuery;
   // Show more on the page this one replaces, asked while this read was on its way (state.shown grew): read that window
   // too, else this draw would drop it. The page left discards its own answer once replaced.
   const end=page.offset+page.limit;

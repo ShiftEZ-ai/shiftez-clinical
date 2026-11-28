@@ -1,4 +1,4 @@
-import {phoneQuery,el,icon,popover,adoptPopover,multiPick,menuItem,menu,menuSource,opens,armed,badge,empty,field,select,check,button,iconButton,formDialog,notify,departmentToday,type Child,type Choice,type IconName,CAPABILITY} from './dom.js';
+import {phoneQuery,el,checkTarget,icon,popover,adoptPopover,multiPick,menuItem,menu,menuSource,opens,armed,badge,empty,field,select,check,button,iconButton,formDialog,notify,departmentToday,type Child,type Choice,type IconName,CAPABILITY} from './dom.js';
 import {dateInput,showDay} from './date_picker.js';
 import {treeMatches,conditionBuilder,conditionsText,negativeOp,type BuilderOptions,exclusiveLastDay,shownLastDay,lineMatches,relativeLines,relativeSummary,resolveOperands,resolvedNow,resolvable,resolveFailure,retryResolve,operandText,type ConditionField,type ResolveScope,type ValueKind} from './conditions.js';
 import type {Condition,Conditions,TableViewDefaults} from './generated.js';
@@ -657,7 +657,7 @@ function searchOptionControls(o:SearchOptionsSpec,input:HTMLInputElement,typed:(
  *  holds before the search and filters, or undefined when the server applied them, and the noun): the toolbar then
  *  says what they hide, none left included ("Filtered: 9 of 43 people shown · Show all"), so no list filtered to
  *  nothing is a dead end. */
-export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>void;search:HTMLInputElement|null;shown:(count:number,of:number|undefined,noun:[string,string])=>void}{
+export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>void;search:HTMLInputElement|null;searchPending:()=>boolean;shown:(count:number,of:number|undefined,noun:[string,string])=>void}{
   const tool=(label:string,glyph:IconName)=>el('button',{type:'button',class:'dt-tool',...popup('dialog'),'aria-label':label,'data-tip':label},icon(glyph),el('span',{class:'dt-tool-label'},label),el('span',{class:'dt-tool-count'}));
   const state=(b:HTMLElement,label:string,on:boolean,count='',detail='')=>{
     b.classList.toggle('on',on);b.querySelector('.dt-tool-count')!.textContent=count;
@@ -666,9 +666,9 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
     const key=spec.key&&`${spec.key}:${label}`;
     anchor.addEventListener('click',()=>popover(anchor,(panel,close)=>{panel.classList.add('dt-pop');build(panel,close);},{label,placement:'below',key}));
     if(key)queueMicrotask(()=>adoptPopover(key,anchor));};
-  const parts:HTMLElement[]=[];let search:HTMLInputElement|null=null,syncSearch:(()=>void)|undefined;
+  const parts:HTMLElement[]=[];let search:HTMLInputElement|null=null,syncSearch:(()=>void)|undefined,timer=0;
   if(spec.search){
-    const o=spec.search;let timer=0;
+    const o=spec.search;
     // The one panel search (dom.ts panelSearch): Esc clears what is typed first, and only then reaches the panel or dock
     // around it (live 235391b: a docked list's first Esc closed it with the text in it).
     const input=panelSearch(o.label,o.placeholder||'Search',undefined,'dt-search');input.value=o.value;input.maxLength=120;
@@ -681,6 +681,8 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
     // An option changed applies at once (a pending pause in typing is applied with it).
     const opts=o.options&&searchOptionControls({...o.options,set:next=>{o.options!.set(next);apply();}},input,o.onInput,spec.key&&`${spec.key}:Search options`);syncSearch=opts?.sync;
     const wrap=opts?el('div',{class:'dt-search-wrap'},opts.nodes[0],opts.nodes[1],input):el('label',{class:'dt-search-wrap'},icon('search'),input);
+    // The whole box takes the tap, as the label form does (a label here would hand a click to the options button).
+    if(opts)wrap.addEventListener('mousedown',e=>{if(e.target===wrap){e.preventDefault();input.focus();}});
     // The box never shrinks below its placeholder ("Search trai", D-156): app.css sizes its minimum from the length.
     wrap.style.setProperty('--ph',String(input.placeholder.length));search=input;parts.push(wrap);
   }
@@ -794,7 +796,7 @@ export function collectionToolbar(spec:ToolbarSpec):{root:HTMLElement;sync:()=>v
   });}
   const root=el('div',{class:'dt-toolbar',role:'group','aria-label':spec.label},savedBtn,...(spec.scope||[]),...parts,...(spec.actions||[]),strip);
   sync();
-  return {root,sync,search,shown:(count,of,noun)=>{drawn=[count,of,noun];paintStrip();}};
+  return {root,sync,search,searchPending:()=>!!timer,shown:(count,of,noun)=>{drawn=[count,of,noun];paintStrip();}};
 }
 
 let tableAccount='';
@@ -1028,8 +1030,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     group:(ids:string[],label:string)=>{const b=el('input',{type:'checkbox',class:'bulk-check','aria-label':`Select all ${label}`}) as HTMLInputElement;
       setTriState(b,triStateOf(ids.filter(id=>ext.set.has(id)).length,ids.length));b.addEventListener('click',e=>e.stopPropagation());
       b.addEventListener('change',()=>{for(const id of ids)b.checked?ext.set.add(id):ext.set.delete(id);extBoxes.forEach((x,id)=>x.checked=ext.set.has(id));extSync();ext.changed();});return b;}}:null;
-  const selectionTarget=(input:HTMLInputElement)=>el('label',{class:'dt-check-hit'},input);
-  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?selectionTarget(bulk.box(spec.rowId(r),label(r))):null;
+  const pickable=(r:T)=>!spec.selectable||spec.selectable(r),boxOf=(r:T)=>bulk&&pickable(r)?checkTarget(bulk.box(spec.rowId(r),label(r))):null;
   const root=el('div',{class:'dt','data-table':spec.id});
   // "Show changed · N" is on: only the rows the last bulk change changed (read by matches(), so declared first).
   let onlyChanged=false;
@@ -1296,7 +1297,7 @@ export function dataTable<T>(spec:TableSpec<T>){
     body.querySelector<HTMLElement>(`thead th[data-col="${CSS.escape(c.key)}"] .dt-sort`)?.focus({preventScroll:true});});}
   function tableOf(items:T[],groupKey:string){
     const cols=colsOf(items,groupKey);
-    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||selectionTarget(bulk.all))]:[]),...cols.map((c,i)=>{
+    const head=el('tr',{},...(bulk?[el('th',{class:'dt-check'},bulk.head||checkTarget(bulk.all))]:[]),...cols.map((c,i)=>{
       const cls=[c.num?'num':'',c.class||'',v.wrap.includes(c.key)?'dt-wrap':''].join(' ').trim();
       const on=v.sort?.[0]===c.key,dir=on?v.sort![1]:null;
       // One menu per column header (table_menu.ts): sort, filter, group, wrap, hide, move; saved with the view.
@@ -1448,7 +1449,8 @@ export function dataTable<T>(spec:TableSpec<T>){
   const wholeGroups=(rows:T[],groupKey:string,then:string)=>{const m=new Map<string,T[]>();if(!groupKey)return m;
     for(const [k,rs] of grouped(rows,groupKey)){m.set(k,rs);if(then)for(const [k2,s] of grouped(rs,then))m.set(k+' › '+k2,s);}return m;};
   const groupHead=(k:string,rows:T[],closed:boolean,key:string)=>{const all=whole.get(key)||rows,ids=all.filter(pickable).map(spec.rowId);
-    return [ids.length?bulk?.group?.(ids,k==='—'?'without a value':k):null,groupToggle(key,groupCount(key,k,all.length),closed,k),spec.groupAction?.(k,all)];};
+    const box=ids.length?bulk?.group?.(ids,k==='—'?'without a value':k):null;
+    return [box?checkTarget(box):null,groupToggle(key,groupCount(key,k,all.length),closed,k),spec.groupAction?.(k,all)];};
   // A list paged on the server knows how many a group holds beyond the rows read so far ("100 of 411").
   const groupCount=(key:string,k:string,loaded:number)=>{const total=key===k?spec.groupTotal?.(layoutNow().groupKey,k):undefined;return total&&total>loaded?`${loaded} of ${total}`:String(loaded);};
   // Groups opened past their limit this visit ("Show N more").
@@ -1617,14 +1619,15 @@ export function dataTable<T>(spec:TableSpec<T>){
     // What each saved view's relative values mean today (its menu shows the dates or "per viewer").
     void resolveOperands(saved.flatMap(x=>relativeLines(x.definition.conditions)),scope()).then(()=>bar.sync());const named=v.viewId?saved.find(x=>x.id===v.viewId):undefined;
     if(v.viewId&&!named){v.viewId='';draw();return;}
-    const first=!!named&&!v.hydrated;v.hydrated=true;
+    const first=!!named&&!v.hydrated,typing=bar.searchPending();v.hydrated=true;
     // The view's search comes back as saved, its options with it (both or neither: options alone would change a search typed since).
-    if(first&&!v.q&&!normalSearch(v.search_options)){v.q=named!.definition.q||'';v.search_options=normalSearch(named!.definition.search_options);}
+    if(first&&!typing&&!v.q&&!normalSearch(v.search_options)){v.q=named!.definition.q||'';v.search_options=normalSearch(named!.definition.search_options);}
     // The saved view's As of day comes back with it on its first read (a reload); a day changed since stays.
     // …unless the day was changed while the views were on their way (that newer choice stays). A list that reads its
     // rows for the day (spec.asOf) redraws once they are read: drawn now, the day would show over the previous day's rows.
     if(first&&!givenDay&&v.as_of===dayAtLoad&&(named!.definition.as_of||'')!==(v.as_of||'')){setAsOf(named!.definition.as_of||'');if(!spec.asOf)draw();return;}
-    if(searchKey()!==reportedSearch){if(bar.search)bar.search.value=v.q;draw();}else bar.sync();}).catch(()=>undefined);
+    // The toolbar already owns the pending input's redraw.
+    if(!typing&&searchKey()!==reportedSearch){if(bar.search)bar.search.value=v.q;draw();}else bar.sync();}).catch(()=>undefined);
   /** `parts` lets another toolbar (the planner's) offer this table's Group and Sort. */
   /** Every row's id in the order drawn, over all pages (not just the rows on screen), and one row's place in it. */
   const ids=()=>drawnOrder().map(x=>spec.rowId(x.r));

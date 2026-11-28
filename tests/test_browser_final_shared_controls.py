@@ -128,6 +128,34 @@ def test_requests_clear_type_leave_and_reopen_keep_current_query_without_stale_r
         context.close()
 
 
+def test_requests_refresh_during_the_reopen_read_shares_that_read(browser, live_server, h):
+    leave(h)
+    context, page = sign_in(browser, live_server, 'staff')
+    try:
+        navigate(page, 'requests')
+        expect(page.locator('#main tr.dt-open')).to_have_count(1)
+        pause_clock(page)
+        listed = lambda r: urlparse(r.url).path == '/api/requests/all' and parse_qs(urlparse(r.url).query).get('q') == ['held']
+        reads, held = [], []
+        page.on('request', lambda r: reads.append(r.url) if listed(r) else None)
+        page.route(lambda url: urlparse(url).path == '/api/requests/all', lambda route: held.append(route) if listed(route.request) else route.continue_())
+        page.evaluate("async()=>(await window.importBundle('table_view.js')).openFiltered('requests',{},'held')")
+        page.evaluate("location.hash='home'")
+        expect_loaded(page, 'home')
+        with page.expect_request(listed):
+            page.evaluate("location.hash='requests'")
+        # A refresh while the route's read is held: its render reads the same list (and asks overtime again, at the same step).
+        with page.expect_request(lambda r: urlparse(r.url).path == '/api/requests/overtime-eligibility'):
+            page.evaluate("window.dispatchEvent(new Event('rota-recheck'))")
+        for route in held:
+            route.continue_()
+        expect_loaded(page, 'requests')
+        expect(page.get_by_role('searchbox', name='Search requests', exact=True)).to_have_value('held')
+        assert len(reads) == 1, reads
+    finally:
+        context.close()
+
+
 def test_managed_close_hook_is_synchronous_once_and_native_close_remains_eventual(browser, live_server):
     context, page = sign_in(browser, live_server, 'coordinator')
     try:

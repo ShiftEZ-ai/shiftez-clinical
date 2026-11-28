@@ -95,6 +95,40 @@ def test_rank_cover_preview_lists_only_newly_invalid_duties_and_rolls_back(h, ac
     assert saved['ends_on'] == payload.get('ends_on') and saved['withdrawn'] == (action == 'withdraw')
 
 
+@pytest.mark.parametrize('h', [pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+@pytest.mark.parametrize('action', ['end', 'withdraw'])
+def test_rank_cover_preview_rolls_back_on_postgresql(h, action):
+    test_rank_cover_preview_lists_only_newly_invalid_duties_and_rolls_back(h, action)
+
+
+@pytest.mark.parametrize('h', ['sqlite', pytest.param('postgresql', marks=pytest.mark.postgres)], indirect=True)
+def test_catalogue_preview_refuses_a_missing_policy_ordinal(h, monkeypatch):
+    from apps.api import catalogue_snapshot_sources as capture
+
+    policy = h.policy({'kind': 'min_rest', 'hours': 11})
+    h.shift(h.workspace())
+    resource = pool(h, capacity=2)
+    before = state(h)
+    read = capture._raw_rows
+
+    def omit_ordinal(db, cls, *args, **kwargs):
+        keys, rows = read(db, cls, *args, **kwargs)
+        if cls is m.RecordInsertion:
+            assert db.in_nested_transaction()
+            record_at = keys.index('record_id')
+            kept = [row for row in rows if row[record_at] != policy['id']]
+            assert len(kept) == len(rows) - 1
+            return keys, kept
+        return keys, rows
+
+    monkeypatch.setattr(capture, '_raw_rows', omit_ordinal)
+    result = preview(h, change(resource, capacity=1), status=409)
+    assert result['error']['code'] == 'PREVIEW_INPUTS_INCOMPLETE'
+    assert state(h) == before
+    with transaction(h.app.state.engine) as db:
+        assert db.get(m.ResourcePool, resource['id']).capacity == 2
+
+
 def test_pattern_preview_does_not_revalidate_or_rewrite_existing_duties(h, monkeypatch):
     from .test_series_reconciliation import template, materialise
     series = template(h)

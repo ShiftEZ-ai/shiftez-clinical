@@ -133,7 +133,9 @@ def test_saved_month_person_layout_and_bulk_impact_are_real_server_workflows(bro
         expect(planner_filter(page).locator('.cond-line .pick-button').first).to_contain_text(person)
         close_popover(page)
         expect(page.get_by_role('checkbox',name=re.compile('^Select '))).to_have_count(1)
-        page.get_by_role('checkbox',name=re.compile('^Select ')).first.check()
+        # A draft opens on its window: this first press reads the whole rota, then ticks the box drawn whole.
+        page.get_by_role('checkbox',name=re.compile('^Select ')).first.click()
+        expect(page.get_by_role('checkbox',name=re.compile('^Select ')).first).to_be_checked()
         page.locator('#selection-bar').get_by_role('button',name='Close sessions',exact=True).click()
         form=page.get_by_role('dialog');form.get_by_label('Closure reason',exact=True).fill('Preview one exact cancellation')
         form.get_by_role('button',name='Calculate impact',exact=True).click()
@@ -433,6 +435,10 @@ def test_drag_lights_targets_hides_card_and_has_no_native_title(browser, live_se
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         chips = page.locator('.wk-grid button.pchip.draggable')
         expect(chips).to_have_count(2)
+        chips.first.click()
+        panel = page.locator('.wk-panel')
+        expect(panel).to_be_visible()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
         expect(page.locator('button.pchip[title]')).to_have_count(0)
         chips.first.hover()
         expect(page.locator('.hovercard')).to_have_count(1)
@@ -456,6 +462,9 @@ def test_drop_shows_the_preview_before_the_reason(browser, live_server, h):
     try:
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         chips = page.locator('.wk-grid button.pchip.draggable')
+        chips.first.evaluate("c => c.dispatchEvent(new DragEvent('dragstart', {bubbles: true, cancelable: true, dataTransfer: new DataTransfer()}))")
+        expect(page.locator('.toast.info')).to_contain_text('Whole rota loaded · drag again')
+        expect(page.get_by_role('dialog', name='Exchange two assignments')).to_have_count(0)
         chips.first.drag_to(chips.nth(1))
         dialog = page.get_by_role('dialog', name='Exchange two assignments')
         expect(dialog.get_by_text('Not saved yet', exact=False)).to_be_visible(timeout=20000)
@@ -474,6 +483,10 @@ def test_names_carry_no_drag_listeners_of_their_own(browser, live_server, h):
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
         chips = page.locator('.wk-grid button.pchip.draggable')
         expect(chips).to_have_count(2)
+        chips.first.click()
+        panel = page.locator('.wk-panel')
+        expect(panel).to_be_visible()
+        panel.get_by_role('button', name='Close panel', exact=True).click()
         cdp = context.new_cdp_session(page)
         chip = cdp.send('Runtime.evaluate', {'expression': "document.querySelector('.wk-grid button.pchip.draggable')"})['result']
         own = {x['type'] for x in cdp.send('DOMDebugger.getEventListeners', {'objectId': chip['objectId']})['listeners']}
@@ -536,9 +549,12 @@ def test_select_these_ticks_in_place_and_the_selection_survives_a_week_change(br
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, f"schedule/week/2026-10-04?edit={w['id']}")
-        grid = page.locator('.wk-grid').element_handle()
         page.locator('.wk-rowhead').first.click(button='right')
-        page.get_by_role('menuitem', name=re.compile(r'^Select these 3 sessions')).click()
+        select = page.get_by_role('menuitem', name=re.compile(r'^Select these 3 sessions'))
+        expect(select).to_be_visible()
+        # The menu opens on the rota drawn whole (its first use on the window): Select these must not draw it again.
+        grid = page.locator('.wk-grid').element_handle()
+        select.click()
         bar = page.locator('#selection-bar')
         expect(bar).to_contain_text('3 sessions selected')
         assert grid.evaluate('g => g.isConnected')

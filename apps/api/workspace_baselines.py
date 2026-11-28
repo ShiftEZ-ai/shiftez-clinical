@@ -259,6 +259,32 @@ def _mandatory_recheck_policy(policy):
     return projected
 
 
+def _captured_safety_numbers(policy):
+    from packages.contracts.rule_catalogue import catalogue_entry, slot_for_number
+
+    definition = policy["definition"]
+    rule = definition["rule"]
+    entry = catalogue_entry(rule["id"], rule.get("catalogue_version", 1))
+    if not entry:
+        return policy
+    projected = []
+    for index, line in enumerate(rule.get("lines") or ()):
+        numbers = line.get("numbers") or {}
+        kept = {}
+        for key, number in numbers.items():
+            slot = slot_for_number(entry, key, rule, line, numbers)
+            if slot["kind"] in LIVE_SAFETY_KINDS and not slot["advisory"]:
+                kept[key] = number
+        if kept:
+            projected.append((index, _with_catalogue_numbers(line, kept)))
+    if not projected:
+        return None
+    if len(projected) == len(rule["lines"]) and all(
+            line["numbers"] == rule["lines"][index]["numbers"] for index, line in projected):
+        return policy
+    return {**policy, "definition": {**definition, "rule": {**rule, "lines": _indexed_catalogue_lines(projected)}}}
+
+
 def _overlay_zero_limits(frozen, current, safety_ids=()):
     """Overlay live zero ceilings without relaxing frozen draft obligations."""
     # shortcut: a captured zero is suppressed only when its projection or legacy scope equals live, else it binds twice (stricter, never looser); fold into one overlay after v0.1.0 (#1006)
@@ -486,8 +512,10 @@ def _catalogue_destination_at_least_as_strict(source, destination):
     destination_rules = [rule for rule in active_rules([destination]) if rule.get("kind") in LIVE_SAFETY_KINDS]
     for source_rule in source_rules:
         kind = source_rule["kind"]
-        target = next((rule for rule in destination_rules
-                       if rule.get("kind") == kind and shape(rule, kind) == shape(source_rule, kind)), None)
+        target = next((candidate for candidate in destination_rules
+                       if candidate.get("kind") == kind and shape(candidate, kind) == shape(source_rule, kind)
+                       and (candidate.get("starts_on") or "") <= (source_rule.get("starts_on") or "")
+                       and (candidate.get("ends_on") or "\uffff") >= (source_rule.get("ends_on") or "\uffff")), None)
         if target is None:
             return False
         source_body = (source_rule.get("definition") or {}).get("rule") or {}
@@ -684,6 +712,16 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         return result
 
     frozen_policies = frozen.get("policies", [])
+    if current_mandatory:
+        captured_active_rules = {row["id"]: row["definition"]["rule"] for row in frozen_policies
+                                 if row.get("status") == "active" and row.get("active", True)
+                                 and row["department_id"] == workspace.department_id}
+        # Submit and approve must fingerprint the same current rows, even after a source refresh.
+        if missing := captured_active_rules.keys() - {row["id"] for row in current["policies"]}:
+            retired = [record(row) for row in db.scalars(select(m.Policy).where(
+                m.Policy.department_id == workspace.department_id,
+                m.Policy.id.in_(missing), m.Policy.status == "retired"))]
+            current = {**current, "policies": current["policies"] + retired}
     current_policies = current.get("policies", [])
     active_current_policies = [policy for policy in current_policies
                                if policy.get("status") == "active" and policy.get("active", True)]
@@ -699,25 +737,35 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
         live = {policy["id"]: policy for policy in current_policies
                 if (policy["id"] in captured_ids or mandatory(policy))
                 and not s.safety_rule(policy["definition"])}
-        live_rule_ids = set(live)
+        live_rule_ids = set(live) | current_safety_ids
+        safety_only_versions = set()
         result["source_bindings"] = [
             *(binding for binding in frozen.get("source_bindings", []) if not mandatory(binding["source"])),
             *(binding for binding in current.get("source_bindings", []) if mandatory(binding["source"])),
         ]
         if workspace.status == "draft":
-            captured = {p["id"]: p["definition"]["rule"] for p in frozen_policies
-                        if p.get("status") == "active" and p.get("active", True)
-                        and p["department_id"] == workspace.department_id}
-            changed = {p["id"] for p in current_policies if p["id"] in captured
-                       and (p["definition"]["rule"] != captured[p["id"]] or p["status"] == "retired")}
+            changed = {p["id"] for p in current_policies if p["id"] in captured_active_rules
+                       and (p["definition"]["rule"] != captured_active_rules[p["id"]] or p["status"] == "retired")}
             result["_changed_department_rules"] = sorted(changed | {
                 p["id"] for p in active_current_policies
                 if changed.intersection(p["definition"].get("merged_ids") or ())
                 or p["definition"].get("replaces_id") in changed})
         retained = []
+        current_by_id = {policy["id"]: policy for policy in active_current_policies}
         for policy in frozen_policies:
             ident = policy["id"]
             if s.safety_rule(policy["definition"]):
+                current_version = current_by_id.get(ident)
+                if (policy["kind"] == "catalogue" and policy["status"] == "active" and policy.get("active", True)
+                        and (current_version is None or current_version["revision"] != policy["revision"])):
+                    safety_only_versions.add((ident, policy["revision"]))
+                    projected = _captured_safety_numbers(policy)
+                    if projected is None:
+                        continue
+                    # The current policy still supplies every live number. Keep an edited same-id
+                    # projection distinct so downstream maps preserve both safety obligations.
+                    if projected is not policy:
+                        policy = _distinct_live_policy(projected) if current_version is not None else projected
                 retained.append(policy)
             elif ident in live:
                 retained.append(live.pop(ident))
@@ -844,12 +892,15 @@ def live_safety_inputs(db, workspace, frozen, *, kinds=LIVE_SAFETY_KINDS, curren
     saved_seeds = result.get("policy_seed_lines") or []
     live_seeds = current.get("policy_seed_lines") or []
     if current_mandatory:
-        seeds = {seed["id"]: seed for seed in saved_seeds}
+        # Immutable seed defaults are ordinary goals or counts. They must not put a captured
+        # non-safety number back into a projection after its policy revision was superseded.
+        seeds = {seed["id"]: seed for seed in saved_seeds
+                 if (seed["policy_id"], seed["policy_revision"]) not in safety_only_versions}
         seeds.update((seed["id"], seed) for seed in live_seeds if seed["policy_id"] in live_rule_ids)
         saved_seeds = list(seeds.values())
     result["policies"] = _overlay_zero_limits(seeded_policies(merged, saved_seeds),
         seeded_policies(current_policies, live_seeds), current_safety_ids)
-    if saved_seeds:
+    if result.get("policy_seed_lines") or saved_seeds:
         result["policy_seed_lines"] = []
     if "team_lead_requirement" in kinds:
         result["type_lead_ownership"] = current.get("type_lead_ownership", [])

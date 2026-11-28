@@ -21,6 +21,7 @@ from .test_browser_people_merged import row
 from .test_browser_requests import day
 from .test_browser_person_profile import L, PRIVATE, TABS, W, open_person, person, related, section
 from .test_browser_audit_date_units import stored_theme
+from .test_browser_kept_reads import live_pulse, rebuild
 from .test_browser_w3_setup_today import no_page_overflow
 from .test_browser_rule_catalogue import catalogue_rule, line
 from .test_leave_disclosure import setting
@@ -238,8 +239,19 @@ def test_admin_signs_out_one_device_then_everywhere_and_it_is_recorded(browser, 
         expect(sessions.first).to_contain_text('Local network')
         if unlimited:
             expect(sessions.first).to_contain_text('No automatic expiry')
-        # Same-button confirm: the first press arms it (red), the second signs that device out.
-        armed_press(sessions.first.get_by_role('button'), 'Sign out?')
+        # Same-button confirm: the first press arms it (red), the second signs that device out, also when a live update
+        # rebuilds the panel between the presses (its new Sign out for that session is drawn armed).
+        moved, reads = [0], []
+        live_pulse(page, 'access', moved)
+        page.on('requestfinished', lambda r: reads.append(r) if r.url.endswith('/sessions') else None)
+        sign_out = sessions.first.get_by_role('button')
+        sign_out.click()
+        expect(sign_out).to_have_class(re.compile(r'\barmed\b'))
+        rebuild(page, reads, moved, 1)
+        moved[0] = 0
+        expect(sign_out).to_have_class(re.compile(r'\barmed\b'))
+        expect(sign_out).to_contain_text('Sign out?')
+        sign_out.click()
         expect(shown.locator('[data-table="person-sessions"]')).to_contain_text('Signed out')
         expect(shown.locator('.ph-head').get_by_role('button')).to_have_accessible_name('Sign out everywhere')
         armed_press(shown.locator('.ph-head').get_by_role('button'), 'Sign out everywhere?')

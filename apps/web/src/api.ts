@@ -132,12 +132,16 @@ async function sent<T>(path:string, options:RequestOptions, renewed:boolean, ans
     const own=(v:{code?:string})=>v.code==='value_error'||v.code==='assertion_error';
     const details=list.map(v=>own(v)?plainWords(v.message):detailWords(v)).filter(Boolean).join('; ');
     const said=list.length&&list.every(own)&&details?details:`${error.message}${details?' '+details:''}`;
-    // ME-16: a write refused for its stale CSRF token (a tab left open over a new sign-in) renews the session's tokens and
-    // is sent once more with the same body (its idempotency key too). Still refused: sign in again, the page is kept.
-    if(!question&&response.status===403&&error.code==='CSRF_FAILED'&&options.method&&!['GET','HEAD'].includes(options.method)&&!path.startsWith('/auth/')&&!signingOut){
-      if(!renewed&&await refreshSession()){requireSession(generation);return request<T>(path,options,true);}
+    // ME-16: a stale token on a write or a POST question renews once and sends the same request within its original deadline.
+    if(response.status===403&&error.code==='CSRF_FAILED'&&!readMethod(options.method)&&!path.startsWith('/auth/')&&!signingOut){
+      if(!renewed){
+        const fresh=await refreshSession(options.signal);
+        requireSession(generation);left();
+        if(fresh)return sent<T>(path,options,true,answered);
+      }
       window.dispatchEvent(new CustomEvent('session-expired',{detail:{code:error.code}}));
-      throw new ApiError(error.code,'Your sign-in needs renewing. Sign in again to save; what you entered stays on the page.',response.status,error.details);}
+      throw new ApiError(error.code,question?'Your sign-in needs renewing. Sign in again to continue the check.'
+        :'Your sign-in needs renewing. Sign in again to save; what you entered stays on the page.',response.status,error.details);}
     if(!signingOut&&(response.status===401 || (response.status===403 && ['/api/me','/api/pulse'].includes(path))))window.dispatchEvent(new CustomEvent('session-expired',{detail:{code:error.code}}));
     throw new ApiError(error.code,(reading&&READ_PLAIN[error.code])||PLAIN[error.code]||`${refusalText(said,error.details)}${error.code==='INTERNAL_ERROR'&&payload.correlation_id?` Reference: ${payload.correlation_id}`:''}`,response.status,error.details);
   }
@@ -504,11 +508,11 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   'policy.create':(p,x)=>({said:'Rule proposed',done:p?.definition?.replaces_id?'Change withdrawn.':'Proposal withdrawn.',undo:back('policy.decline',{reason:WITHDRAWN},x?.record)}),
   // Calendar entries added on the way stay (they are not rules): then only the proposals could be undone, so none is.
   'policy.group':(_,x)=>({said:'Rules proposed',done:(x?.records||[]).length===1?'Proposal withdrawn.':`${(x?.records||[]).length} proposals withdrawn.`,undo:x?.calendar_entries?[]:(x?.records||[]).flatMap((r:Row)=>back('policy.decline',{reason:WITHDRAWN},r))}),
-  'policy.activate':(_,x)=>activationUndo(x?.record?[x.record]:[],x?.replaced),
+  'policy.activate':(_,x)=>activationUndo(x?.record?[x.record]:[],x?.replaced,served(x)),
   // SW3-B-16 (D42): a retirement is undone by retiring what it brought back, then restoring the rule (the server refuses
   // a restore while a rule it replaced is in force). One still waiting for other approvers changed nothing: no Undo.
   'policy.retire':(_,x)=>({said:'Rule retired',done:'Retirement undone: the rule applies again.',
-    undo:x?.approval&&!x.approval.complete?[]:[...(x?.restored||[]).flatMap((r:Row)=>back('policy.retire',{reason:'Undo retirement'},r)),...back('policy.restore',{reason:'Undo retirement'},x?.record)]}),
+    undo:x?.approval&&!x.approval.complete?[]:x?.undo?served(x):[...(x?.restored||[]).flatMap((r:Row)=>back('policy.retire',{reason:'Undo retirement'},r)),...back('policy.restore',{reason:'Undo retirement'},x?.record)]}),
   // A catalogue rule's proposal is withdrawn by Undo (as a legacy policy.create is); a declined or withdrawn proposal
   // comes back waiting for approval (policy.restore_proposal keeps its independent approval).
   'rule.propose':(_,x)=>({said:'Rule proposed',done:'Proposal withdrawn.',undo:back('policy.decline',{reason:WITHDRAWN},x?.record)}),
@@ -522,7 +526,7 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   ...Object.fromEntries(['person.workload','person.overtime','calendar.protection'].flatMap(f=>[
     [f+'.propose',(_:unknown,x:any)=>({said:'Proposed for approval',done:'Proposal withdrawn.',undo:back(f+'.undo',{reason:WITHDRAWN},x?.fact)})],
     ...['activate','retire'].map(a=>[`${f}.${a}`,(_:unknown,x:any)=>({said:a==='activate'?'Approved':'Retired',undo:back(f+'.undo',{reason:'Undo'},x?.fact)})])])),
-  'policy.activate_many':(_,x)=>activationUndo(x?.records||[],x?.replaced),
+  'policy.activate_many':(_,x)=>activationUndo(x?.records||[],x?.replaced,served(x)),
   // Governance: a self-approval permission added is ended again; a delegation recorded is revoked. One ended or revoked is
   // restored by the server from that record (its original delegator or creator, scope, route revision and dates, checked
   // again), never recreated as the person pressing Undo; an expired delegation cannot be restored.
@@ -546,10 +550,10 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
 // A rule's new version names the version it replaces (a catalogue version in merged_ids, a legacy one in replaces_id):
 // undoing it brings that one back.
 const replacesVersion=(r:Row)=>!!r.definition?.replaces_id||r.definition?.rule?.kind==='catalogue'&&!!r.definition?.merged_ids?.length;
-const activationUndo=(made:Row[],replaced:Row[]=[]):Undo=>({said:made.length>1?`${made.length} rules activated`:'Rule activated',
+const activationUndo=(made:Row[],replaced:Row[]=[],stored:Command[]=[]):Undo=>({said:made.length>1?`${made.length} rules activated`:'Rule activated',
   done:!replaced.length&&made.length&&made.every(replacesVersion)?`Activation undone: the previous version${made.length>1?'s apply':' applies'} again.`
     :`Activation undone: ${made.length>1?'the rules are':'the rule is'} retired${replaced.length?' and what '+(made.length>1?'they':'it')+' replaced applies again':''}.`,
-  undo:[...made.flatMap(r=>back('policy.retire',{reason:'Undo activation'},r)),...replaced.flatMap(r=>back('policy.restore',{reason:'Undo activation'},r))]});
+  undo:stored.length?stored:[...made.flatMap(r=>back('policy.retire',{reason:'Undo activation'},r)),...replaced.flatMap(r=>back('policy.restore',{reason:'Undo activation'},r))]});
 let undoBatch:Undo[]=[],undoTimer=0,undoing=false,holding=0;
 // A change nobody reports within 1.2 s gets its own "Saved" message with Undo, unless a run of changes holds the batch.
 const unclaimed=()=>{window.clearTimeout(undoTimer);if(holding||!undoBatch.length)return;
@@ -620,6 +624,11 @@ export function takeUndo():{said:string;done?:string;run:()=>Promise<Undone>}|nu
     try{for(const c of steps){
       requireSession(generation);
       const r:any=await command(c.kind,c.payload,c.target_id??undefined,(c.target_id&&seen.get(c.target_id))||c.expected_revision||undefined);done.push({kind:c.kind,result:r});
+      if(c.kind==='bulk.apply'&&c.payload?.undo_of){
+        const pending=r?.items?.[0]?.results?.[0];
+        if(awaitingApproval([pending]).length){done.push({kind:'policy.'+pending.approval.action,result:pending});break;}
+      }
+      if(awaitingApproval([r]).length)break;
       if(Number(r?.kept)>0)kept=`${Number(r.removed??r.reverted??0)} undone; ${r.kept} changed since and kept.`;
       for(const row of [r?.record,r?.workspace,r?.department,r?.view,...(r?.records||[])])if(row?.id)seen.set(row.id,row.revision);}}
     catch(e){if(sessionChanged(e))throw e;const why=undoRefused(e) as Error;throw done.length?new Error(`${done.length} of ${steps.length} undone. Stopped: ${why.message}`):why;}
@@ -809,7 +818,7 @@ export const oidcChoose=(continuation:string,department_id:string)=>request<OIDC
 export const oidcCancel=(continuation:string)=>request<{cancelled:boolean}>('/auth/oidc/cancel',{method:'POST',body:JSON.stringify({continuation} satisfies OIDCContinuation)});
 /** Rotates the session's token pair (same session and deadline). Raw fetch: a refusal here is not a sign-out; the
  *  next ordinary read says so if the session really ended. */
-export async function refreshSession(){try{return (await fetch('/auth/refresh',{method:'POST',headers:{'X-CSRF-Token':csrf(),Accept:'application/json'},credentials:'same-origin',cache:'no-store'})).ok;}catch{return false;/* the next read reports it */}}
+export async function refreshSession(signal?:AbortSignal|null){try{return (await fetch('/auth/refresh',{method:'POST',signal,headers:{'X-CSRF-Token':csrf(),Accept:'application/json'},credentials:'same-origin',cache:'no-store'})).ok;}catch{return false;/* the next read reports it */}}
 /** maintenance: how long a sign-out waits for the server before it says it could not (the session may still be valid). */
 export const SIGN_OUT_TIMEOUT_MS=20_000;
 /** The server's word on a sign-out: ended (2xx, or 401 because the session had already gone), else not known to have ended. */

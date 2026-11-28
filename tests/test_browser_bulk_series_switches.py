@@ -23,9 +23,14 @@ def test_recurring_switches_show_in_bulk_change_and_save_with_undo(browser, live
         # The switch defaults to Yes for a series with usual people (schemas.py), so No is the real change (223f443e4).
         fixed.locator('.bulk-value select').select_option(label='No')
         expect(page.get_by_text('Close a session when every usual assignee is away')).to_have_count(0)
-        # A few records take the light path (maintenance): its button says what it applies, "Apply 1 change".
+        # The light path applies from the form. Preview leaves the change ready for a separate Apply action.
         panel(page).get_by_role('button', name=re.compile(r'^(Preview →|Continue|Apply \d+ changes?)$')).click()
-        expect(page.locator('.toast', has_text=re.compile('changed'))).to_be_visible()
+        changed = page.locator('.toast', has_text=re.compile('changed'))
+        apply = panel(page).get_by_role('button', name='Apply ready rows (1) → Results', exact=True)
+        expect(changed.or_(apply)).to_be_visible()
+        if apply.is_visible():
+            apply.click()
+        expect(changed).to_be_visible()
         saved = next(row for row in h.get('admin', '/api/catalogues')['recurring_series'] if row['id'] == source['id'])
         assert saved['definition'] == {**source['definition'], 'usual_assignees_fixed': False}
         page.locator('.app-footer').get_by_role('button', name='Undo last change').click()

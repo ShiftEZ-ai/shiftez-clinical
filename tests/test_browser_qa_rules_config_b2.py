@@ -7,6 +7,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from .governance_support import identity, retirement_vote
 from .test_browser import route_fetch, browser, live_server, sign_in, navigate, open_config, save_dialog, open_rule  # noqa: F401
 from .test_browser_fairness_dashboard import october, group_by, section, published_month
 from .test_rule_templates import activate, propose
@@ -51,6 +52,8 @@ def test_fairness_measure_and_group_changes_reload_only_what_depends_on_them(bro
 def test_duplicate_rules_are_retired_from_group_similar_rules_with_undo(browser, live_server, h):
     first = activate(h, propose(h, {'kind': 'min_rest', 'hours': 11}, name='Rest between duties'))
     copies = [activate(h, propose(h, {'kind': 'min_rest', 'hours': 11}, name=f'Rest (imported copy {i})')) for i in (1, 2)]
+    for copy in copies:
+        retirement_vote(h, copy, 'Duplicate of Rest between duties: Retired from Group similar rules')
     context, page = sign_in(browser, live_server, 'coordinator')
     try:
         navigate(page, 'rules')
@@ -120,12 +123,18 @@ def test_activation_undo_retires_the_rule_and_restores_the_version_it_replaced(b
         page.locator('.rule-item').filter(has_text='Rest').get_by_role('button', name=re.compile('^Review')).click()
         dialog = page.get_by_role('dialog')
         dialog.get_by_label('Reason', exact=True).fill('Independent review')
-        dialog.get_by_role('button', name='Activate', exact=True).click()
+        with page.expect_response(lambda r: r.url.endswith('/api/commands') and r.request.method == 'POST') as response:
+            dialog.get_by_role('button', name='Activate', exact=True).click()
+        undo = response.value.json()['undo']
         toast = page.locator('.toast').filter(has_text='Rule activated.')
         expect(toast).to_be_visible()
         assert policies(h)[new['id']]['status'] == 'active' and policies(h)[old['id']]['status'] == 'retired'
         toast.get_by_role('button', name='Undo').click()
-        expect(page.get_by_text('Activation undone: the rule is retired and what it replaced applies again.')).to_be_visible()
+        expect(page.get_by_text('1 more approval needed from a different approver', exact=False)).to_be_visible()
+        assert policies(h)[new['id']]['status'] == 'active' and policies(h)[old['id']]['status'] == 'retired'
+        identity(h, 'undo_approver', ['approver'])
+        completed = h.command('undo_approver', **undo)
+        assert [item['result'] for item in completed['items']] == ['changed', 'changed']
         now = policies(h)
         assert now[new['id']]['status'] == 'retired' and now[old['id']]['status'] == 'active'
     finally:

@@ -14,6 +14,7 @@ from apps.api.db import transaction
 
 from .governance_support import identity
 from .test_browser import browser, condition, live_server, navigate, open_config, sign_in, route_fetch, wait_held, expect_loaded, COUNT_WORK  # noqa: F401
+from .test_browser_kept_reads import FRAMES, live_pulse, rebuild
 from .rules_support import rules_by_family
 from .test_rule_catalogue_conflicts import tag_people
 
@@ -189,7 +190,23 @@ def test_on_a_rule_page_undo_brings_the_draft_back_and_withdraw_records_reason(b
             expect(page.locator('#toast-tray .toast', has_text='Proposed;')).to_be_visible()
         propose()
         assert proposed() is not None
+        # A live update reads the rule before the Undo (still proposed) and its answer lands after the Undo brought the
+        # draft back (first attempt of hosted run 45888168804): that stale answer must not set the draft aside.
+        held, moved, catalogue = [], [0], re.compile(r'/api/rules/catalogue(\?|$)')
+        live_pulse(page, 'workspace', moved)  # someone else changed a draft: the Rules page follows that scope
+        page.route(catalogue, lambda route: held.append(route))
+        rebuild(page, held, moved, 1)
+        moved[0] = 0
         page.locator('#toast-tray .toast', has_text='Proposed;').get_by_role('button', name='Undo', exact=True).click()
+        # The Undo's own read, begun after the write (Undo reports done once the page has redrawn from it).
+        wait_held(page, held, count=2)
+        stale = held.pop(0)
+        with page.expect_request_finished(lambda r: r == stale.request):
+            stale.continue_()
+        page.evaluate(FRAMES)
+        page.unroute(catalogue)
+        for route in held:
+            route.continue_()
         expect(page.locator('#toast-tray .toast', has_text='Proposal withdrawn.')).to_be_visible()
         expect(status).to_contain_text('2 changes not yet proposed')
         assert proposed() is None

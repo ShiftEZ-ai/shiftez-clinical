@@ -39,13 +39,18 @@ def adjust(page, dialog):
 
 def screen_state(page):
     """Observable screen and exact device List state, without importing the implementation's state projection."""
-    return page.locator('#schedule-view').evaluate('''v=>({
-        label:v.getAttribute('aria-label'),text:v.innerText,
-        sessions:[...v.querySelectorAll('[data-session]')].map(n=>n.dataset.session),
-        columns:[...v.querySelectorAll('thead th[data-col]')].map(n=>[n.dataset.col,n.innerText]),
-        cells:[...v.querySelectorAll('td[data-col]')].map(n=>[n.dataset.col,n.className,n.innerText]),
-        device:Object.fromEntries(Object.entries(localStorage).filter(([k])=>k.startsWith('rota.table.')&&k.endsWith('planner-list')))
-    })''')
+    # Resolve and read together: a redraw can replace a handle between locator resolution and evaluation.
+    return page.wait_for_function('''() => {
+        const view = document.querySelector('#schedule-view');
+        if (!view?.getClientRects().length) return false;
+        return {
+            label: view.getAttribute('aria-label'), text: view.innerText,
+            sessions: [...view.querySelectorAll('[data-session]')].map(n => n.dataset.session),
+            columns: [...view.querySelectorAll('thead th[data-col]')].map(n => [n.dataset.col, n.innerText]),
+            cells: [...view.querySelectorAll('td[data-col]')].map(n => [n.dataset.col, n.className, n.innerText]),
+            device: Object.fromEntries(Object.entries(localStorage).filter(([k]) => k.startsWith('rota.table.') && k.endsWith('planner-list')))
+        };
+    }''', timeout=15000).json_value()
 
 
 # Both Schedule renderers (grid pills and the phone agenda) retain full names.
