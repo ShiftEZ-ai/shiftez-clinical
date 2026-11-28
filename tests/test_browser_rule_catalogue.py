@@ -5,6 +5,7 @@ import os
 import re
 import uuid
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import expect
@@ -624,6 +625,47 @@ def test_rules_view_settings_offer_only_open_all_or_collapsed(browser, live_serv
         expect(page.get_by_role('radio', name='Table', exact=True)).to_have_count(0)
         page.get_by_role('radio', name='Open all rules', exact=True).click()
         expect(page.locator('#main [data-key="toggle-all"]')).to_have_attribute('aria-expanded', 'true')
+    finally:
+        context.close()
+
+
+def test_print_opens_every_rule_shown_to_its_lines_and_the_rules_download_in_plain_words(browser, live_server, h):
+    flag(h)
+    weekly(h)
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        navigate(page, 'rules')
+        main = page.locator('#main')
+        lines = main.locator('li.rt-ln')
+        rule = main.locator('li.rt-item').filter(has_text='Duties per week')
+        expect(rule.locator('.rt-toggle')).to_have_attribute('aria-expanded', 'false')
+        expect(lines).to_have_count(0)
+        # Print prints the collapsed rule with its lines; the screen is collapsed again afterwards.
+        page.evaluate("window.print=()=>{window.printedLines=document.querySelectorAll('#main li.rt-ln').length;}")
+        rules_action(page, 'Print')
+        assert page.evaluate('window.printedLines') == 2
+        expect(lines).to_have_count(0)
+        # The browser's own print (Ctrl+P) does the same.
+        page.evaluate("dispatchEvent(new Event('beforeprint'))")
+        expect(lines).to_have_count(2)
+        page.evaluate("dispatchEvent(new Event('afterprint'))")
+        expect(lines).to_have_count(0)
+        # A rule open on screen stays open.
+        rule.get_by_role('button', name='Duties per week lines').click()
+        rules_action(page, 'Print')
+        expect(lines).to_have_count(2)
+        # The rules in plain words: each rule under its question with its level and lines.
+        with page.expect_download() as pending:
+            rules_action(page, 'Download rules in plain words')
+        saved = pending.value
+        assert saved.failure() is None
+        assert re.fullmatch(r'Rules \d{4}-\d{2}-\d{2}\.txt', saved.suggested_filename)
+        text = Path(saved.path()).read_text(encoding='utf-8').splitlines()
+        assert text[0].startswith('Rules on ')
+        at = next(i for i, x in enumerate(text) if x.startswith('Duties per week · '))
+        assert any(re.fullmatch(r'[A-Z]\. .+', x) for x in text[:at])  # under its question
+        assert text[at + 1] and not text[at + 1].startswith('- ')  # the server's sentence
+        assert text[at + 2].startswith('- Everyone ')
     finally:
         context.close()
 

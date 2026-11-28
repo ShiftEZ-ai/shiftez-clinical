@@ -3,7 +3,7 @@
  *  select-all, one selection bar, and the Needs attention view. A rule row is its name and one count line. Every change goes into
  *  the rules' drafts and is proposed together ("Propose N changes"): one version per rule, each approved by another
  *  person. */
-import {el,checkTarget,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,labelOf,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
+import {download,el,checkTarget,badge,helpButton,statusTone,disabledWhy,type BadgeTone,button,segmented,check,compact,confirmAction,empty,footerStatus,formatDate,icon,labelOf,notify,plural,relabel,routineReason,sectionHead,armed,type Child,popup} from './dom.js';
 import {TABLE_CONDITION_DEFINITIONS,type Conditions} from './generated.js';
 import {command,sessionKey,type Undone} from './api.js';
 import {savingMark,failedMark,conflict} from './loading.js';
@@ -14,7 +14,7 @@ import {columnHeader,wrapAllColumns,columnGrip,sized,sizeColumn} from './table_m
 import {ruleMark,proposalPanel,movedNotes,groupings,specificFirst,exceptionTree,ruleCounts,ruleLevels,capturedRuleLevels,whoWins,reachNode,levelOf,validFacets,effectiveOf,proposeTip,proposeButton,replacedWords,whenWords,unitWords,setsSafety,safetyLock,tickGates,unitText,appliesWord,measureText,periodText,countingEndText} from './rule_catalogue.js';
 import {openPicker} from './picker.js';
 import {unexplainedLine,type DepartmentRules,type RuleSummary} from './rules_explained.js';
-import {levelBadge} from './rule_view.js';
+import {levelBadge,levelWords} from './rule_view.js';
 import {issueGlyph} from './issue_marker.js';
 import {tagsFor} from './tags.js';
 import {ruleProposing,ruleKey,redrawWhenSettled} from './bulk.js';
@@ -53,6 +53,8 @@ const read=<T>(key:string,fallback:T):T=>{try{return {...fallback,...JSON.parse(
 const write=(key:string,value:unknown)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch{/* this browser keeps nothing: the defaults apply */}};
 let state:State|null=null,viewId='',treeSession=-1,treeStore='';
 let treePosition:{scope:string;layout:'rules'|'issues';left:number;top:number}|null=null;
+// The open Rules page's print watch; a new render replaces it.
+let printWatch:AbortController|null=null;
 /** Page renderers prepare detached content; native coordinates are restored only after the page is mounted. */
 export function restoreRulesScroll(root:HTMLElement){
   if(treeSession!==sessionKey()||!treePosition)return;
@@ -98,6 +100,20 @@ export const waitingCount=(entries:Entry[],older:Row[])=>entries.filter(e=>e.pro
 // Acknowledged with who and when, and come back when their lines change. Fixes applied to a draft stay hidden until it
 // is proposed or discarded.
 const applied=new Set<string>();
+
+/** The department's rules as plain text: each question in order, its rules with level and safety, the server's sentence
+ *  (or why there is none) and the rule's lines, then the conflicts. Rules under a question the reply does not list come
+ *  last. */
+export function rulesText(d:DepartmentRules,name:(r:RuleSummary)=>string,lines:(r:RuleSummary)=>string[]):string{
+  const rules=d.rules??[],groups=[...d.groups??[]].sort((a,b)=>a.order-b.order),known=new Set(groups.map(g=>g.key));
+  const rule=(r:RuleSummary)=>[`${name(r)} · ${levelWords(r.level)}${r.safety?' · Safety':''}`,r.unexplained?TERMS.ruleUnexplained:r.summary_sentence,...lines(r).map(l=>`- ${l}`),''];
+  const out=[`Rules on ${formatDate(d.at,'UTC')}`,''];
+  for(const g of groups){const asked=rules.filter(r=>r.question_group===g.key);if(asked.length)out.push(`${g.letter}. ${g.label}`,'',...asked.flatMap(rule));}
+  out.push(...rules.filter(r=>!known.has(r.question_group)).flatMap(rule));
+  const conflicts=d.conflicts??[];
+  if(conflicts.length)out.push('Conflicts','',...conflicts.map(c=>`- ${c.sentence}${c.line_refs.length===2?` Lines #${c.line_refs[0]} and #${c.line_refs[1]}.`:''}`),'');
+  return out.join('\n');
+}
 
 /** The Rules list's saved views (one shared read per session, table_view.ts fetchViews). */
 export const ruleTreeViews=()=>fetchViews<Saved>('rule-tree');
@@ -215,8 +231,10 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   const older=captured?[]:olderPending(ctx),otherPending=older.length;
   target.append(sectionHead('Rules','',
     moreActions('More rule actions',[...(!captured&&o.whichRule?[compact(button('Which rule applies?',o.whichRule,'secondary'),'directory')]:[]),
-      // Print: the page as shown (its sentences under the questions when grouped so), through the app's print styles.
-      compact(button('Print',()=>window.print(),'secondary'),'printer'),context,
+      // Print: the rules shown, each opened to its lines, through the app's print styles.
+      compact(button('Print',()=>{printOpen();try{window.print();}finally{printDone();}},'secondary'),'printer'),
+      ...(byQuestion?[compact(button('Download rules in plain words',()=>download(new Blob([plainWords(byQuestion)],{type:'text/plain;charset=utf-8'}),`Rules ${byQuestion.at}.txt`),'secondary'),'download')]:[]),
+      context,
       ...(!captured&&o.exceptions?[compact(button(pendingExceptions?`Exceptions (${pendingExceptions} pending)`:'Exceptions',o.exceptions,'secondary'),'shield')]:[]),
       simplify||''],(!captured&&o.exceptions?pendingExceptions:0)+(context?otherPending:0)),
     ...(canEdit&&v2?[addRule()]:[]),...(canEdit?[discardBtn,proposeBtn]:[])),
@@ -280,6 +298,17 @@ export function rulesDatabase(ctx:Context,target:HTMLElement,data:Catalogue,o:Op
   function dirty(d:Saved){return JSON.stringify(definitionOf(stateOf(d)))!==JSON.stringify(definition());}
   function open(mode:Mode,filters:Record<string,string[]>){viewId='';s.mode=mode;s.filters=filters;s.conditions=null;s.group=mode==='rules'?DEFAULT.group:'kind';selected.clear();picked.clear();rebuild();}
   function rebuild(){toolbar=build();redraw();}
+  // A printed rule set shows every rule shown opened to its lines, whatever is open on screen: from Print and from the
+  // browser's own print (Ctrl+P). The screen's open rules come back afterwards.
+  let openOnScreen:string[]|null=null;
+  function printOpen(){if(openOnScreen||s.mode!=='rules'||!body.isConnected)return;openOnScreen=s.open;s.open=shown().map(x=>x.e.id);draw();}
+  function printDone(){if(!openOnScreen)return;s.open=openOnScreen;openOnScreen=null;draw();}
+  printWatch?.abort();printWatch=new AbortController();
+  window.addEventListener('beforeprint',printOpen,{signal:printWatch.signal});window.addEventListener('afterprint',printDone,{signal:printWatch.signal});
+  // The department's rules in words: the server's sentences, and each rule's active lines in the words the page shows.
+  const plainWords=(d:DepartmentRules)=>rulesText(d,r=>byId.get(r.catalogue_id||'')?.name||r.summary_short||r.summary_sentence,r=>{
+    const e=byId.get(r.catalogue_id||''),ids=r.line_ids??[];
+    return e?linesOf(e).filter(l=>ids.includes(l.id)).map(l=>lineWords(e,l,names,Infinity,settingsOf(e))):[];});
   function changed(){save();draw();toolbar.sync();}
 
   // ---- Rules: families › rules › lines ----

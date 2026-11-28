@@ -2590,3 +2590,10 @@ export function tabs(label:string,items:[string,Child,()=>Node][],initial='',onS
   show(entries.some(e=>e.key===initial)?initial:entries[0].key);
   return el('div',{class:'page-tabs-wrap'},list,body);
 }
+
+// A file the client built, saved under a name every file system accepts.
+export const fileName=(name:string)=>name.replace(/[\\/:*?"<>|]+/g,'-');
+export function download(blob:Blob,name:string){
+  const a=el('a',{href:URL.createObjectURL(blob),download:fileName(name)}) as HTMLAnchorElement;
+  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),10_000);
+}

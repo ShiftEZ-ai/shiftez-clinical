@@ -1,11 +1,11 @@
 /** Sign-in accounts: the public invitation / password-reset page, changing your own password, and the admin's
  *  invitation, one-time link and session-limit dialogs (Access & roles). Passwords only ever go to the API. */
-import {brandRow,el,field,area,check,select,multi,button,note,formDialog,showDialog,notify,formatDate,sectionHead,withIcon,type Choice,CAPABILITY,roleForCapability,armed,badge,bidi,plural,type Tone} from './dom.js';
+import {brandRow,el,field,area,check,select,multi,button,note,formDialog,showDialog,notify,formatDate,sectionHead,withIcon,type Choice,CAPABILITY,roleForCapability,armed,badge,bidi,plural,type Tone,download as save} from './dom.js';
 import {request,command,ApiError} from './api.js';
 import {dataTable} from './table_view.js';
 import {dockPanel} from './side_panel.js';
 import {personName,nameText} from './person_label.js';
-import {csvText,download as save} from './schedule_export.js';
+import {csvText} from './schedule_export.js';
 import {ACCOUNT_ONBOARDING_LIMITS,type AccountOnboarding,type AccountOnboardingApply} from './generated.js';
 import {accountSetUp} from './account_memory.js';
 import type {Row} from './types.js';
