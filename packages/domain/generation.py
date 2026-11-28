@@ -221,6 +221,17 @@ def allocation_weight(policy, strengths):
     return Fraction(strengths[policy['definition'].get('strength', 'medium')], strengths['medium'])
 
 
+def lead_preference_rules(data):
+    return [policy for policy in data['policies']
+            if policy['definition']['rule']['kind'] == 'allocation_preference'
+            and policy['definition']['rule'].get('lead_priority')]
+
+
+def lead_priority(data, rules, shift, person_id):
+    return sum(allocation_weight(policy, data['_allocation_strengths']) * policy['definition']['rule']['lead_priority']
+               for policy in rules if allocation_policy_matches(data, policy, shift, person_id))
+
+
 def overtime_cap_ids(data):
     """Required overtime limits in force, resolved without mutating caller-owned input."""
     policies = data.get('policies') or []
@@ -936,6 +947,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
     data['_distribution_cache'] = {}
     data['_distribution_revision'] = 0
     lead_goals = [p for p in data['_distribution_goals'] if p['definition']['rule']['metric'] == 'lead_turns']
+    lead_preferences = lead_preference_rules(data)
     lead_turns = leadership.lead_turn_pairs(data)
     lead_turn_counts = defaultdict(int)
     for pid in (pid for _, pid in lead_turns):
@@ -946,7 +958,7 @@ def _generate(snapshot: dict, time_budget_seconds: float, priority_shifts=(), *,
         participant = next((p for p in shift['participants'] if p['person_id'] == pid),
                            {'person_id': pid, 'start': shift['start'], 'end': shift['end']})
         priority = marginal_priority(data, shift, {**participant, 'team_lead': True}, goals=lead_goals)
-        return (-priority, turns, pid)
+        return (-lead_priority(data, lead_preferences, shift, pid), -priority, turns, pid)
 
     def needs_leads(shift):
         return any(f['code'] == 'LEAD_GAP' and f['shift_id'] == shift['id'] and 'required' in f['detail']

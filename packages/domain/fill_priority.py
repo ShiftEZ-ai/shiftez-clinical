@@ -48,13 +48,14 @@ class FillPriority:
                       if enabled else {})
         self.enabled = any(self.tiers.values())
 
-    def target(self, terms, amount, active=1, *, stage='desired'):
+    def target(self, terms, amount, active=1, *, stage='desired', tiers=None):
         """Each term is (integer quantity, choice, [(assignment key, contributing choice)])."""
-        if not self.enabled or amount <= 0 or isinstance(active, int) and not active:
+        if (not self.enabled if tiers is None else not tiers) or amount <= 0 or isinstance(active, int) and not active:
             return
+        priorities = self.tiers if tiers is None else tiers
         terms = [(quantity, chosen, sources) for quantity, chosen, sources in terms if quantity > 0]
-        tiers = {self.tiers[key] for _, _, sources in terms for key, _ in sources}
-        if not terms or not tiers:
+        term_tiers = {priorities.get(key, 0) for _, _, sources in terms for key, _ in sources}
+        if not term_tiers or tiers is not None and not any(term_tiers):
             return
         unit = gcd(amount, *(quantity for quantity, _, _ in terms))
         amount //= unit
@@ -65,7 +66,7 @@ class FillPriority:
         for quantity, chosen, sources in terms:
             by_tier = defaultdict(list)
             for key, source in sources:
-                by_tier[self.tiers[key]].append(source)
+                by_tier[priorities.get(key, 0)].append(source)
             credits = []
             for tier, eligible in sorted(by_tier.items()):
                 present = eligible[0]

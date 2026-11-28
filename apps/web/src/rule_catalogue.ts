@@ -1697,7 +1697,7 @@ export function proposeButton(run:()=>unknown):HTMLButtonElement{
 /** A rule's unit in words for a line's number when the line itself names none ("people", "1 person"); '' with no number. */
 export const unitWords=(e:RuleCatalogueEntry,l:RuleLine)=>{const n=l.numbers?.max?.value??l.numbers?.min?.value??l.numbers?.target?.value;
   return n==null?'':n===1?ONE[e.unit||'']||e.unit||'':e.unit||'';};
-export const NUMBER_LABELS:Record<string,string>={min:'Min',max:'Max',target:'Target',priority:'Priority',session_priority:'Session priority',apply:'Applies'};
+export const NUMBER_LABELS:Record<string,string>={min:'Min',max:'Max',target:'Target',priority:'Priority',session_priority:'Session priority',lead_priority:'Lead priority',apply:'Applies'};
 /** One number of a line: its own ("3!"), "None", inherited ("2↰") or "—". */
 /** One number of a line in a table cell: its own ("3"), "None", inherited ("2↰") or "—", with its strength. */
 const numberPart=(l:RuleLine,k:string,inh?:Inherited):NumberPart|null=>{const n=l.numbers?.[k],i=inh?.[k];

@@ -18,7 +18,7 @@ FAMILIES = (('staffing', 'Staffing on a session'), ('workload', 'Workload over t
 LEVELS = ('mandatory', 'critical', 'high', 'medium', 'low')
 ADVISORY = LEVELS[1:]
 # The numbers a line can set, in the order checks read them (a quota's minimums, then maximums, then targets).
-NUMBER_ORDER = ('min', 'max', 'target', 'priority', 'session_priority', 'apply')
+NUMBER_ORDER = ('min', 'max', 'target', 'priority', 'session_priority', 'lead_priority', 'apply')
 LINE_COMPARISONS = ('minimum', 'exact', 'maximum', 'range', 'target')
 
 
@@ -264,6 +264,8 @@ def _line_settings(entry):
     for kind in entry_kinds(entry):
         slots = [s for ss in entry['numbers'].values() for s in ss if s['kind'] == kind]
         taken = {s['field'] for s in slots} | {k for s in slots for k in s['fixed']}
+        # Only Preferred people offers a lead number. It is never a settings fallback.
+        taken.add('lead_priority')
         out[kind] = [f for f in _MODELS[kind].model_fields if f != 'kind' and f not in taken]
     return out
 
@@ -303,6 +305,8 @@ _V2_SAME = ('team_leads', 'people_per_session', 'supervision', 'days_in_a_row', 
             'weekend_shape', 'shift_order', 'rest_after_series', 'travel_between_places', 'together_apart',
             'companion_cover', 'allocation_order', 'preferences', 'fair_share')
 _V2_ENTRIES = {id: deepcopy(CATALOGUE_BY_ID[id]) for id in _V2_SAME}
+_V2_ENTRIES['preferences']['numbers']['lead_priority'] = [_slot('allocation_preference', 'lead_priority', True)]
+_V2_ENTRIES['preferences']['default_settings'] = {'allocation_preference': {'priority': 0}}
 _V2_ENTRIES['spread_evenly'] = _entry(
     'spread_evenly', 'staffing', 'Spread evenly',
     'Distribute selected members evenly across supported holders within a bounded period.', None,
@@ -467,7 +471,7 @@ for _e in RULE_CATALOGUE_V2:
         # The opposite legacy priority is a fallback of the same obligation, not another source numeric slot.
         _e['line_settings']['allocation_preference'] += list(dict.fromkeys(
             slot['field'] for slots in _e['numbers'].values() for slot in slots
-            if slot['kind'] == 'allocation_preference' and slot['field']))
+            if slot['kind'] == 'allocation_preference' and slot['field'] in {'priority', 'session_priority'}))
     _kinds = set(entry_kinds(_e))
     _e['count_sides'] = (['where'] if _kinds & (WORKLOAD_COUNT_KINDS | {'forbidden_transition'}) else
                          ['who', 'where'] if _kinds & {'minimum_cover', 'maximum_participants', 'supervision_limit', 'spread_evenly', 'together_apart'} else [])

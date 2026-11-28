@@ -37,9 +37,10 @@ from .solver_progress import precheck_issues
 from .solver_provenance import policy_name
 from .generation_scope import pooled_anchor, population_allows, protects_existing, scope_receipt, selected_session_ids
 from .generation_outcome import DIAGNOSTIC_PROPOSAL_MESSAGE
+from .generation import lead_preference_rules, lead_priority
 from .cp_sat_score import ScorePrecisionError
 from .recurrence import inactive, with_series_state, series_candidate_allowed, series_definition
-from .fill_priority import STAGE_ORDER, stage_label
+from .fill_priority import FillPriority, STAGE_ORDER, stage_label
 
 CHECKPOINT_INTERVAL_SECONDS = 60
 
@@ -1051,6 +1052,15 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     # A concurrent-duty line is one safety obligation over the matching duties.
     # Distinct-person ORs keep a duplicate flag on two duties from counting twice.
     shift_lookup = {s['id']: s for s in shifts}
+    fill_priority = FillPriority(model, data, choices, shift_lookup, options.allocation_order == 'tiered')
+    lead_preferences = lead_preference_rules(data) if not feasibility_only else []
+    lead_tiers = {}
+    if lead_preferences:
+        for (sid, pid), term in lead_terms.items():
+            if sid in lead_demand and (not isinstance(term, int) or term):
+                priority = lead_priority(data, lead_preferences, shift_lookup[sid], pid)
+                if priority:
+                    lead_tiers[sid, pid] = priority
     shared_seen = set()
     for shift in shifts:
         for group in leadership.concurrent_groups(data, shift, aware(shift['start']), aware(shift['end'])):
@@ -1077,11 +1087,12 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                         if req['continuity'] == 'whole_duty' and not leadership.covers_required(data, participants[sid, pid], duty):
                             model.add(term == 0).with_name('duty:' + sid)
                             continue
-                        leads_by_person[pid].append(term)
+                        leads_by_person[pid].append(((sid, pid), term))
                     else:
                         model.add(term == 0).with_name('duty:' + sid)
             distinct_terms = {}
-            for pid, terms in sorted(leads_by_person.items()):
+            for pid, sources in sorted(leads_by_person.items()):
+                terms = [term for _, term in sources]
                 distinct_terms[pid] = terms[0] if len(terms) == 1 else model.new_bool_var('lead_shared_person')
                 if len(terms) > 1:
                     model.add_max_equality(distinct_terms[pid], terms)
@@ -1091,6 +1102,8 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                                max(1, int((group['end'] - group['start']).total_seconds() // 60)),
                                code='LEAD_GAP', start=group['start'], end=group['end'],
                                rule_id=(req.get('policy') or {}).get('id'))
+                fill_priority.target([(1, term, leads_by_person[pid]) for pid, term in distinct_terms.items()],
+                                     req['minimum'], tiers=lead_tiers)
             if req['maximum'] is not None:
                 model.add(expression <= req['maximum']).with_name(
                     'duty:' + min(s['id'] for s, _ in group['duties']))
@@ -1177,8 +1190,6 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
             caps, named = interval_caps, named or interval_named
         return trainees, caps or {}, named
 
-    from .fill_priority import FillPriority
-    fill_priority = FillPriority(model, data, choices, {s['id']: s for s in shifts}, options.allocation_order == 'tiered')
     cover_triggers = {}
     pooled_cover_cells = {}
 
@@ -1552,13 +1563,14 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
                 binding_requirement = max(local_requirements,
                                           key=lambda r: (r['minimum'], str((r.get('policy') or {}).get('id'))))
                 local_maximums = [r['maximum'] for r in local_requirements if r['maximum'] is not None]
-                coverage_floor(sum(lead_terms[sid, pid] for pid in available
-                                   if lead_qualified(data, pid, shift, lead, a, b)), local_minimum, sid, minutes,
+                qualified_terms = [(pid, lead_terms[sid, pid]) for pid in available
+                                   if lead_qualified(data, pid, shift, lead, a, b)]
+                coverage_floor(sum(term for _, term in qualified_terms), local_minimum, sid, minutes,
                                staffed=staffed, code='LEAD_GAP', start=a, end=b,
                                rule_id=(binding_requirement.get('policy') or {}).get('id'))
-                fill_priority.target([(1, lead_terms[sid, pid], [((sid, pid), lead_terms[sid, pid])])
-                    for pid in available if lead_qualified(data, pid, shift, lead, a, b)], local_minimum,
-                    stage='mandatory_cover')
+                terms = [(1, term, [((sid, pid), term)]) for pid, term in qualified_terms]
+                fill_priority.target(terms, local_minimum, stage='mandatory_cover')
+                fill_priority.target(terms, local_minimum, tiers=lead_tiers)
                 if local_maximums:
                     model.add(sum(lead_terms[sid, pid] for pid in present) <= min(local_maximums)).with_name('duty:' + sid)
         # Service-mode balance can improve by adding work to a filled duty. Only cap
@@ -1691,7 +1703,7 @@ def _prepare(snapshot, time_budget_seconds, workers, control, options, feasibili
     result['optimality_boundary'] = 'Coverage first, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
     if diagnostic_minima and diagnostic_proposal:
         result['optimality_boundary'] = 'Coverage first, then diagnostic mandatory minimum breaches, then the score-weighted objective at one-millionth component resolution; full-candidate proof only.'
-    if fill_priority.enabled:
+    if fill_priority.enabled or lead_tiers:
         result['optimality_boundary'] += ' Configured fill-priority stages precede weighted quality.'
     if staffing_choices or capped:
         result['optimality_boundary'] += ' Requested work and minimum staffing precede weighted quality.'

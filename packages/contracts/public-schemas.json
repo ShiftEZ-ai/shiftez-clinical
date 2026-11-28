@@ -4081,6 +4081,13 @@
             "title": "Session Priority",
             "type": "integer"
           },
+          "lead_priority": {
+            "default": 0,
+            "maximum": 1000000,
+            "minimum": 0,
+            "title": "Lead Priority",
+            "type": "integer"
+          },
           "overtime_priority": {
             "default": 0,
             "maximum": 1000000,
@@ -6767,6 +6774,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -17295,6 +17303,13 @@
             "title": "Session Priority",
             "type": "integer"
           },
+          "lead_priority": {
+            "default": 0,
+            "maximum": 1000000,
+            "minimum": 0,
+            "title": "Lead Priority",
+            "type": "integer"
+          },
           "overtime_priority": {
             "default": 0,
             "maximum": 1000000,
@@ -19648,6 +19663,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -31082,6 +31098,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -33350,6 +33367,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -56942,6 +56960,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -58200,6 +58219,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -69183,6 +69203,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "type": "string"
@@ -69268,6 +69289,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "type": "string"
@@ -69388,6 +69410,7 @@
                   "target",
                   "priority",
                   "session_priority",
+                  "lead_priority",
                   "apply"
                 ],
                 "type": "string"
@@ -83683,6 +83706,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -84856,6 +84880,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",
@@ -91597,6 +91622,7 @@
               "target",
               "priority",
               "session_priority",
+              "lead_priority",
               "apply"
             ],
             "title": "Number Key",

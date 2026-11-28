@@ -294,6 +294,36 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
+def check_lead_preference(data, ids, spec):
+    from packages.domain.generation import generate as greedy
+
+    expected = spec['expect']['preferred_lead']
+    preferred, alternate = ids[expected['preferred']], ids[expected['alternate']]
+    sid = ids['duty']
+
+    def leader(draft):
+        people = shift(draft, sid)['participants']
+        assert {p['person_id'] for p in people} == {preferred, alternate}
+        [lead] = [p['person_id'] for p in people if p.get('team_lead')]
+        return lead
+
+    reversed_preference = copy.deepcopy(data)
+    policy = next(p for p in reversed_preference['policies'] if p['id'] == ids['pref'])
+    policy['definition']['rule']['lines'][0]['who']['conditions'][0]['values'] = [alternate]
+    fallback = copy.deepcopy(data)
+    rule = next(p for p in fallback['policies'] if p['id'] == ids['lead'])
+    rule['definition']['rule']['lines'][0]['who']['conditions'][0]['values'] = [alternate]
+    bindings = 0
+    for seed in spec['expect']['seed_robustness']['seeds']:
+        assert leader(feasible(data, solve(data, seed))) == preferred
+        assert leader(feasible(reversed_preference, solve(reversed_preference, seed))) == alternate
+        assert leader(feasible(fallback, solve(fallback, seed))) == alternate
+        bindings += 1
+    assert leader(feasible(data, greedy(data, 5))) == preferred
+    assert leader(feasible(reversed_preference, greedy(reversed_preference, 5))) == alternate
+    return {'assertions': {'preferred_lead', 'seed_robustness'}, 'bindings': {'pref': bindings}}
+
+
 def check_scenario(data, ids, spec):
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
@@ -307,6 +337,8 @@ def check_scenario(data, ids, spec):
     if spec['id'] == 'A-LEAD-01':
         from tests.golden_leadership import check_leadership
         return check_leadership(data, ids, spec)
+    if spec['id'] == 'A-LEAD-PREF-01':
+        return check_lead_preference(data, ids, spec)
     if spec['id'] == 'A-PREF-01':
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
