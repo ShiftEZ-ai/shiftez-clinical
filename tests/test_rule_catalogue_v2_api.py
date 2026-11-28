@@ -15,9 +15,17 @@ from packages.domain.rule_lines import SCORING_DEFAULT_SOURCE
 from scripts.system_command import MAINTENANCE_ISSUER, MAINTENANCE_SUBJECT
 
 
-@pytest.mark.parametrize(('placement', 'within'), [('rule_settings', 'session'), ('line_settings', 'session'),
-                                                     ('rule_settings', 'calendar_week'), ('line_settings', 'calendar_week')])
-def test_spread_evenly_proposal_with_tags_evaluates_and_generates(h, placement, within):
+@pytest.mark.parametrize('placement', ['rule_settings', 'line_settings'])
+def test_spread_evenly_proposal_with_tags_evaluates_and_generates(h, placement):
+    assert_spread_proposal_evaluates_and_generates(h, placement, 'session')
+
+
+@pytest.mark.parametrize('placement', ['rule_settings', 'line_settings'])
+def test_calendar_week_spread_proposal_with_tags_evaluates_and_generates(h, placement):
+    assert_spread_proposal_evaluates_and_generates(h, placement, 'calendar_week')
+
+
+def assert_spread_proposal_evaluates_and_generates(h, placement, within):
     from packages.domain import cp_sat, generation
     from packages.domain.validation import evaluate
 
