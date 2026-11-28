@@ -615,9 +615,8 @@ def absences_by_person(row, workspace, status=None):
     return {person: sorted(rows, key=lambda r: r['start']) for person, rows in spans.items()}
 
 
-def materialize_absences(db, actor, workspace, reason):
+def materialize_absences(db, actor, workspace, row, reason):
     # Same transaction, after all publication gates and before ledgers read the approved facts.
-    row = change_list(db, workspace.base_publication_id) if workspace.base_publication_id else None
     changed = False
     for change in row.changes if row else []:
         if change['workspace_id'] == workspace.id and change['status'] == 'approved':
@@ -639,11 +638,10 @@ def draft_changes(row):
     return [c for c in row.changes if c['status'] == 'draft'] if row else []
 
 
-def on_published(db, actor, workspace, publication, reason):
+def on_published(db, actor, workspace, publication, row, reason):
     if not workspace.base_publication_id:
         return {}
     person_changes = personal_changes(db, db.get(m.Publication, workspace.base_publication_id), publication)
-    row = change_list(db, workspace.base_publication_id)
     if row:
         remaining = draft_changes(row)
         row.changes = [{**c, 'status': 'published'} if c['workspace_id'] == workspace.id else c for c in row.changes]

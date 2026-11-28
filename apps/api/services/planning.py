@@ -2872,11 +2872,11 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
             raise approval_error
         focus = set(acquired['focus_ids'])
         own = [row for row in acquired['shifts'] if row['id'] in focus]
+        from .published_changes import change_list, draft_changes, materialize_absences, on_published
+        change_row = change_list(db, workspace.base_publication_id) if workspace.base_publication_id else None
         preparation = db.info.get('_planning_preparation')
         if preparation is not None and not preparation['replay']:
-            from .published_changes import change_list, draft_changes
-            row = change_list(db, workspace.base_publication_id) if workspace.base_publication_id else None
-            if not draft_changes(row):
+            if not draft_changes(change_row):
                 # Unsent changes need successor checks later in this handler; ordinary publication has no more pure work.
                 from .planning_preparation import RollbackPreparation
                 raise RollbackPreparation()
@@ -2889,15 +2889,15 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         workspace.status = "published"
         workspace.revision += 1
         snapshot = publication_snapshot(db, workspace, result, own_shifts=own, data=acquired)
-        if not (workspace.base_publication_id or workspace.replaces_publication_id):
-            from apps.api.db import bump_snapshot_input_revisions
-            # The publication is an input even when the rota's status change is local.
-            # The insert listener shares this transaction's revision bump.
-            bump_snapshot_input_revisions(db, (actor.organisation_id,))
-            organisation = db.get(m.Organisation, actor.organisation_id)
-            manifest = result['input_manifest']
-            result['input_manifest'] = {**manifest, 'dirty_hint': {
-                **manifest['dirty_hint'], 'input_revision': organisation.input_revision}}
+        from apps.api.db import bump_snapshot_input_revisions
+        # The immutable check needs the counters after this publication and its
+        # change list are written. Their flushes share this transaction's bumps.
+        bump_snapshot_input_revisions(db, (actor.organisation_id,), availability=change_row is not None)
+        organisation = db.get(m.Organisation, actor.organisation_id)
+        manifest = result['input_manifest']
+        result['input_manifest'] = {**manifest, 'dirty_hint': {**manifest['dirty_hint'],
+            'input_revision': organisation.input_revision, 'availability_revision': organisation.availability_revision}}
+        workspace.validation = {**checked, 'input_manifest': result['input_manifest']}
         publication = m.Publication(id=command_id(db), department_id=actor.department_id, workspace_id=workspace.id,
                                     sequence=sequence, starts_on=workspace.starts_on, ends_on=workspace.ends_on,
                                     supersedes_id=workspace.base_publication_id, published_by=actor.identity_id,
@@ -2907,8 +2907,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
         db.flush()
         for person_id in sorted({a["person_id"] for s in publication.snapshot["shifts"] for a in s["participants"] if a.get("person_id")}):
             db.add(m.PublicationPerson(publication_id=publication.id, person_id=person_id))
-        from .published_changes import materialize_absences
-        materialized_absences = materialize_absences(db, actor, workspace, value.reason)
+        materialized_absences = materialize_absences(db, actor, workspace, change_row, value.reason)
         zone = db.get(m.Organisation, actor.organisation_id).timezone
         from . import wishes
         if trimmed:
@@ -2922,8 +2921,7 @@ def lifecycle(db, actor, command, *, validation=None, shared_inputs=None):
                                                              or trimmed or effective_until) else None
         on_publish(db, publication, trimmed, own_shifts=own, data=ledger_data, shared_inputs=shared_inputs)
         swaps.published(db, actor, swap_request, publication.id, value.reason)
-        from .published_changes import on_published
-        person_changes = on_published(db, actor, workspace, publication, value.reason)
+        person_changes = on_published(db, actor, workspace, publication, change_row, value.reason)
         wishes.published(db, actor, workspace, publication, zone)
         bump_inputs(db, actor)
         from .common import neutral_rota_name
