@@ -286,7 +286,7 @@ export const ownSavingNow=()=>ownInFlight>0;
 /** Draft edits (each keeps the arrangement before it: `draftEdit` below) and bulk changes: the ones that change a draft's
  *  inputs, so an auto-schedule proposal made from them can no longer be applied. */
 const DRAFT_EDITS=new Set(['shift.create','shift.update','shift.action','shift.copy','issues.resolve','draft.swap','workspace.target_override',
-  'workspace.rule_adjust','workspace.resolve_overlap','series.expand','series.reconcile','import.apply','bulk.apply']);
+  'workspace.rule_adjust','workspace.resolve_overlap','workspace.context','series.expand','series.reconcile','import.apply','bulk.apply']);
 // Asked before such an edit is sent (app.ts guardDraftEdits: a waiting proposal); false keeps the draft as it is.
 let draftGuard:((kind:string,payload:Record<string,unknown>,target_id?:string)=>Promise<boolean>)|null=null;
 export const guardDraftEdits=(fn:typeof draftGuard)=>{draftGuard=fn;};
@@ -406,7 +406,7 @@ const UNDO:Record<string,(payload:any,result:any)=>Undo>={
   // A retained or refused proposal offers no Undo (it would undo the edit before).
   'generation.apply':(p,x)=>applyWrote(x)?draftEdit('Suggestions applied to the draft')(p,x):{said:'',undo:[]},
   'workspace.target_override':draftEdit('Target saved'),'workspace.rule_adjust':draftEdit('Rule changed for this rota'),
-  'workspace.resolve_overlap':draftEdit('Rota dates changed'),
+  'workspace.resolve_overlap':draftEdit('Rota dates changed'),'workspace.context':draftEdit('Earlier draft changed'),
   // A Redo is an edit like any other: its Undo takes it off again (SW3-A-06).
   'workspace.redo':draftEdit('Redone'),
   // Bulk draft edits keep the arrangement before them too (one server Undo for the whole batch).

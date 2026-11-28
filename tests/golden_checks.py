@@ -294,7 +294,57 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
-def check_scenario(data, ids, spec):
+def check_draft_context(data, ids, spec, harness):
+    expected = spec['expect']
+    prior, current = ids['night'], ids['early']
+    assert set(data['focus_ids']) == {current}
+    assert shift(data, prior)['workspace_id'] == ids['earlier']
+
+    forced = copy.deepcopy(data)
+    forced.pop('_person_rows', None)
+    place(forced, current, [ids['p0']])
+    rest = expected_findings(forced, ids, expected['rest'], 'rest')
+    assert rest and not expected_findings(disabled(forced, ids['rest']), ids, expected['rest'], 'rest')
+
+    def quota_actual(value):
+        [row] = [row for row in evaluate(value)['quota_report']['rows'] if row['policy_id'] == ids['quota']]
+        return row['actual']
+
+    without = {**data, 'shifts': [shift(data, current)]}
+    without.pop('context_draft')
+    without.pop('_person_rows', None)
+    assert quota_actual(data) == expected['quota']['actual']
+    assert quota_actual(without) == expected['quota']['without_context']
+
+    for seed in expected['seed_robustness']['seeds']:
+        result = solve(data, seed)
+        solved = feasible(data, result)
+        assert [row['person_id'] for row in shift(solved, current)['participants']] == [ids['p1']]
+        assert shift(solved, prior)['participants'] == shift(data, prior)['participants']
+
+    wid = ids['workspace']
+    path = f'/api/workspaces/{wid}?view=compact'
+    workspace = harness.detail(wid)['workspace']
+    harness.lifecycle(workspace, 'validate')
+    before = harness.get('coordinator', path)
+    assert before['health']['fresh']
+    change = expected['staleness']
+    earlier = harness.detail(ids[change['earlier']])['workspace']
+    harness.command('coordinator', 'shift.action', {
+        'workspace_id': earlier['id'], 'action': change['edit'], 'shift_ids': [ids[change['session']]],
+        'reason': 'Changed the earlier duty'}, revision=earlier['revision'])
+    after = harness.get('coordinator', path)
+    assert after['workspace']['revision'] == before['workspace']['revision']
+    assert after['current_fingerprint'] != before['current_fingerprint']
+    assert not after['health']['fresh']
+
+    return {'assertions': {'rest', 'quota', 'staleness', 'seed_robustness'},
+            'bindings': {'rest': len(rest), 'quota': 1}}
+
+
+def check_scenario(data, ids, spec, *, harness=None):
+    if spec['id'] == 'I-DRAFT-CONTEXT-01':
+        return check_draft_context(data, ids, spec, harness)
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
         return check_fair_share(data, ids, spec)

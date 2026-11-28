@@ -1,4 +1,4 @@
-"""Published neighboring duties satisfy a shared minimum without counting drafts."""
+"""Published duties or a selected earlier draft can satisfy a shared minimum."""
 import copy
 
 import pytest
@@ -157,3 +157,46 @@ def test_snapshot_check_preview_and_publication_agree_at_month_boundary(h, publi
         assert (comparison['actual'], comparison['amount'], comparison['status']) == (1, 1, 'met')
     else:
         assert report['source_publications'] == []
+
+
+def test_context_draft_eligibility_and_undo(h):
+    first, cut, last = '2026-11-29', '2026-12-01', '2026-12-06'
+    earlier = h.workspace('Earlier shared rota', first, cut)
+    private = h.command('coordinator', 'workspace.create', {
+        'name': 'Private planning rota', 'starts_on': first, 'ends_on': cut,
+        'visibility': 'private', 'purpose': 'sandbox'})['workspace']
+    later = h.workspace('Later planning rota', cut, last)
+    choices = h.get('coordinator', f'/api/workspaces?context_before={cut}')['workspaces']
+    assert [row['id'] for row in choices] == [earlier['id']]
+    for source in (private, later):
+        refused = h.command('coordinator', 'workspace.context', {
+            'context_draft_id': source['id'], 'reason': 'Set context draft'},
+            later['id'], later['revision'], status=422)
+        assert refused['error']['code'] == 'INVALID_CONTEXT_DRAFT'
+    linked = h.command('coordinator', 'workspace.context', {
+        'context_draft_id': earlier['id'], 'reason': 'Set context draft'}, later['id'], later['revision'])['workspace']
+    assert linked['context_draft_id'] == earlier['id']
+    assert h.snapshot(linked)['context_draft']['id'] == earlier['id']
+    assert h.lifecycle(linked, 'submit', status=409)['error']['code'] == 'CONTEXT_DRAFT_UNPUBLISHED'
+    unlinked = h.lifecycle(linked, 'undo')['workspace']
+    assert unlinked['context_draft_id'] is None
+    assert 'context_draft' not in h.snapshot(unlinked)
+
+
+def test_selected_draft_replaces_only_its_days_in_published_context(h):
+    first, start, cut, last = '2026-11-28', '2026-11-29', '2026-12-01', '2026-12-06'
+    official = h.shift(h.workspace('Earlier publication', first, cut),
+        start=first+'T08:00:00+03:00', end=first+'T12:00:00+03:00')['workspace']
+    official = h.shift(official, start=start+'T08:00:00+03:00', end=start+'T12:00:00+03:00')['workspace']
+    h.publish(official)
+    source = h.shift(h.workspace('Earlier alternative', start, cut),
+        start=start+'T14:00:00+03:00', end=start+'T18:00:00+03:00')['workspace']
+    later = h.command('coordinator', 'workspace.create', {
+        'name': 'Later planning rota', 'starts_on': cut, 'ends_on': last, 'context_draft_id': source['id']})['workspace']
+
+    def external():
+        return {(row['workspace_id'], row['start'][:10]) for row in h.snapshot(later)['shifts']}
+
+    assert external() == {(official['id'], first), (source['id'], start)}
+    h.lifecycle(source, 'archive')
+    assert external() == {(official['id'], first), (official['id'], start)}

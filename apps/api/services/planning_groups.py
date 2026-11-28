@@ -290,7 +290,7 @@ def _guard_scoped_change_authority(db, actor, workspace, before, *, review_rejec
     from .planner_tools import normalise_shift
     current = deepcopy(after) if after is not None else workspace_content(db, workspace)
     require(all(before['workspace'].get(key) == current['workspace'].get(key) for key in
-        ('starts_on', 'ends_on', 'replaces_publication_id', 'accepted_issues')),
+        ('starts_on', 'ends_on', 'replaces_publication_id', 'context_draft_id', 'accepted_issues')),
         'ROTA_COORDINATOR_ONLY', 'Department-wide changes require the Rota Coordinator', 403)
     old, new = ({row['id']: row for row in content['shifts']} for content in (before, current))
     require(old.keys() == new.keys(), 'SESSION_DEFINITION_AUTHORITY', 'Only the Rota Coordinator can add or remove session definitions', 403)
@@ -352,7 +352,7 @@ def require_change_authority(db, actor, workspace, before, *, after=None, sessio
             # Automatic pairing and other later mutations must not inherit authority for a different proposal.
             if new.keys() == previous.keys() and all(normalise_shift(new[sid]) == normalise_shift(previous[sid])
                     for sid in new) and all(current['workspace'].get(key) == before['workspace'].get(key) for key in
-                    ('starts_on', 'ends_on', 'replaces_publication_id', 'accepted_issues', 'rule_adjustments', 'target_overrides')):
+                    ('starts_on', 'ends_on', 'replaces_publication_id', 'context_draft_id', 'accepted_issues', 'rule_adjustments', 'target_overrides')):
                 authority = cached[4]
     if authority is None:
         # A retained context already checked access live above; do not read it twice.

@@ -991,6 +991,7 @@ class Workspace(InsertionOrdered, Record, DepartmentRecord, Base):
     content_revision: Mapped[int] = mapped_column(Integer, default=1)
     created_by: Mapped[str] = mapped_column(ForeignKey("identities.id"))
     last_edited_by: Mapped[str] = mapped_column(ForeignKey("identities.id"))
+    context_draft_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
     base_publication_id: Mapped[str | None] = mapped_column(ForeignKey("publications.id", use_alter=True))
     validation: Mapped[dict | None] = mapped_column(JSON)
     submitted_fingerprint: Mapped[str | None] = mapped_column(String(64))

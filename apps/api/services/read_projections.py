@@ -10,7 +10,7 @@ from apps.api.workspace_baselines import workspace_generation_defaults
 from packages.domain.input_manifest import digest, toolchain
 
 
-# These payloads contain only this visible workspace and canonical published context.
+# Shared planning context is eligible for the same audience as published context.
 CANONICAL_AUDIENCE = digest(None)
 log = logging.getLogger('rota.read_projections')
 
@@ -24,8 +24,8 @@ def source_identity(db):
     return held['source']
 
 
-def input_stamp(db, workspace, *, for_feasibility=False):
-    from apps.api.snapshots import draft_policy_hint
+def input_stamp(db, workspace, *, for_feasibility=False, context_hint=None):
+    from apps.api.snapshots import context_draft_hint, draft_policy_hint
 
     # Keep strong references within this transaction (SQLAlchemy's identity map is weak).
     held = db.info.setdefault('read_projection_inputs', {})
@@ -41,12 +41,13 @@ def input_stamp(db, workspace, *, for_feasibility=False):
     # Release preparation bumps the evaluator versions when their output
     # changes, so revision-keyed read work survives an API deploy safely.
     policy_basis = draft_policy_hint(workspace)
+    context_hint = context_draft_hint(db, workspace) if context_hint is None else context_hint
     # Feasibility excludes run objectives. Retain its existing revision stamp
     # so only the snapshot needs to read the draft baseline.
     return digest([org.input_revision, org.availability_revision,
         workspace.revision, workspace.content_revision, workspace.status,
         department.generation_defaults if for_feasibility else workspace_generation_defaults(db, workspace, department),
-        digest(toolchain(quota_policy_limit())), *policy_basis.values()])
+        digest(toolchain(quota_policy_limit())), *policy_basis.values(), *context_hint.values()])
 
 
 def _store(db, audience, kind, values, stamps):

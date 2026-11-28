@@ -399,7 +399,7 @@ def golden_case(tmp_path_factory, database_template):
                 me['department']['id'], me['organisation']['revision'])
             draft = harness.refresh_draft_baseline(harness.detail(compiled['workspace'])['workspace'])
             data = harness.snapshot(draft)
-            return check_scenario(data, compiled['ids'], spec)
+            return check_scenario(data, compiled['ids'], spec, harness=harness)
         finally:
             next(fixture, None)
     return run

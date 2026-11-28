@@ -5137,6 +5137,7 @@ class WorkspaceInput(Schema):
     replaces_publication_id: ID | None = None
     urgency: Literal["routine", "urgent"] = "routine"
     urgency_reason: str = Field(default="", max_length=500)
+    context_draft_id: ID | None = None
     source_workspace_id: ID | None = None
     source_revision: int | None = Field(default=None, ge=1)
     baseline: WorkspaceBaselineScope | None = None
@@ -5493,6 +5494,10 @@ class Decision(Schema):
 
 class JobCancelInput(Decision):
     only_if_queued: bool = False
+
+
+class WorkspaceContextInput(Decision):
+    context_draft_id: ID | None
 
 
 class WorkspaceValidation(Decision):
