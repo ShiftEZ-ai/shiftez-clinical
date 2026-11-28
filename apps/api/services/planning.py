@@ -780,7 +780,8 @@ def changed(db, actor, workspace, before, reason, *, content_changed=True, undoa
     now = [{**row, 'double_booking_conflicts': flags.get(row['id'], [])}
            if flags.get(row['id']) or old_flags.get(row['id']) else row for row in now]
     was = {r['id']: r for r in before_rows}
-    changed_rows = session_actions(db, actor, [row for row in now if was.get(row['id']) != row], disclose=False)
+    changed_rows = snapshots.project_draft_type_labels(db, workspace, [row for row in now if was.get(row['id']) != row])
+    changed_rows = session_actions(db, actor, changed_rows, disclose=False)
     result = finding_actions(db, actor, {**result, **({'checking': True} if pending_reply else {})})
     delta = edit_delta(before, workspace, changed_rows, sorted(set(was) - {r['id'] for r in now}),
                        previous_validation, result, scope=locals().get('delta_scope'),

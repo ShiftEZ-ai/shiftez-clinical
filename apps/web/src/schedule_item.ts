@@ -51,9 +51,9 @@ export const dutyCode=(type:string|{name?:string;short_code?:string})=>{
   const name=typeof type==='string'?type:String(type.name||'');
   return name.split(/\s+/).filter(Boolean).map(w=>w[0]).join('').slice(0,3).toUpperCase();
 };
-/** A session's code: its snapshot's, else its duty type's configured code now (sessions saved before codes existed). */
+/** An empty captured code keeps the session's automatic code. Older snapshots may omit the field. */
 export const sessionCode=(ctx:{catalogues:Record<string,Row[]>},s:Row)=>
-  dutyCode(s.type_snapshot?.short_code?s.type_snapshot:{name:s.type_snapshot?.name,short_code:byId(ctx.catalogues.assignment_types,String(s.assignment_type_id))?.short_code});
+  dutyCode({name:s.type_snapshot?.name,short_code:s.type_snapshot?.short_code??byId(ctx.catalogues.assignment_types,String(s.assignment_type_id))?.short_code});
 
 /** Records by id, indexed once per catalogue list (a grid names thousands of items from the same few lists). */
 const indexes=new WeakMap<Row[],Map<string,Row>>();

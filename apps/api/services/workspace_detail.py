@@ -5,7 +5,7 @@ from sqlalchemy.orm import load_only
 from apps.api import models as m
 from apps.api.errors import require
 from apps.api.serialization import record
-from apps.api.snapshots import fingerprints, full_shifts, project_series_shifts, shift_records
+from apps.api.snapshots import fingerprints, full_shifts, project_draft_type_labels, project_series_shifts, shift_records
 from packages.domain.time import aware
 from .common import local_date_span, visible_rota_name
 from . import reviews
@@ -90,7 +90,7 @@ def part(db, actor, workspace, query, settings):
         total = len(rows)
         from .people import duty_ranks
         items = duty_ranks(db, actor.department_id, rows[query.offset:query.offset + limit], org.timezone)
-        items = session_actions(db, actor, items)
+        items = session_actions(db, actor, project_draft_type_labels(db, workspace, items))
         from .wishes import planner_effects, snapshot_wishes
         rota_wishes = snapshot_wishes(db, [workspace.department_id], workspace)
         if rota_wishes:

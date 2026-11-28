@@ -638,6 +638,32 @@ def test_a_failing_day_summary_says_so_and_retry_recovers(browser, live_server, 
         context.close()
 
 
+def test_people_view_uses_renamed_draft_labels_and_keeps_issued_codes(browser, live_server, h):
+    value = {'name': 'Routine duty', 'short_code': '', 'starts_on': '2020-01-01',
+             'definition': {'requirements': [{'minimum': 1}]}}
+    typ = h.configure('assignment_types', value)['record']
+    published = h.shift(h.workspace('Issued rota', '2026-10-04', '2026-10-05'), typ=typ['id'])
+    h.publish(published['workspace'])
+    saved = h.shift(h.workspace('Draft rota', '2026-10-05', '2026-10-11'), *at(5), typ=typ['id'])
+    draft = checked(h, saved['workspace'])
+    h.configure('assignment_types', {**value, 'name': 'Extended duty', 'short_code': 'EXT'},
+                typ['id'], typ['revision'])
+
+    context, page = sign_in(browser, live_server, 'coordinator')
+    try:
+        show(page, f"schedule/people/2026-10-05?edit={draft['id']}")
+        chip = page.locator(f"button.pg-chip[data-session='{saved['shift_id']}']")
+        expect(chip).to_have_accessible_name(re.compile('Extended duty'))
+        expect(chip.locator('[data-part="code"]')).to_have_text('EXT')
+
+        show(page, 'schedule/people/2026-10-04?edit=none')
+        chip = page.locator(f"button.pg-chip[data-session='{published['shift_id']}']")
+        expect(chip).to_have_accessible_name(re.compile('Routine duty'))
+        expect(chip.locator('[data-part="code"]')).to_have_text('RD')
+    finally:
+        context.close()
+
+
 def test_published_day_label_is_never_cut_and_the_people_key_uses_the_real_code(browser, live_server, h):
     """With the Auto-schedule panel open the day columns narrow: "Published" is dropped rather than cut ("Publishe"); the
     grey day and the key still say it. The People key shows a published chip with its real duty code (not "DS")."""
