@@ -239,6 +239,32 @@ def test_why_a_search_stopped_is_said_in_the_contract_words(browser, cp_server, 
 
 
 @pytest.mark.parametrize('view,scheme', TWO)
+def test_the_receipt_lists_each_priority_stage_with_its_proof(browser, cp_server, h, view, scheme):
+    """Each stage the engine searched, in its order, with the contract's name and stop words; Best proven only for a
+    proven stage; no worker count."""
+    w = h.shift(h.workspace(f"Stage receipt {view['width']} {scheme}"), people=[])['workspace']
+    stage = {'value': 0, 'stopped_without_improvement': False}
+    _stored(h, w, _stopped('time_limit', workers=8, objectives=[
+        {**stage, 'tier': 0, 'name': 'coverage', 'proven_optimal': True, 'search_status': 'OPTIMAL'},
+        {**stage, 'tier': 1, 'name': 'weighted', 'proven_optimal': False, 'search_status': 'FEASIBLE'}]), checkpoint=True)
+    context, page, panel = _open(browser, cp_server, h, w, view, scheme)
+    try:
+        receipt = panel.locator('.solver-receipt')
+        expect(receipt).to_have_count(1)
+        rows = receipt.locator('.stage-receipt li')
+        expect(rows).to_have_count(2)
+        for i, words in enumerate((('Required cover', GENERATION_STOP_REASONS['optimal'], 'Best proven'),
+                                   ('Schedule score', GENERATION_STOP_REASONS['time_limit'], 'A better one may exist'))):
+            for part in words:
+                expect(rows.nth(i)).to_contain_text(part)
+        expect(rows.nth(1)).not_to_contain_text('Best proven')
+        expect(receipt).not_to_contain_text('worker')
+        expect(receipt.locator('.badge').first).to_have_text(re.compile('^(OPTIMAL|FEASIBLE|INFEASIBLE|UNKNOWN)$'))
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize('view,scheme', TWO)
 def test_a_run_continued_past_a_conflict_says_its_breaks(browser, cp_server, h, view, scheme):
     w = h.shift(h.workspace(f"Breaks {view['width']} {scheme}"), people=[])['workspace']
     shift = h.detail(w)['shifts'][0]['id']
