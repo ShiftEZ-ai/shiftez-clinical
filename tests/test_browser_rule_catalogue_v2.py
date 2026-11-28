@@ -559,7 +559,7 @@ def review_overtime_offer(browser, live_server, h, redraw_during_review):
             # The review's rota read can still be open when the person panel is rebuilt.
             pending = []
             path = '/api/workspaces?limit=100&current_only=true'
-            review.route(re.compile(re.escape(path) + '$'), pending.append, times=1)
+            review.route(re.compile(re.escape(path) + '$'), lambda route: pending.append(route), times=1)
             original = rpanel.locator('.ph-section').filter(has_text='Waiting for approval').element_handle()
             with review.expect_request(lambda r: r.url.endswith(path)):
                 approve.click()
