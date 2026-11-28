@@ -1,4 +1,4 @@
-import {type Legend,tagChip,rankColour,colourOf,legend,MARKS,el,icon,popover,hoverCard,formatDate,formatTime,toLocal,labelOf,empty,button,CAPABILITY,hostLegend,readFailed} from './dom.js';
+import {type Legend,tagChip,rankColour,colourOf,legend,MARKS,el,icon,popover,hoverCard,formatDate,formatTime,toLocal,labelOf,empty,button,CAPABILITY,hostLegend,readFailed,overflowMore} from './dom.js';
 import {SEVERITY_WORDS,LEVEL_WORDS} from './issue_marker.js';
 import type {LiveHost} from './autoschedule_live.js';
 import {fullNameOf} from './person_label.js';
@@ -125,6 +125,9 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
   let refocus='';
   // Each session's local day, once per draw (it was worked out per person and day).
   const days0=new Map<Row,string>(),dayOf=(s:Row)=>{let d=days0.get(s);if(!d){d=toLocal(s.start,zone).slice(0,10);days0.set(s,d);}return d;};
+  // The planner opens the person on that session in its one panel (REQ-PANEL); a published session around the draft
+  // opens read-only, as the Week and Timeline grids do (one session panel, never a second card).
+  const openDuty=(e:MouseEvent,shift:Row,p:Row)=>{if(!shift.context&&addsToSelection(e)){selectSession(shift);return;}if(!shift.context&&openAssignment(shift,p.id))return;(shift.context?hooks.view||hooks.details:hooks.details)(shift);};
   function draw(){
     const jobs:(()=>void)[]=[];
     let want:HTMLElement|null=null;
@@ -151,7 +154,9 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
     // One team's sessions of a person (null: all of them, every grouping but Supervision team).
     const onlyIn=(k:string,pid:string)=>state.group==='team'?scoped.get(k+'|'+pid)||new Set<string>():null;
     layer.clear();key.clear();
-    const grid=el('div',{class:'people-grid'+(itemSaysWords(props)?' it-words':''),role:'grid','aria-label':'Duties by person and day'});grid.style.setProperty('--days',String(days.length));
+    // Row height › Same for every row: one line per cell, a day's further duties behind "+n"; print always fits content.
+    const uniform=weekView.sameRows&&!weekView.forPrint;
+    const grid=el('div',{class:'people-grid'+(itemSaysWords(props)?' it-words':'')+(uniform?' uniform':''),role:'grid','aria-label':'Duties by person and day'});grid.style.setProperty('--days',String(days.length));
     // A chip is its duty type's code and hue, and Colour by's entry (dom.ts legend): one stamp for this grid's own chips and
     // the live auto-schedule view's (LiveHost.stamp; null: an open place), so a live chip is keyed like a drawn one.
     const stampChip=(n:Element,shift:Row,pid:string)=>{const code=weekView.colourBy==='type'?dutyColour(shift):'slate';
@@ -197,10 +202,10 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
           el('small',{class:'truncate'},breaches.has(person.id)?breachMark(breaches.get(person.id)!):'',hooks.code(person),...tags)),{kind:'person',person:person.id,label:fullNameOf(person),sub:[rankOf(person.id),hooks.code(person)].join(' · '),days,shifts:mine.map(x=>x.shift.id)},{pin:true}),hooks.menu,{person_id:person.id,day:days[0]},'Actions for '+fullNameOf(person)));
         const onDay=new Map<string,typeof mine>();for(const x of mine){const d=dayOf(x.shift);onDay.set(d,[...(onDay.get(d)||[]),x]);}
         for(const d of days){
-          const items=onDay.get(d)||[];
-          const cell=el('div',{class:'pg-cell'+ctxCls(d),role:'gridcell','data-day':d});
+          const items=onDay.get(d)||[],more=uniform&&items.length>1;
+          const cell=el('div',{class:'pg-cell'+ctxCls(d)+(more?' two':''),role:'gridcell','data-day':d});
           layer.wish(cell,person.id,d);
-          for(const {shift,p} of items){
+          for(const {shift,p} of more?items.slice(0,1):items){
             const problem=(issues.get(person.id+':'+shift.id)||[]).map(f=>findingIssue(f));
             // A trainee on the same session as their named supervisor is paired (↳ and the supervisor's code); without one, set apart.
             const trainee=p.participation==='trainee',lead=trainee&&p.supervisor_person_id&&(shift.participants as Row[]).some(x=>x.person_id===p.supervisor_person_id)?personById.get(p.supervisor_person_id):undefined;
@@ -221,10 +226,18 @@ export function peopleTimeline(ctx:Context,data:WorkspaceData,visible:Row[],hook
             hoverCard(chip,()=>[el('div',{class:'hc-head'},el('span',{class:`hc-badge duty-${dutyColour(shift)}`},sessionCode(ctx,shift)),el('div',{},el('strong',{},shift.type_snapshot.name),el('small',{},`${formatDate(shift.start,zone)} · ${formatTime(p.start,zone)}–${formatTime(p.end,zone)} · ${labelOf(ctx.catalogues.locations.find(l=>l.id===shift.location_id))}`))),
               problem.length?issueList(problem,{interactive:false}):el('ul',{class:'hc-lines'},el('li',{class:'hc-line ok'},el('span',{class:'hc-icon'},'✓'),el('span',{},el('strong',{},'No broken rules for this person here')))),
               ...ruleSummary({kind:'assignment',person:person.id,shift:shift.id,day:d,label:fullNameOf(person)})],400);
-            // The planner opens the person on that session in its one panel (REQ-PANEL); a published session around the
-            // draft opens read-only, as the Week and Timeline grids do (one session panel, never a second card).
-            chip.addEventListener('click',e=>{if(!shift.context&&addsToSelection(e)){selectSession(shift);return;}if(!shift.context&&openAssignment(shift,p.id))return;(shift.context?hooks.view||hooks.details:hooks.details)(shift);});
+            chip.addEventListener('click',e=>openDuty(e,shift,p));
             cell.append(chip);
+          }
+          // "+n" beside the first chip opens the day's duties, each one opening as its chip does. A must-fix on a duty it
+          // holds is marked on it, so no conflict hides behind it.
+          if(more){
+            const m=overflowMore(items.length-1,['duty','duties'],{of:`for ${fullNameOf(person)} on ${formatDate(d,zone)}`,all:items.length,cls:'link-button pg-more',title:'Duties',
+              list:()=>items.map(({shift,p})=>{const b=el('button',{type:'button',class:'link-button'},`${shift.type_snapshot.name} · ${formatTime(p.start,zone)}–${formatTime(p.end,zone)}${shift.cancelled?' · cancelled':''}`);
+                b.addEventListener('click',e=>openDuty(e,shift,p));return b;})});
+            const held=items.slice(1).flatMap(({shift})=>issues.get(person.id+':'+shift.id)||[]).map(f=>findingIssue(f));
+            if(held.length){m.append(issueMarker(held,{title:fullNameOf(person),inside:true,key})!);m.setAttribute('aria-label',m.getAttribute('aria-label')+' · '+issueLabel(held));}
+            cell.append(key.mark(m,'more',el('b',{class:'pg-more lg-mark','aria-hidden':'true'},'+1'),'More duties',3));
           }
           layer.leave(cell,person.id,d,person.id+'|'+d+'|'+name);
           row.append(cell);

@@ -14326,6 +14326,22 @@
             "default": null,
             "title": "Staffing"
           },
+          "row_height": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fit",
+                  "same"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Row Height"
+          },
           "coverage": {
             "anyOf": [
               {
@@ -15435,6 +15451,22 @@
         ],
         "default": null,
         "title": "Staffing"
+      },
+      "row_height": {
+        "anyOf": [
+          {
+            "enum": [
+              "fit",
+              "same"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Row Height"
       },
       "coverage": {
         "anyOf": [
@@ -59713,6 +59745,22 @@
             "default": null,
             "title": "Staffing"
           },
+          "row_height": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fit",
+                  "same"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Row Height"
+          },
           "coverage": {
             "anyOf": [
               {
@@ -61970,6 +62018,22 @@
             ],
             "default": null,
             "title": "Staffing"
+          },
+          "row_height": {
+            "anyOf": [
+              {
+                "enum": [
+                  "fit",
+                  "same"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Row Height"
           },
           "coverage": {
             "anyOf": [

@@ -1,5 +1,5 @@
 /** The Schedule's View settings popover (Notion-style): the view's name, Layout and Range, then one row per setting that
- *  opens its own page (Properties › Person label, Days, Colour by, Layers), Density, and Duplicate /
+ *  opens its own page (Properties › Person label, Days, Colour by, Layers), Density, Row height, and Duplicate /
  *  Reset at the foot. Group, Sort and Filter live on the toolbar only (S-10: never twice). The page owns the state; this only draws it and reports choices. */
 import {el,icon,button,withIcon,iconButton,select,field,check,colourOf,WEEKDAYS,type IconName,type Choice} from './dom.js';
 import {LABEL_PARTS,LABEL_PART_DEFINITIONS,LABEL_SEPARATORS,LABEL_HONORIFIC_MODES,PLANNER_TEAM_ROWS_LIMIT,type PersonLabel,type ViewProperty} from './generated.js';
@@ -30,6 +30,9 @@ export interface ViewSettingsSpec{
   colour?:{options:Options;value:()=>string;set:(key:string)=>void;
     tags?:{options:()=>{id:string;name?:string;colour?:string;active?:boolean}[];value:()=>string[];set:(ids:string[])=>void;limit:number}};
   density?:{value:()=>string;set:(key:string)=>void};
+  /** People × Days: each row fits its duties, or every row is one line with a day's further duties as "+n"
+   *  (PlannerViewSettings.row_height). Not offered for print, which always fits content. */
+  rowHeight?:{value:()=>string;set:(key:string)=>void};
   /** Trainee rows a supervision team shows before "+N more" (PlannerViewSettings.team_rows). */
   teamRows?:{value:()=>number;set:(rows:number)=>void};
   /** Staffing numbers (places filled / needed under each day, group totals, a grid's Staffed / needed row): shown or
@@ -191,7 +194,8 @@ export function viewSettings(spec:ViewSettingsSpec,panel:HTMLElement,close:()=>v
         spec.colour?row('Colour by','palette',colourHint(),()=>colourPage()):null,
         row('Layers','layers',spec.layers.hint(),()=>page('Layers',b=>spec.layers.build(b))),
         spec.columns?row('Columns','eye','Shown, order and wrap',()=>page('Columns',b=>spec.columns!.build(b,changed))):null,
-        ...(spec.density?segment('Density',[['compact','Compact'],['comfortable','Comfortable']],spec.density.value(),k=>spec.density!.set(k),changed):[]),teamRowsField(),staffingField()),
+        ...(spec.density?segment('Density',[['compact','Compact'],['comfortable','Comfortable']],spec.density.value(),k=>spec.density!.set(k),changed):[]),teamRowsField(),staffingField(),
+        ...(spec.rowHeight?segment('Row height',[['fit','Fit content'],['same','Same for every row']],spec.rowHeight.value(),k=>spec.rowHeight!.set(k),changed):[])),
       foot);
     drawFoot();
   }

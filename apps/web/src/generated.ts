@@ -3713,6 +3713,7 @@ export type PlannerViewSettings = {
   "density"?: "compact" | "comfortable" | null;
   "team_rows"?: number | null;
   "staffing"?: boolean | null;
+  "row_height"?: "fit" | "same" | null;
   "coverage"?: CoverageAxes | null;
   "only_open"?: boolean;
   "only_issues"?: boolean;
