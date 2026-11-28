@@ -1,4 +1,5 @@
 """Demo blockers: prepared activation, idle workers and resolved offered-overtime audiences."""
+import sys
 import time
 import tracemalloc
 from datetime import date
@@ -12,8 +13,10 @@ from apps.api import models as m
 from apps.api.auth import authenticate
 from apps.api.db import DatabaseWriteDeferred, retry_write, transaction
 from apps.api.services import policies, rule_effects, read_projection_warming
+from apps.process_memory import release_memory
 from apps.worker import main as worker, score_check
 from packages.contracts import schemas as s
+from tests.test_draft_edit_scale import department_draft
 from tests.test_fix_list_performance import backend
 from tests.test_rule_templates import propose
 from tests.test_overtime_extra_cover import extra_type
@@ -104,6 +107,66 @@ def test_activation_receipts_reuse_currency_without_building_snapshots(backend, 
         rss_bytes = (rss_peak - rss_start) * 1024
         assert rss_bytes < int(1.5 * 1024 * 1024 * 1024), f'activation receipt peak RSS: {rss_bytes}'
     assert peak < int(1.5 * 1024 * 1024 * 1024), f'activation receipt peak allocation: {peak}'
+
+
+DRAFT_SESSIONS = 496
+
+
+@pytest.fixture
+def memory_budget_draft(pg):
+    workspace, _ = department_draft(pg, person_rules=0)
+    return workspace
+
+
+def within_peak_memory_budget(operation, request, *, budget_mib):
+    release_memory()
+    if sys.platform.startswith('linux'):
+        baseline = _start_peak_rss()
+        assert baseline is not None, 'Could not reset the process peak RSS'
+        result = operation()
+        peak_bytes = (_rss_kib('VmHWM') - baseline) * 1024
+        metric = 'peak_rss_growth_bytes'
+        request.node.user_properties.append(('baseline_rss_bytes', baseline * 1024))
+    else:
+        tracemalloc.start()
+        try:
+            result = operation()
+            _, peak_bytes = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        metric = 'peak_python_allocation_bytes'
+    budget_bytes = budget_mib * 1024 * 1024
+    request.node.user_properties.extend([(metric, peak_bytes), ('memory_budget_bytes', budget_bytes)])
+    assert 0 <= peak_bytes <= budget_bytes, f'{metric}={peak_bytes}, budget={budget_bytes}'
+    return result
+
+
+@pytest.mark.postgres
+def test_department_draft_read_peak_memory(pg, memory_budget_draft, request):
+    client = pg.client('coordinator')
+    path = f"/api/workspaces/{memory_budget_draft['id']}"
+    response = within_peak_memory_budget(lambda: client.get(path), request, budget_mib=128)
+    assert response.status_code == 200, response.text
+    detail = response.json()
+    assert detail['workspace']['id'] == memory_budget_draft['id']
+    assert len(detail['shifts']) == DRAFT_SESSIONS
+    assert sum(len(shift['participants']) for shift in detail['shifts']) == 2 * DRAFT_SESSIONS
+
+
+@pytest.mark.postgres
+def test_department_draft_validation_job_peak_memory(pg, memory_budget_draft, request):
+    workspace = memory_budget_draft
+    queued = pg.command('coordinator', 'job.create', {'workspace_id': workspace['id'], 'kind': 'validation'},
+                        revision=workspace['revision'])['job']
+    assert queued['status'] == 'queued'
+    engine = pg.app.state.engine
+    assert within_peak_memory_budget(lambda: worker.process_one(engine),
+                                     request, budget_mib=256)
+    with transaction(engine) as db:
+        checked = db.get(m.Job, queued['id'])
+        assert checked.status == 'succeeded', checked.error_code
+        assert checked.result['checked_revision'] == workspace['revision']
+        assert len(checked.result['coverage']) == DRAFT_SESSIONS
 
 
 @pytest.mark.parametrize('change', ['inputs', 'availability', 'draft', 'proposal', 'new_draft'])
