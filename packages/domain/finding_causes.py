@@ -3,7 +3,9 @@
 Opportunities are upper bounds: these hints never certify a feasible schedule or relax a rule.
 All caches belong to one evaluation, including its current assignments and definitions.
 """
+from collections import defaultdict
 from datetime import date, timedelta
+from functools import cache
 import json
 import math
 from zoneinfo import ZoneInfo
@@ -11,6 +13,184 @@ from zoneinfo import ZoneInfo
 from .time import aware, local_midnight, overlaps, union_hours
 from .recurrence import inactive, expand, stored_series_definition
 from . import leadership
+
+
+def quota_shortfalls(data):
+    """Check mandatory minima against optimistic credit and supervised-place bounds."""
+    from .candidate_evidence import candidate_evidence
+    from .generation_scope import population_allows, selected_session_ids
+    from .quotas import applicable_policies, evaluate_quotas, quota_contribution
+    from .validation import (ancestor_ids, authority_intervals, effective_type_definition, exception_for,
+                             is_trainee, participation_for, qualified_supervisor, supervision_capacity,
+                             supervision_limit_policies)
+
+    selected = set(selected_session_ids(data))
+    editable = {s['id'] for s in data['shifts'] if s['id'] in selected and not s['locked']
+                and not data['workspace'].get('base_publication_id')}
+    shifts = {s['id']: s for s in data['shifts'] if not inactive(s)
+              and data['types'][s['assignment_type_id']]['department_id'] == data['workspace']['department_id']}
+    policies = [p for p in applicable_policies(data) if p['definition']['severity'] == 'mandatory'
+                and p['definition']['rule']['comparison'] == 'minimum']
+    if not policies:
+        return []
+
+    check = data.get('_check_budget', lambda: None)
+    causes = FindingCauses(data)
+    rows, trainees = [], defaultdict(dict)
+    originals = {sid: {p['person_id']: p for p in s['participants']} for sid, s in shifts.items()}
+    occurrences = {(s['series_id'], aware(s['start'])) for s in shifts.values() if s.get('series_id')}
+
+    @cache
+    def assignable(sid, pid):
+        shift = shifts[sid]
+        return (sid in editable and population_allows(data, shift, pid)
+                and candidate_evidence(data, pid, shift)['eligible_and_available'])
+
+    def prospective(shift, pid, overtime):
+        a, b = aware(shift['start']), aware(shift['end'])
+        return {'person_id': pid, 'start': shift['start'], 'end': shift['end'], 'overtime': overtime,
+                'team_lead': True, 'participation': participation_for(data, pid, shift, a, b)}
+
+    def credit(policy, pid, shift, participant, a, b):
+        got = quota_contribution(data, policy, pid, shift, participant, (), a, b)
+        if got is None:
+            return 0
+        metric = policy['definition']['rule']['metric']
+        if metric in {'duties', 'lead_turns'}:
+            return int(got['duty'])
+        if metric in {'scheduled_hours', 'reserved_hours'}:
+            return union_hours(got['intervals'])
+        return got['session_units'] if metric == 'session_units' else got['credits']
+
+    @cache
+    def supervision_bound(sid):
+        shift = shifts[sid]
+        definition = effective_type_definition(data, shift)
+        supervision = definition.get('supervision')
+        if not supervision or sid not in editable:
+            return None
+        a, b = next(iter(authority_intervals(data, aware(shift['start']), aware(shift['end']))))
+        # Full-duty prospects must all fit at the first interval. Keep any partial existing work outside this bound.
+        if any(aware(p['start']) != aware(shift['start']) or p.get('segments') for p in originals[sid].values()):
+            return None
+        trainee_ids, supervisors = set(), []
+        no_competing_duties = {**data, '_supervision_commitments': {}}
+        for pid in data['people']:
+            check()
+            options = [originals[sid][pid]] if pid in originals[sid] else []
+            if options or assignable(sid, pid):
+                options.append(prospective(shift, pid, False))
+            if options and all(is_trainee(data, supervision, p, a, b) for p in options):
+                trainee_ids.add(pid)
+            elif any(qualified_supervisor(no_competing_duties, shift, p, a, b, definition=definition) for p in options):
+                supervisors.append(pid)
+        paired = [{'person_id': pid} for pid in trainee_ids]
+        places = 0
+        for pid in supervisors:
+            cap = supervision['trainees_per_supervisor']
+            for policy in supervision_limit_policies(data, shift, pid, a, b):
+                rule = policy['definition']['rule']
+                if rule['mode'] == 'capacity':
+                    bound = supervision_capacity(data, rule, paired, a, b, supervisor_id=pid)
+                    if bound['scheduled'] == len(paired):
+                        cap = min(cap, bound.get('permitted_maximum', bound['maximum']))
+            places += cap
+        return trainee_ids, places
+
+    def assess(policy, pid, a, b, amount, **_):
+        check()
+        rule = policy['definition']['rule']
+        opportunities, types = {}, set()
+        for sid, shift in shifts.items():
+            check()
+            if (rule['assignment_type_ids'] and shift['assignment_type_id'] not in rule['assignment_type_ids']
+                    or not overlaps(a, b, aware(shift['start']), aware(shift['end']))):
+                continue
+            original = originals[sid].get(pid)
+            try:
+                best = credit(policy, pid, shift, original, a, b) if original else 0
+            except ValueError:
+                # Invalid recorded presence is diagnosed by the canonical quota check.
+                return
+            if sid in editable:
+                extra = effective_type_definition(data, shift).get('extra_cover', False)
+                # When options allow overtime, the solver can choose either form on a regular session.
+                prospect = prospective(shift, pid, extra or rule['overtime'] == 'only')
+                possible = credit(policy, pid, shift, prospect, a, b)
+                if possible:
+                    types.add(shift['assignment_type_id'])
+                    if original or assignable(sid, pid):
+                        best = max(best, possible)
+            if best:
+                types.add(shift['assignment_type_id'])
+                opportunities[sid] = best
+        possible = sum(opportunities.values())
+        prefill = causes.prefill(policy, a, b, pid, (shifts[sid] for sid in opportunities))
+        result = {'rule_ids': [policy.get('_source_policy_id', policy['id'])], 'person_ids': [pid],
+                  'assignment_type_ids': sorted(set(prefill['assignment_type_ids']) or types),
+                  'starts_on': prefill['starts_on'], 'ends_on': prefill['ends_on'], 'metric': rule['metric'],
+                  'required': amount, 'possible': possible, 'series_ids': []}
+        if possible + 1e-9 < amount:
+            first = max(prefill['starts_on'], data['workspace']['starts_on'])
+            last = min(prefill['ends_on'], data['workspace']['ends_on'])
+            if first < last:
+                def beyond_end(shift):
+                    series = shift['series_snapshot']
+                    end = series.get('ends_on')
+                    day = aware(shift['start']).astimezone(ZoneInfo(
+                        series['definition'].get('timezone', data['organisation']['timezone']))).date().isoformat()
+                    if (not series['active'] or not end or end > day
+                            or (series['id'], aware(shift['start'])) in occurrences):
+                        return False
+                    occurrence = {**shift, 'workspace_id': data['workspace']['id'],
+                                  'type_revision': shift['type_snapshot']['revision']}
+                    overtime = effective_type_definition(data, occurrence).get('extra_cover', False)
+                    return credit(policy, pid, occurrence, prospective(
+                        occurrence, pid, overtime or rule['overtime'] == 'only'), a, b) > 0
+
+                ended = causes.matching_series({**prefill, 'starts_on': first, 'ends_on': last}, beyond_end,
+                                               person_sensitive=True)
+                result['series_ids'] = sorted(s['id'] for s in ended)
+                result['assignment_type_ids'] = sorted(set(result['assignment_type_ids']) | {
+                    s['assignment_type_id'] for s in data.get('recurring_series', ()) if s['id'] in result['series_ids']})
+            rows.append({**result, 'code': 'RECURRING_SESSIONS_ENDED' if result['series_ids']
+                         else 'PERSON_MINIMUM_SHORTFALL'})
+        elif any((bound := supervision_bound(sid)) is not None and pid in bound[0] for sid in opportunities):
+            # A person with two matching minima can meet both with the same work.
+            key = a, b, rule['metric']
+            existing = trainees[key].get(pid)
+            if existing is None or amount > existing[0]['required']:
+                trainees[key][pid] = result, opportunities
+
+    # Use the canonical audience, line, proration and exception logic even when the draft is already partly staffed.
+    # The empty copy exposes all obligations, while every actual placement remains in the opportunity calculation.
+    empty = {**data, '_quota_policies': policies, 'shifts': [{**s, 'participants': []} for s in data['shifts']]}
+    report = evaluate_quotas(empty, lambda *_args, **_kwargs: None, ancestor_ids, exception_for, explain=assess)
+    if not report or not report['complete']:
+        return []
+    for group in trainees.values():
+        credits = defaultdict(list)
+        findings = []
+        for pid, (finding, opportunities) in group.items():
+            findings.append(finding)
+            for sid, possible in opportunities.items():
+                credits[sid].append((pid, possible))
+        possible = 0
+        for sid, candidates in credits.items():
+            bound = supervision_bound(sid)
+            if bound is None:
+                possible += sum(value for _, value in candidates)
+                continue
+            trainee_ids, places = bound
+            possible += sum(value for pid, value in candidates if pid not in trainee_ids)
+            possible += sum(sorted((value for pid, value in candidates if pid in trainee_ids), reverse=True)[:places])
+        required = sum(f['required'] for f in findings)
+        if possible + 1e-9 < required:
+            rows.append({**findings[0], 'code': 'SUPERVISED_MINIMUM_SHORTFALL', 'person_ids': sorted(group),
+                         'rule_ids': sorted({rid for f in findings for rid in f['rule_ids']}),
+                         'assignment_type_ids': sorted({typ for f in findings for typ in f['assignment_type_ids']}),
+                         'required': required, 'possible': possible})
+    return rows
 
 DIAGNOSTIC_VERSION = 'finding-causes-v3'
 
@@ -148,8 +328,9 @@ class FindingCauses:
                     result['location_id'] = values[0]
         return result
 
-    def matching_series(self, prefill, matches):
-        key = json.dumps({k: v for k, v in prefill.items() if k not in {'person_id', 'rule_id'}}, sort_keys=True)
+    def matching_series(self, prefill, matches, *, person_sensitive=False):
+        dropped = {'shift_ids'} if person_sensitive else {'person_id', 'rule_id'}
+        key = (person_sensitive, json.dumps({k: v for k, v in prefill.items() if k not in dropped}, sort_keys=True))
         if key not in self.series:
             found = []
             for series in self.data.get('recurring_series', []):

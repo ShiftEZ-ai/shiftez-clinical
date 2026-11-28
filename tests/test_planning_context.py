@@ -41,6 +41,75 @@ def forbid_checks(monkeypatch):
     monkeypatch.setattr('apps.api.services.rota_summary.schedule_score', forbidden)
 
 
+def test_readiness_reports_ended_recurring_sessions_and_person_minima(h, monkeypatch):
+    from .test_series_reconciliation import materialise, template
+
+    first, second = h.seed['people'][:2]
+    series = template(h, days=(6,), ends_on='2026-10-11')
+    other = h.configure('assignment_types', {'name': 'Other clinical session', 'starts_on': '2020-01-01',
+                                              'definition': {'requirements': []}})['record']['id']
+    def minimum(typ, person):
+        return h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-18',
+                         'metric': 'duties', 'comparison': 'minimum', 'amount': 2,
+                         'assignment_type_ids': [typ]}, {'person_id': person})
+
+    recurring = minimum(h.seed['type'], first)
+    personal = minimum(other, second)
+    w = materialise(h, series, h.workspace(end='2026-10-18'))
+    w = h.shift(w, typ=other, start='2026-10-05T08:00:00+03:00',
+                end='2026-10-05T12:00:00+03:00', people=[])['workspace']
+    before = h.detail(w)
+    forbid_checks(monkeypatch)
+    results = post(h, w, 'readiness')
+    assert results['complete'] is False
+    post(h, w, 'readiness', role='staff', status=403)
+    rows = {row['code']: row for row in results['shortfalls']}
+    assert set(rows) == {'RECURRING_SESSIONS_ENDED', 'PERSON_MINIMUM_SHORTFALL'}
+    for code, policy, person, typ, series_ids in (
+        ('RECURRING_SESSIONS_ENDED', recurring, first, h.seed['type'], [series['id']]),
+        ('PERSON_MINIMUM_SHORTFALL', personal, second, other, []),
+    ):
+        assert rows[code] == {'code': code, 'rule_ids': [policy['id']], 'person_ids': [person],
+                             'assignment_type_ids': [typ], 'series_ids': series_ids,
+                             'starts_on': '2026-10-04', 'ends_on': '2026-10-18', 'metric': 'duties',
+                             'required': 2, 'possible': 1}
+    assert h.detail(w) == before
+
+
+def test_supervised_quota_precheck_combines_distinct_trainees(h):
+    from packages.domain.cp_sat import generate
+
+    supervisor, first, second = h.seed['people'][:3]
+    rank = h.seed['trainee_category']
+    skill = h.seed['supervisor_capability']
+    for person in (first, second):
+        h.command('admin', 'membership.create', {'person_id': person, 'category_id': rank, 'starts_on': '2020-01-01'})
+    typ = h.configure('assignment_types', {'name': 'Limited supervision', 'starts_on': '2020-01-01',
+        'definition': {'requirements': [], 'supervision': {'trainee_category_ids': [rank],
+                       'capability_id': skill, 'trainees_per_supervisor': 1, 'require_pairing': True}}})['record']['id']
+    rule = h.policy({'kind': 'block_quota', 'starts_on': '2026-10-04', 'ends_on': '2026-10-11',
+                     'metric': 'duties', 'comparison': 'minimum', 'amount': 1, 'participation': ['trainee'],
+                     'assignment_type_ids': [typ]}, {'person_ids': [first, second]})
+    w = h.shift(h.workspace(), typ=typ, people=[])['workspace']
+    [shortfall] = post(h, w, 'readiness', {'generation_scope': {
+        'conditions': {'match': 'all', 'conditions': [{'field': 'person_ids', 'values': [supervisor, first, second]}]}}
+    })['shortfalls']
+    assert shortfall['code'] == 'SUPERVISED_MINIMUM_SHORTFALL'
+    assert shortfall['person_ids'] == sorted([first, second])
+    assert shortfall['rule_ids'] == [rule['id']] and shortfall['assignment_type_ids'] == [typ]
+    assert (shortfall['required'], shortfall['possible']) == (2, 1)
+
+    data = h.snapshot(w)
+    data['generation_scope'] = {'conditions': {'match': 'all', 'conditions': [
+        {'field': 'person_ids', 'values': [supervisor, first, second]}]}, 'protection': 'rebalance_selected'}
+    progress = []
+    result = generate(data, 10, workers=1, deterministic=True, progress=progress.append)
+    assert result['status'] == 'requirements_conflict', result
+    assert any(i['code'] == shortfall['code'] for i in result['precheck_issues'])
+    assert any(p['stage'] == 'checking' and not p.get('search_elapsed_seconds') and
+               any(i['code'] == shortfall['code'] for i in p.get('precheck_issues', ())) for p in progress)
+
+
 def test_currency_has_one_classifier_and_fails_unknown_legacy_metadata():
     job = SimpleNamespace(input_fingerprint='current')
     projection = job_read_metadata({'generation_engine': 'cp_sat', 'compiler_version': COMPILER_VERSION},

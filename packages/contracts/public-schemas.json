@@ -80060,6 +80060,97 @@
         "title": "ReadinessGroup",
         "type": "object"
       },
+      "ReadinessShortfall": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "RECURRING_SESSIONS_ENDED",
+              "SUPERVISED_MINIMUM_SHORTFALL",
+              "PERSON_MINIMUM_SHORTFALL"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "rule_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Rule Ids",
+            "type": "array"
+          },
+          "person_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Person Ids",
+            "type": "array"
+          },
+          "assignment_type_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Assignment Type Ids",
+            "type": "array"
+          },
+          "series_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Series Ids",
+            "type": "array"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "metric": {
+            "enum": [
+              "duties",
+              "session_units",
+              "scheduled_hours",
+              "reserved_hours",
+              "workload_credit",
+              "training_credit",
+              "lead_turns"
+            ],
+            "title": "Metric",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "number"
+          },
+          "possible": {
+            "title": "Possible",
+            "type": "number"
+          }
+        },
+        "required": [
+          "code",
+          "rule_ids",
+          "person_ids",
+          "assignment_type_ids",
+          "series_ids",
+          "starts_on",
+          "ends_on",
+          "metric",
+          "required",
+          "possible"
+        ],
+        "title": "ReadinessShortfall",
+        "type": "object"
+      },
       "RelativeOperand": {
         "additionalProperties": false,
         "properties": {
@@ -80233,6 +80324,13 @@
           "$ref": "#/$defs/ReadinessGroup"
         },
         "title": "Groups",
+        "type": "array"
+      },
+      "shortfalls": {
+        "items": {
+          "$ref": "#/$defs/ReadinessShortfall"
+        },
+        "title": "Shortfalls",
         "type": "array"
       },
       "check_action": {
@@ -81262,6 +81360,97 @@
         "title": "ReadinessGroup",
         "type": "object"
       },
+      "ReadinessShortfall": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "RECURRING_SESSIONS_ENDED",
+              "SUPERVISED_MINIMUM_SHORTFALL",
+              "PERSON_MINIMUM_SHORTFALL"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "rule_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Rule Ids",
+            "type": "array"
+          },
+          "person_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Person Ids",
+            "type": "array"
+          },
+          "assignment_type_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Assignment Type Ids",
+            "type": "array"
+          },
+          "series_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Series Ids",
+            "type": "array"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "metric": {
+            "enum": [
+              "duties",
+              "session_units",
+              "scheduled_hours",
+              "reserved_hours",
+              "workload_credit",
+              "training_credit",
+              "lead_turns"
+            ],
+            "title": "Metric",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "number"
+          },
+          "possible": {
+            "title": "Possible",
+            "type": "number"
+          }
+        },
+        "required": [
+          "code",
+          "rule_ids",
+          "person_ids",
+          "assignment_type_ids",
+          "series_ids",
+          "starts_on",
+          "ends_on",
+          "metric",
+          "required",
+          "possible"
+        ],
+        "title": "ReadinessShortfall",
+        "type": "object"
+      },
       "RelativeOperand": {
         "additionalProperties": false,
         "properties": {
@@ -81435,6 +81624,13 @@
           "$ref": "#/$defs/ReadinessGroup"
         },
         "title": "Groups",
+        "type": "array"
+      },
+      "shortfalls": {
+        "items": {
+          "$ref": "#/$defs/ReadinessShortfall"
+        },
+        "title": "Shortfalls",
         "type": "array"
       },
       "check_action": {

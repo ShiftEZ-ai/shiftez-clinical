@@ -3245,6 +3245,7 @@ export type PeriodReadiness = {
   "basis"?: "known_records_not_solver_proof";
   "records_coverage"?: "assigned_people_only" | "paged_duty_candidates";
   "groups": Array<ReadinessGroup>;
+  "shortfalls"?: Array<ReadinessShortfall>;
   "check_action"?: "workspace.validate";
 };
 
@@ -4178,6 +4179,19 @@ export type ReadinessGroup = {
   "sample_person_ids": Array<string>;
 };
 
+export type ReadinessShortfall = {
+  "code": "RECURRING_SESSIONS_ENDED" | "SUPERVISED_MINIMUM_SHORTFALL" | "PERSON_MINIMUM_SHORTFALL";
+  "rule_ids": Array<string>;
+  "person_ids": Array<string>;
+  "assignment_type_ids": Array<string>;
+  "series_ids": Array<string>;
+  "starts_on": string;
+  "ends_on": string;
+  "metric": "duties" | "session_units" | "scheduled_hours" | "reserved_hours" | "workload_credit" | "training_credit" | "lead_turns";
+  "required": number;
+  "possible": number;
+};
+
 export type ReadingContext = {
   "file_ref": string;
   "cell_ref": string;
@@ -4276,6 +4290,7 @@ export type RequirementEvidence = {
   "basis"?: "known_records_not_solver_proof";
   "records_coverage"?: "assigned_people_only" | "paged_duty_candidates";
   "groups": Array<ReadinessGroup>;
+  "shortfalls"?: Array<ReadinessShortfall>;
   "check_action"?: "workspace.validate";
   "observation": FindingObservationSummary;
   "candidates": Array<PlanningCandidate>;

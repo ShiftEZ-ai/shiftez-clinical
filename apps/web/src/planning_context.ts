@@ -1,13 +1,12 @@
-/** What is recorded about the people of a rota, read on demand from the server's planning context
- *  (apps/api/services/planning_context.py). Both reads are known records only, never a
- *  readiness census or a feasibility proof: the words say so, and nothing here blocks Run or writes anything. */
+/** On-demand recorded facts and quota shortfalls from the server's planning context. */
 import {request,onSessionReset,ApiError} from './api.js';
 import {working} from './loading.js';
-import {el,button,note,showDialog,plural,formatDate,formatTime,emptyLine} from './dom.js';
+import {el,button,note,showDialog,plural,formatDate,formatTime,spanLabel,emptyLine} from './dom.js';
 import type {Row} from './types.js';
 import {TEAM_PROBLEM_WORDS} from './generated.js';
-import type {PlanningExclusion,PlanningRecordReference,PeriodReadiness,PlanningContextInput,RequirementEvidence,FindingObservationSummary,FindingFixHint} from './generated.js';
+import type {PlanningExclusion,PlanningRecordReference,PeriodReadiness,PlanningContextInput,ReadinessShortfall,RequirementEvidence,FindingObservationSummary,FindingFixHint} from './generated.js';
 import {dockPanel} from './side_panel.js';  // lists are docked panels (UX › controls C26)
+import {measureWords} from './rule_catalogue.js';
 
 /** Why someone is ruled out, keyed by the contract's typed codes (a new code fails the build here). */
 export const EXCLUSION_WORDS:Record<PlanningExclusion['code'],string>={UNAVAILABLE:'Recorded unavailability',RESTRICTION:'Active scheduling restriction',
@@ -34,6 +33,27 @@ export const currency=(job:Row,fingerprint:string|undefined):Currency=>job.curre
   :notCompared(job)?(['queued','running'].includes(job.status)?'':'unknown'):job.input_fingerprint!==fingerprint?'rota'
   :job.kind!=='generation'||job.result_stale===false?'':job.result_stale===true?'scheduler':'unknown';
 type Name=(kind:string,id:string)=>string;
+export const SHORTFALL_WORDS:Record<ReadinessShortfall['code'],string>={
+  RECURRING_SESSIONS_ENDED:'Recurring sessions end too early',
+  SUPERVISED_MINIMUM_SHORTFALL:'Too few supervised places',
+  PERSON_MINIMUM_SHORTFALL:'Too few sessions for a personal minimum',
+};
+function shortfallLine(row:ReadinessShortfall,name:Name){
+  const labels=(kind:string,ids:string[])=>ids.map(id=>name(kind,id)).join(', ');
+  const numbers=`Needs ${row.required} ${measureWords(row.metric,row.required)} · at most ${row.possible} possible`;
+  return el('li',{},[
+    labels('people',row.person_ids),labels('assignment_types',row.assignment_type_ids),labels('recurring_series',row.series_ids),
+    labels('policies',row.rule_ids),spanLabel(row.starts_on+'T00:00:00Z',row.ends_on+'T00:00:00Z','UTC'),numbers,
+  ].filter(Boolean).join(' · '));
+}
+function shortfallGroups(rows:ReadinessShortfall[],name:Name){
+  const groups=Object.keys(SHORTFALL_WORDS).flatMap(code=>{
+    const matches=rows.filter(row=>row.code===code);
+    return matches.length?[el('li',{},el('strong',{},SHORTFALL_WORDS[matches[0].code]),
+      el('ul',{class:'why-list'},...matches.map(row=>shortfallLine(row,name))))]:[];
+  });
+  return groups.length?el('ul',{class:'why-list','aria-label':'Rota-wide shortfalls'},...groups):null;
+}
 // One read per identical input while it is in flight (a second press or redraw waits for the same answer).
 const inflight=new Map<string,Promise<unknown>>();
 onSessionReset(()=>inflight.clear());
@@ -50,21 +70,21 @@ const exclusion=(x:PlanningExclusion,name:Name,zone:string)=>[EXCLUSION_WORDS[x.
 /** The server refused because its rota check is missing or old: the check is the coordinator's explicit action. */
 const needsCheck=(e:unknown)=>e instanceof ApiError&&['CHECK_REQUIRED','STALE_INPUTS'].includes(e.code);
 
-/** Auto-schedule › What to fill: what is recorded for the people already on these sessions, on request. `input` is the
+/** Auto-schedule › What to fill: quota shortfalls and what is recorded for assigned people. `input` is the
  *  run as set up now (or why it cannot be read); a reply for a setup changed since is not shown. */
 export function readinessRegion(o:{workspace:string;input:()=>PlanningContextInput|string;name:Name;zone:string;check?:()=>void}){
   const out=el('div',{class:'auto-readiness','aria-live':'polite'});let asked='';
-  // SW3-A-20: the link says what it reads (it stood alone as "Recorded facts").
-  const read=button('Check the people already assigned',()=>void show(),'link-button small');
+  const read=button('Check readiness',()=>void show(),'link-button small');
   const show=async()=>{const input=o.input();if(typeof input==='string'){out.replaceChildren(read,note(input,'warning'));return;}
-    const key=JSON.stringify(input);asked=key;out.replaceChildren(read,working('Checking the people already assigned…'));
+    const key=JSON.stringify(input);asked=key;out.replaceChildren(read,working('Checking readiness…'));
     try{const r=await post<PeriodReadiness>(`/api/workspaces/${encodeURIComponent(o.workspace)}/readiness`,input);if(asked!==key)return;
-      if(!r.checked){out.replaceChildren(read,note('These facts come from the rota check. Check the rota first.','info'),...(o.check?[button('Check rota',o.check,'secondary small')]:[]));return;}
-      out.replaceChildren(read,el('p',{},el('strong',{},`Recorded for the people already assigned · ${plural(r.sessions,'session')}`)),
+      const shortfalls=shortfallGroups(r.shortfalls||[],o.name);
+      if(!r.checked){out.replaceChildren(read,...(shortfalls?[shortfalls]:[]),note('Check the rota to see exclusions for the people already assigned.','info'),...(o.check?[button('Check rota',o.check,'secondary small')]:[]));return;}
+      out.replaceChildren(read,...(shortfalls?[shortfalls]:[]),el('p',{},el('strong',{},`Recorded for the people already assigned · ${plural(r.sessions,'session')}`)),
         r.groups.length?el('ul',{class:'why-list'},...r.groups.map(g=>el('li',{},[plural(g.people,'person','people'),EXCLUSION_WORDS[g.code],g.service_id?o.name('services',g.service_id):'',
           o.name('assignment_types',g.assignment_type_id),span(g.start,g.end,o.zone)].filter(Boolean).join(' · ')))):emptyLine('Nothing recorded rules them out.'),
         // The limit of these facts changes what Run can promise, so it stays visible.
-        el('p',{class:'hint'},'People not assigned yet, and whether every place can be filled, are not checked here.'));
+        el('p',{class:'hint'},'Exclusions cover people already assigned. This check cannot say whether every place can be filled.'));
     }catch(e){if(asked!==key)return;out.replaceChildren(read,needsCheck(e)?note('The rota changed since its check. Check the rota first.','info'):note((e as Error).message,'error',e),
       ...(needsCheck(e)&&o.check?[button('Check rota',o.check,'secondary small')]:[]));}};
   out.append(read);

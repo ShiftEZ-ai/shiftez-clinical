@@ -13,6 +13,9 @@ pytestmark = pytest.mark.browser
 
 
 def test_recorded_facts_are_dated_incomplete_and_readonly(browser, live_server, h):
+    person = h.seed['people'][0]
+    h.policy({'kind': 'block_quota', 'starts_on': '2026-12-06', 'ends_on': '2026-12-13',
+              'metric': 'duties', 'comparison': 'minimum', 'amount': 2}, {'person_id': person})
     w = h.shift(h.workspace('Fictional December context', '2026-12-01', '2027-01-01'),
         start='2026-12-06T08:00:00+03:00', end='2026-12-06T12:00:00+03:00', people=[])['workspace']
     context, page = sign_in(browser, live_server, 'coordinator')
@@ -22,12 +25,15 @@ def test_recorded_facts_are_dated_incomplete_and_readonly(browser, live_server, 
         before = h.detail(w)
         auto_setup(page.locator('#auto-panel'))  # D76: the setup's fields open under Change
         with page.expect_response(lambda r: r.url.endswith('/readiness')) as answer:
-            page.get_by_role('button', name='Check the people already assigned', exact=True).click()
+            page.get_by_role('button', name='Check readiness', exact=True).click()
         assert answer.value.ok, answer.value.text()
         value = answer.value.json()
         assert value['scope_window'] == {'start': '2026-12-01', 'end': '2027-01-01'}
         assert value['checked'] and value['complete'] is False
-        expect(page.locator('.auto-readiness')).to_contain_text('whether every place can be filled, are not checked here')
+        row = page.get_by_role('list', name='Rota-wide shortfalls')
+        expect(row).to_contain_text('Too few sessions for a personal minimum')
+        expect(row).to_contain_text('Needs 2 duties · at most 1 possible')
+        expect(page.locator('.auto-readiness')).to_contain_text('This check cannot say whether every place can be filled.')
         assert h.detail(w) == before
         shot(page, 'december-recorded-facts-1440-light', full_page=False)
     finally:
