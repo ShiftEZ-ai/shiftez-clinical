@@ -321,13 +321,13 @@ function personAccess(ctx:Context,p:Row,mine:boolean):HTMLElement{
       card('Sign-in account',accounts.length?accounts.map(x=>x.username||x.display_name).join(', '):'None',
         accounts.length?[accounts.every(x=>x.disabled)?'disabled':'linked',...new Set(accounts.flatMap(x=>x.roles.map(r=>roleLabel(r).toLowerCase())))].join(' · '):'Not linked to a sign-in',accounts.length&&!accounts.every(x=>x.disabled)?'ok':''),
       card('Last sign-in',last?moment(ctx,last):'Never',latest?device(latest):'')));
-    const signOut=(r:Session)=>armed(button('Sign out',async()=>{await command('session.revoke',{reason:'Signed out from the person record'},r.id,r.revision);notify('Signed out of that device.');draw();},'secondary small',{'aria-label':`Sign out ${r.device_label||'this session'}`}),'Sign out?');
+    const signOut=(r:Session)=>armed(button('Sign out',async()=>{await command('session.revoke',{reason:'Signed out from the person record'},r.id,r.revision);notify('Signed out of that device.');draw();},'secondary small',{'aria-label':`Sign out ${r.device_label||'this session'}`}),'Sign out?',undefined,'session:'+r.id);
     const others=s.sessions.filter(r=>r.can_revoke&&!r.current),open=accounts.filter(x=>!x.disabled);
     // Someone else's record: one command per sign-in ends all its sessions. One's own: every other device (this one stays).
     const all=mine?(others.length?armed(button('Sign out other devices',async()=>{const r=await command<{ended:number}>('account.end_other_sessions',{reason:'Signed out of other devices'});
-        notify(`Signed out of ${r.ended===1?'1 other device':r.ended+' other devices'}.`);draw();},'secondary small'),'Sign out all?'):null)
+        notify(`Signed out of ${r.ended===1?'1 other device':r.ended+' other devices'}.`);draw();},'secondary small'),'Sign out all?',undefined,'other-sessions:'+p.id):null)
       :open.length&&s.sessions.some(r=>r.active)?armed(button('Sign out everywhere',async()=>{let ended=0;for(const x of open)ended+=(await command<{ended:number}>('account.end_sessions',{reason:'Signed out everywhere from the person record'},x.identity_id)).ended;
-        notify(`${isolate(fullNameOf(p))} was signed out everywhere (${ended===1?'1 session':ended+' sessions'}).`);draw();},'secondary small'),'Sign out everywhere?'):null;
+        notify(`${isolate(fullNameOf(p))} was signed out everywhere (${ended===1?'1 session':ended+' sessions'}).`);draw();},'secondary small'),'Sign out everywhere?',undefined,'all-sessions:'+p.id):null;
     const status=(r:Session)=>r.current?`This device${r.expires_at===null?' · No automatic expiry':''}`:r.active?(r.expires_at===null?'No automatic expiry':`Expires in ${length(Date.parse(r.expires_at)-Date.now())}`):r.revoked?'Signed out':'Expired';
     t.append(el('section',{class:'ph-section pr-card'},el('div',{class:'ph-head'},el('h3',{},'Sessions and devices'),all),
       s.sessions.length?dataTable<Session>({id:'person-sessions',noun:['session','sessions'],rows:s.sessions,rowId:r=>r.id,toolbar:false,resultScope:()=>p.id,defaults:{wrap:['device']},
