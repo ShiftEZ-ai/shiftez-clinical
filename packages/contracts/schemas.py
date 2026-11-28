@@ -11082,3 +11082,523 @@ class PersonPropertiesInput(Schema):
 
 
 DisplaySettingsInput.model_rebuild()
+
+# Read projections describe the JSON already sent by the API. Preserve stored text and timestamp spellings.
+class ReadProjection(Schema):
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+
+class ReadRecord(ReadProjection):
+    id: str
+    revision: int
+    created_at: str
+
+
+class DepartmentReadRecord(ReadRecord):
+    department_id: str
+
+
+class CalendarPerson(ReadProjection):
+    id: str
+    display_name: str
+
+
+class CalendarService(ReadProjection):
+    id: str
+    name: str
+    mode: str
+
+
+class ScheduleReadLeave(WhyLeave):
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+
+class ScheduleReadOverlap(SeriesOverlapConflict):
+    model_config = ConfigDict(str_strip_whitespace=False)
+    start: str
+    end: str
+    leave: ScheduleReadLeave | None = None
+
+
+class CalendarSession(ReadProjection):
+    shift_id: str
+    source_id: str
+    state: str
+    label: str
+    start: str
+    end: str
+    location_id: str
+    location_name: str
+    services: list[CalendarService]
+    assigned_people: int
+    cancelled: bool
+    cancellation_reason: str | None
+    closed: bool | None
+    closure_reason: str | None
+    double_booking_conflicts: list[ScheduleReadOverlap] = Field(default_factory=list)
+
+
+class CalendarEvent(ReadProjection):
+    id: str
+    person_id: str
+    label: str
+    start: str
+    end: str
+    state: str
+
+
+class CalendarDuty(CalendarEvent):
+    kind: Literal['duty']
+    colour: str
+    source_id: str
+    shift_id: str
+    service_ids: list[str]
+    location_id: str
+    location_name: str
+    services: list[CalendarService]
+    participation: str
+    supervisor_person_id: str | None
+    rank: str
+    trainee_ids: list[str]
+    supervisor_not_on_session: bool
+    pair_ranks: dict[str, str]
+    team_lead: bool
+    overtime: bool
+
+
+class CalendarRotation(CalendarEvent):
+    kind: Literal['rotation']
+
+
+class CalendarAvailability(CalendarEvent):
+    kind: Literal['availability']
+    counts_as_unavailable: bool
+    leave_type_id: str | None = None
+    leave_type_name: str | None = None
+    absence_reason: str | None = None
+    note: str | None = None
+    document_reference: str | None = None
+    leave: ScheduleReadLeave | None = None
+
+
+class CalendarProgrammeEntry(DepartmentReadRecord):
+    programme_id: str
+    programme_name: str
+    name: str
+    description: str
+    kind: str
+    starts_on: str
+    ends_on: str
+    confirmed_members: int | None = None
+
+
+CalendarReadEvent = Annotated[CalendarDuty | CalendarRotation | CalendarAvailability, Field(discriminator='kind')]
+
+
+class CalendarResponse(ReadProjection):
+    starts_on: str
+    ends_on: str
+    timezone: str
+    people: list[CalendarPerson]
+    pair_names: dict[str, str]
+    events: list[CalendarReadEvent]
+    sessions: list[CalendarSession]
+    date_set_markers: dict[str, list[DateSetMarker]]
+    programme_calendar: list[CalendarProgrammeEntry]
+    team_view: bool
+    input_revision: int
+    availability_revision: int
+
+
+class PublishedScheduleSource(ReadProjection):
+    id: str
+    kind: Literal['published']
+    workspace_id: str
+    name: str
+    status: Literal['published']
+    starts_on: str
+    ends_on: str
+    in_force_until: str
+    sequence: int
+    checked: bool
+    base_publication_id: str | None
+    replaces_publication_id: str | None
+    operational: PublishedOperationalSummary
+
+
+class ScheduleContactLabel(CalendarPerson):
+    short_code: str
+    pager: str | None = None
+
+
+class SchedulePlace(ReadProjection):
+    id: str
+    name: str
+
+
+class ScheduleReadSegment(ReadProjection):
+    start: str
+    end: str
+
+
+class PublishedScheduleParticipant(ReadRecord):
+    shift_id: str
+    person_id: str
+    start: str
+    end: str
+    participation: Literal['staff', 'trainee', 'supervisor']
+    overtime: bool
+    fixed: bool
+    source: str | None
+    source_run_id: str | None
+    source_actor_id: str | None
+    source_at: str | None
+    override_reason: str | None
+    supervisor_person_id: str | None
+    team_lead: bool
+    segments: list[ScheduleReadSegment]
+    rank: str
+
+
+class PublishedScheduleStaffing(ReadProjection):
+    on_duty: int
+    places_open: int
+
+
+class PublishedScheduleShift(ReadRecord):
+    workspace_id: str
+    publication_id: str
+    lineage_id: str | None
+    assignment_type_id: str
+    type_revision: int
+    type_snapshot: dict[str, Any]
+    location_id: str
+    start: str
+    end: str
+    cancelled: bool
+    cancellation_reason: str | None
+    locked: bool
+    attributes: dict[str, Any]
+    series_id: str | None
+    series_revision: int | None
+    series_snapshot: dict[str, Any] | None = None
+    occurrence_on: str | None
+    series_modified: bool
+    template_skipped: list[dict[str, Any]] | None = None
+    service_ids: list[str]
+    participants: list[PublishedScheduleParticipant]
+    closed: bool | None = None
+    closure_reason: str | None = None
+    series_state_frozen: bool = False
+    usual_assignee_unavailability: list[dict[str, Any]] | None = None
+    double_booking_conflicts: list[ScheduleReadOverlap] = Field(default_factory=list)
+    absence_reports: list[PublishedAbsenceReport]
+    staffing: PublishedScheduleStaffing | None = None
+
+
+class ScheduleWindow(ReadProjection):
+    starts_on: str
+    ends_on: str
+    timezone: str
+    sources: list[PublishedScheduleSource]
+    shifts: list[PublishedScheduleShift]
+    coverage: list[CoverageInterval]
+    # Issued findings retain the rule-specific evidence saved at publication.
+    findings: list[dict[str, Any]]
+    events: list[ScheduleEventRow]
+    summary: PublishedScheduleSummary | None = None
+    people: dict[str, ScheduleContactLabel]
+    locations: dict[str, SchedulePlace]
+    services: dict[str, SchedulePlace]
+    date_set_markers: dict[str, list[DateSetMarker]]
+
+
+class DepartmentContentReceipt(ReadRecord):
+    content_id: str | None
+    event_occurrence_id: str | None
+    identity_id: str
+    person_id: str | None
+    delivered_at: str | None
+    read_at: str | None
+    acknowledged_at: str | None
+    response: str | None
+    responded_at: str | None
+
+
+class DepartmentContentCounts(ReadProjection):
+    audience: int
+    delivered: int
+    read: int
+    acknowledged: int
+
+
+class DepartmentContentItem(DepartmentReadRecord):
+    name: str
+    description: str
+    kind: Literal['announcement', 'link']
+    url: str
+    starts_on: str
+    ends_on: str | None
+    active: bool
+    audience: dict[str, Any]
+    importance: Literal['normal', 'important', 'must_acknowledge']
+    sent_outbox_id: str | None
+    receipts_checked_on: str | None
+    last_reminded_at: str | None
+    reminder_empty_checked_on: str | None
+    also_email: bool | None
+    email_sender: str | None
+    email_sender_identity_id: str | None
+    receipt: DepartmentContentReceipt | None
+    acknowledgement_required: bool
+    receipts: DepartmentContentCounts | None = None
+
+
+class DepartmentContentPage(ReadProjection):
+    items: list[DepartmentContentItem]
+    page: int
+    page_size: int
+    total: int
+
+
+class DirectoryContact(VisibleContact):
+    model_config = ConfigDict(str_strip_whitespace=False)
+
+
+class DirectoryPerson(CalendarPerson):
+    given_name: str
+    family_name: str
+    title: str
+    directory_section: str
+    directory_order: int
+    contacts: list[DirectoryContact] | None = None
+    work_phone: str | None = None
+    work_extension: str | None = None
+    work_email: str | None = None
+    pager: str | None = None
+
+
+class DirectoryResponse(ReadProjection):
+    people: list[DirectoryPerson]
+
+
+class RequestImpact(ReadProjection):
+    day: str
+    type: str
+    publication_id: str
+
+
+class RequestImpactDuty(ReadProjection):
+    assignment_id: str
+    day: str
+    start: str
+    end: str
+    type: str
+    status: str
+    publication_id: str | None = None
+    workspace_id: str | None = None
+    rota_name: str | None = None
+
+
+class RequestScheduleImpact(ReadProjection):
+    count: int
+    published_count: int
+    draft_count: int
+    duties: list[RequestImpactDuty]
+
+
+class RequestListItem(ReadRecord):
+    department_id: str
+    person_id: str
+    person_name: str
+    stage: str
+    status: str | None = None
+    decided_at: str | None
+    self_approved: bool = False
+
+
+class RequestWithImpact(RequestListItem):
+    impact: list[RequestImpact] = Field(default_factory=list)
+    impact_count: int = 0
+    schedule_impact: RequestScheduleImpact | None = None
+
+
+class PersonRequestItem(RequestWithImpact):
+    source: Literal['request']
+    type: Literal['leave', 'other']
+    kind: str
+    leave_type_id: str | None
+    leave_type_name: str
+    counts_as_unavailable: bool
+    overtime: dict[str, Any] | None
+    start: str
+    end: str
+    private_reason: str | None = None
+    created_by: str
+    decided_by: str | None
+    decision_reason: str | None
+    workspace_id: str | None = None
+    rotation_id: str | None
+    details: dict[str, Any] | None
+    rota_status: str | None
+    can_decide: bool
+    record_id: str | None = None
+    record_revision: int | None = None
+    record_retracted: bool | None = None
+    can_withdraw_approved_leave: bool | None = None
+    summary: str | None = None
+    absence_progress: str | None = None
+    assignment_id: str | None = None
+    absence_category: str | None = None
+    note: str | None = None
+
+
+class RecordedAvailabilityItem(RequestWithImpact):
+    source: Literal['availability']
+    type: Literal['leave', 'weekly']
+    kind: str
+    start: str
+    end: str
+    leave_type: str
+    leave_type_id: str | None
+    leave_type_name: str
+    manual_type_override: bool
+    counts_as_unavailable: bool
+    private_reason: str | None = None
+    recorded_by: str
+    created_by: str
+    request_id: str | None
+    retracted: bool
+
+
+class WeeklyRequestItem(RequestWithImpact):
+    source: Literal['pattern']
+    type: Literal['weekly']
+    weekdays: list[int]
+    start_time: str
+    end_time: str
+    starts_on: str
+    ends_on: str | None
+    note: str
+    created_by: str
+    decided_by: str | None
+    can_decide: bool
+
+
+class WishRequestItem(RequestListItem):
+    source: Literal['wish']
+    type: Literal['wish']
+    kind: str
+    first_day: str
+    last_day: str
+    assignment_type_id: str | None
+    duty_type: str
+    limit: int | None
+    weekend_start: int | None
+    weekend_days: int | None
+    points: int
+    repeat: dict[str, Any] | None
+    note: str
+    outcome: str | None
+    outcome_reasons: list[dict[str, Any]] | None
+    publication_id: str | None
+    created_by: str
+    locked: bool | None = None
+
+
+class SwapRequestDuty(ReadProjection):
+    assignment_id: str
+    person_id: str
+    start: str
+    end: str
+    type: str
+    location: str
+    publication_id: str
+    person: str | None = None
+    participation: str | None = None
+    overtime: bool | None = None
+    segments: list[ScheduleReadSegment] = Field(default_factory=list)
+    publication_sequence: int | None = None
+
+
+class SwapRequestItem(RequestListItem):
+    source: Literal['swap']
+    type: Literal['swap']
+    department_id: str | None = None
+    kind: str
+    open_offer: bool
+    publication_id: str
+    proposer_id: str | None = None
+    proposer_person_id: str
+    recipient_person_id: str | None
+    recipient_id: str | None = None
+    first_assignment_id: str | None = None
+    second_assignment_id: str | None
+    expires_at: str
+    reason: str | None = None
+    counteroffered_at: str | None = None
+    confirmed_at: str | None = None
+    workspace_id: str | None = None
+    result_publication_id: str | None = None
+    reopened_from_id: str | None = None
+    effective_status: str
+    proposer_name: str
+    recipient_name: str | None
+    offered_assignment: SwapRequestDuty | None
+    counteroffered_assignment: SwapRequestDuty | None
+    audience_pending: bool
+    audience_failed: bool | None = None
+    audience_count: int | None = None
+    no_eligible_recipients: bool | None = None
+    no_eligible_recipients_reason: str | None = None
+    delivery_status: str | None = None
+
+
+class SchedulingFactRequestItem(SchedulingFactApproval):
+    decided_at: str | None
+    self_approved: bool = False
+
+
+class RequestWishPoints(ReadProjection):
+    budget_points: int
+    period: str
+    start: str = ''
+    end: str = ''
+    used: int = 0
+    multiplier: float = 1
+
+
+class RequestListCounts(ReadProjection):
+    to_decide: int
+    stages: dict[str, int]
+
+
+RequestReadItem = Annotated[
+    PersonRequestItem | RecordedAvailabilityItem | WeeklyRequestItem | WishRequestItem | SwapRequestItem | SchedulingFactRequestItem,
+    Field(discriminator='source'),
+]
+
+
+class RequestListPage(ReadProjection):
+    items: list[RequestReadItem]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    counts: RequestListCounts
+    wishes: RequestWishPoints | None
+
+
+class RequestHistoryItem(ReadProjection):
+    action: str
+    at: str
+    actor: str
+    reason: str
+    self_approved: bool = False
+    leave_balance_overdrawn: bool = False
+
+
+class RequestListDetail(ReadProjection):
+    item: RequestReadItem
+    history: list[RequestHistoryItem]
+    fact: dict[str, Any] | None = None

@@ -90760,6 +90760,7600 @@
     "title": "PublicationAudiencePreview",
     "type": "object"
   },
+  "CalendarResponse": {
+    "$defs": {
+      "CalendarAvailability": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "kind": {
+            "const": "availability",
+            "title": "Kind",
+            "type": "string"
+          },
+          "counts_as_unavailable": {
+            "title": "Counts As Unavailable",
+            "type": "boolean"
+          },
+          "leave_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Leave Type Id"
+          },
+          "leave_type_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Leave Type Name"
+          },
+          "absence_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Absence Reason"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "document_reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Reference"
+          },
+          "leave": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ScheduleReadLeave"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "person_id",
+          "label",
+          "start",
+          "end",
+          "state",
+          "kind",
+          "counts_as_unavailable"
+        ],
+        "title": "CalendarAvailability",
+        "type": "object"
+      },
+      "CalendarDuty": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "kind": {
+            "const": "duty",
+            "title": "Kind",
+            "type": "string"
+          },
+          "colour": {
+            "title": "Colour",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "service_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Service Ids",
+            "type": "array"
+          },
+          "location_id": {
+            "title": "Location Id",
+            "type": "string"
+          },
+          "location_name": {
+            "title": "Location Name",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/$defs/CalendarService"
+            },
+            "title": "Services",
+            "type": "array"
+          },
+          "participation": {
+            "title": "Participation",
+            "type": "string"
+          },
+          "supervisor_person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supervisor Person Id"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "string"
+          },
+          "trainee_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trainee Ids",
+            "type": "array"
+          },
+          "supervisor_not_on_session": {
+            "title": "Supervisor Not On Session",
+            "type": "boolean"
+          },
+          "pair_ranks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Pair Ranks",
+            "type": "object"
+          },
+          "team_lead": {
+            "title": "Team Lead",
+            "type": "boolean"
+          },
+          "overtime": {
+            "title": "Overtime",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "person_id",
+          "label",
+          "start",
+          "end",
+          "state",
+          "kind",
+          "colour",
+          "source_id",
+          "shift_id",
+          "service_ids",
+          "location_id",
+          "location_name",
+          "services",
+          "participation",
+          "supervisor_person_id",
+          "rank",
+          "trainee_ids",
+          "supervisor_not_on_session",
+          "pair_ranks",
+          "team_lead",
+          "overtime"
+        ],
+        "title": "CalendarDuty",
+        "type": "object"
+      },
+      "CalendarPerson": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name"
+        ],
+        "title": "CalendarPerson",
+        "type": "object"
+      },
+      "CalendarProgrammeEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "programme_id": {
+            "title": "Programme Id",
+            "type": "string"
+          },
+          "programme_name": {
+            "title": "Programme Name",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "starts_on": {
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "title": "Ends On",
+            "type": "string"
+          },
+          "confirmed_members": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confirmed Members"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "programme_id",
+          "programme_name",
+          "name",
+          "description",
+          "kind",
+          "starts_on",
+          "ends_on"
+        ],
+        "title": "CalendarProgrammeEntry",
+        "type": "object"
+      },
+      "CalendarRotation": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "kind": {
+            "const": "rotation",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "person_id",
+          "label",
+          "start",
+          "end",
+          "state",
+          "kind"
+        ],
+        "title": "CalendarRotation",
+        "type": "object"
+      },
+      "CalendarService": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "mode": {
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "mode"
+        ],
+        "title": "CalendarService",
+        "type": "object"
+      },
+      "CalendarSession": {
+        "additionalProperties": false,
+        "properties": {
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "location_id": {
+            "title": "Location Id",
+            "type": "string"
+          },
+          "location_name": {
+            "title": "Location Name",
+            "type": "string"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/$defs/CalendarService"
+            },
+            "title": "Services",
+            "type": "array"
+          },
+          "assigned_people": {
+            "title": "Assigned People",
+            "type": "integer"
+          },
+          "cancelled": {
+            "title": "Cancelled",
+            "type": "boolean"
+          },
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
+          "closed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed"
+          },
+          "closure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closure Reason"
+          },
+          "double_booking_conflicts": {
+            "items": {
+              "$ref": "#/$defs/ScheduleReadOverlap"
+            },
+            "title": "Double Booking Conflicts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "shift_id",
+          "source_id",
+          "state",
+          "label",
+          "start",
+          "end",
+          "location_id",
+          "location_name",
+          "services",
+          "assigned_people",
+          "cancelled",
+          "cancellation_reason",
+          "closed",
+          "closure_reason"
+        ],
+        "title": "CalendarSession",
+        "type": "object"
+      },
+      "DateSetMarker": {
+        "additionalProperties": false,
+        "properties": {
+          "set_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Set Id",
+            "type": "string"
+          },
+          "set_name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Set Name",
+            "type": "string"
+          },
+          "entry_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "set_id",
+          "set_name",
+          "entry_id",
+          "name"
+        ],
+        "title": "DateSetMarker",
+        "type": "object"
+      },
+      "OverlapCancelAction": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "enum": [
+              "Cancel this occurrence",
+              "Cancel the other occurrence"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "side": {
+            "enum": [
+              "this",
+              "other"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "shift.action",
+              "series.occurrence.cancel"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Id"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "label",
+          "side",
+          "kind",
+          "payload"
+        ],
+        "title": "OverlapCancelAction",
+        "type": "object"
+      },
+      "ScheduleReadLeave": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "required": [
+          "type",
+          "starts_on",
+          "ends_on"
+        ],
+        "title": "ScheduleReadLeave",
+        "type": "object"
+      },
+      "ScheduleReadOverlap": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "TIME_OVERLAP",
+              "UNAVAILABLE",
+              "EXTERNAL_ROTATION"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "series_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Series Id"
+          },
+          "occurrence_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrence On"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "clinic_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Clinic Ids",
+            "type": "array"
+          },
+          "clinic_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Clinic Names",
+            "type": "array"
+          },
+          "other_shift_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Shift Id"
+          },
+          "other_workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Workspace Id"
+          },
+          "other_series_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Series Id"
+          },
+          "other_occurrence_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Occurrence On"
+          },
+          "other_session_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Session Name"
+          },
+          "other_clinic_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Other Clinic Ids",
+            "type": "array"
+          },
+          "other_clinic_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Other Clinic Names",
+            "type": "array"
+          },
+          "availability_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Availability Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "leave": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ScheduleReadLeave"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cancel_actions": {
+            "items": {
+              "$ref": "#/$defs/OverlapCancelAction"
+            },
+            "title": "Cancel Actions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "date",
+          "start",
+          "end",
+          "person_id",
+          "person_name",
+          "shift_id",
+          "session_name",
+          "clinic_ids",
+          "clinic_names"
+        ],
+        "title": "ScheduleReadOverlap",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "starts_on": {
+        "title": "Starts On",
+        "type": "string"
+      },
+      "ends_on": {
+        "title": "Ends On",
+        "type": "string"
+      },
+      "timezone": {
+        "title": "Timezone",
+        "type": "string"
+      },
+      "people": {
+        "items": {
+          "$ref": "#/$defs/CalendarPerson"
+        },
+        "title": "People",
+        "type": "array"
+      },
+      "pair_names": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "title": "Pair Names",
+        "type": "object"
+      },
+      "events": {
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "availability": "#/$defs/CalendarAvailability",
+              "duty": "#/$defs/CalendarDuty",
+              "rotation": "#/$defs/CalendarRotation"
+            },
+            "propertyName": "kind"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CalendarDuty"
+            },
+            {
+              "$ref": "#/$defs/CalendarRotation"
+            },
+            {
+              "$ref": "#/$defs/CalendarAvailability"
+            }
+          ]
+        },
+        "title": "Events",
+        "type": "array"
+      },
+      "sessions": {
+        "items": {
+          "$ref": "#/$defs/CalendarSession"
+        },
+        "title": "Sessions",
+        "type": "array"
+      },
+      "date_set_markers": {
+        "additionalProperties": {
+          "items": {
+            "$ref": "#/$defs/DateSetMarker"
+          },
+          "type": "array"
+        },
+        "title": "Date Set Markers",
+        "type": "object"
+      },
+      "programme_calendar": {
+        "items": {
+          "$ref": "#/$defs/CalendarProgrammeEntry"
+        },
+        "title": "Programme Calendar",
+        "type": "array"
+      },
+      "team_view": {
+        "title": "Team View",
+        "type": "boolean"
+      },
+      "input_revision": {
+        "title": "Input Revision",
+        "type": "integer"
+      },
+      "availability_revision": {
+        "title": "Availability Revision",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "starts_on",
+      "ends_on",
+      "timezone",
+      "people",
+      "pair_names",
+      "events",
+      "sessions",
+      "date_set_markers",
+      "programme_calendar",
+      "team_view",
+      "input_revision",
+      "availability_revision"
+    ],
+    "title": "CalendarResponse",
+    "type": "object"
+  },
+  "ScheduleWindow": {
+    "$defs": {
+      "CoverageInterval": {
+        "additionalProperties": true,
+        "description": "Basic headcount remains evidence; places_* includes scoped/qualified-cover shortages.",
+        "properties": {
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "places_needed": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Places Needed"
+          },
+          "places_filled": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Places Filled"
+          },
+          "places_open": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Places Open"
+          }
+        },
+        "required": [
+          "shift_id",
+          "status"
+        ],
+        "title": "CoverageInterval",
+        "type": "object"
+      },
+      "DateSetMarker": {
+        "additionalProperties": false,
+        "properties": {
+          "set_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Set Id",
+            "type": "string"
+          },
+          "set_name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Set Name",
+            "type": "string"
+          },
+          "entry_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "set_id",
+          "set_name",
+          "entry_id",
+          "name"
+        ],
+        "title": "DateSetMarker",
+        "type": "object"
+      },
+      "OverlapCancelAction": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "enum": [
+              "Cancel this occurrence",
+              "Cancel the other occurrence"
+            ],
+            "title": "Label",
+            "type": "string"
+          },
+          "side": {
+            "enum": [
+              "this",
+              "other"
+            ],
+            "title": "Side",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "shift.action",
+              "series.occurrence.cancel"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "target_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Target Id"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "label",
+          "side",
+          "kind",
+          "payload"
+        ],
+        "title": "OverlapCancelAction",
+        "type": "object"
+      },
+      "PublishedAbsenceReport": {
+        "additionalProperties": false,
+        "description": "A team-safe absence marker; the private report reason never crosses this boundary.",
+        "properties": {
+          "request_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "assignment_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "submitted",
+              "approved"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "person_id",
+          "assignment_id",
+          "status"
+        ],
+        "title": "PublishedAbsenceReport",
+        "type": "object"
+      },
+      "PublishedOperationalAction": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "const": "amend_publication",
+            "default": "amend_publication",
+            "title": "Key",
+            "type": "string"
+          },
+          "publication_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "amendment_workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Amendment Workspace Id"
+          },
+          "amendment_shift_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Amendment Shift Id"
+          },
+          "amendment_shift_state": {
+            "enum": [
+              "not_created",
+              "matched",
+              "ambiguous",
+              "changed_or_missing"
+            ],
+            "title": "Amendment Shift State",
+            "type": "string"
+          },
+          "shift_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "publication_id",
+          "workspace_id",
+          "amendment_shift_state",
+          "shift_id",
+          "date"
+        ],
+        "title": "PublishedOperationalAction",
+        "type": "object"
+      },
+      "PublishedOperationalSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "const": "current_absence_overlaps",
+            "default": "current_absence_overlaps",
+            "title": "Basis",
+            "type": "string"
+          },
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "conflicting_assignments": {
+            "minimum": 0,
+            "title": "Conflicting Assignments",
+            "type": "integer"
+          },
+          "affected_sessions": {
+            "minimum": 0,
+            "title": "Affected Sessions",
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/$defs/PublishedOperationalWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "as_of",
+          "fingerprint",
+          "starts_on",
+          "ends_on",
+          "conflicting_assignments",
+          "affected_sessions",
+          "warnings"
+        ],
+        "title": "PublishedOperationalSummary",
+        "type": "object"
+      },
+      "PublishedOperationalWarning": {
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "publication_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "shift_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "assignment_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PublishedOperationalAction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "key",
+          "publication_id",
+          "workspace_id",
+          "shift_id",
+          "assignment_id",
+          "person_id",
+          "start",
+          "end"
+        ],
+        "title": "PublishedOperationalWarning",
+        "type": "object"
+      },
+      "PublishedScheduleParticipant": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "participation": {
+            "enum": [
+              "staff",
+              "trainee",
+              "supervisor"
+            ],
+            "title": "Participation",
+            "type": "string"
+          },
+          "overtime": {
+            "title": "Overtime",
+            "type": "boolean"
+          },
+          "fixed": {
+            "title": "Fixed",
+            "type": "boolean"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "source_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Run Id"
+          },
+          "source_actor_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Actor Id"
+          },
+          "source_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source At"
+          },
+          "override_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Override Reason"
+          },
+          "supervisor_person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supervisor Person Id"
+          },
+          "team_lead": {
+            "title": "Team Lead",
+            "type": "boolean"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/$defs/ScheduleReadSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "shift_id",
+          "person_id",
+          "start",
+          "end",
+          "participation",
+          "overtime",
+          "fixed",
+          "source",
+          "source_run_id",
+          "source_actor_id",
+          "source_at",
+          "override_reason",
+          "supervisor_person_id",
+          "team_lead",
+          "segments",
+          "rank"
+        ],
+        "title": "PublishedScheduleParticipant",
+        "type": "object"
+      },
+      "PublishedScheduleShift": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "lineage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineage Id"
+          },
+          "assignment_type_id": {
+            "title": "Assignment Type Id",
+            "type": "string"
+          },
+          "type_revision": {
+            "title": "Type Revision",
+            "type": "integer"
+          },
+          "type_snapshot": {
+            "additionalProperties": true,
+            "title": "Type Snapshot",
+            "type": "object"
+          },
+          "location_id": {
+            "title": "Location Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "cancelled": {
+            "title": "Cancelled",
+            "type": "boolean"
+          },
+          "cancellation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancellation Reason"
+          },
+          "locked": {
+            "title": "Locked",
+            "type": "boolean"
+          },
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "series_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series Id"
+          },
+          "series_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series Revision"
+          },
+          "series_snapshot": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Series Snapshot"
+          },
+          "occurrence_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurrence On"
+          },
+          "series_modified": {
+            "title": "Series Modified",
+            "type": "boolean"
+          },
+          "template_skipped": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Template Skipped"
+          },
+          "service_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Service Ids",
+            "type": "array"
+          },
+          "participants": {
+            "items": {
+              "$ref": "#/$defs/PublishedScheduleParticipant"
+            },
+            "title": "Participants",
+            "type": "array"
+          },
+          "closed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closed"
+          },
+          "closure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closure Reason"
+          },
+          "series_state_frozen": {
+            "default": false,
+            "title": "Series State Frozen",
+            "type": "boolean"
+          },
+          "usual_assignee_unavailability": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Usual Assignee Unavailability"
+          },
+          "double_booking_conflicts": {
+            "items": {
+              "$ref": "#/$defs/ScheduleReadOverlap"
+            },
+            "title": "Double Booking Conflicts",
+            "type": "array"
+          },
+          "absence_reports": {
+            "items": {
+              "$ref": "#/$defs/PublishedAbsenceReport"
+            },
+            "title": "Absence Reports",
+            "type": "array"
+          },
+          "staffing": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PublishedScheduleStaffing"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "workspace_id",
+          "publication_id",
+          "lineage_id",
+          "assignment_type_id",
+          "type_revision",
+          "type_snapshot",
+          "location_id",
+          "start",
+          "end",
+          "cancelled",
+          "cancellation_reason",
+          "locked",
+          "attributes",
+          "series_id",
+          "series_revision",
+          "occurrence_on",
+          "series_modified",
+          "service_ids",
+          "participants",
+          "absence_reports"
+        ],
+        "title": "PublishedScheduleShift",
+        "type": "object"
+      },
+      "PublishedScheduleSource": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "published",
+            "title": "Kind",
+            "type": "string"
+          },
+          "workspace_id": {
+            "title": "Workspace Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "status": {
+            "const": "published",
+            "title": "Status",
+            "type": "string"
+          },
+          "starts_on": {
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "title": "Ends On",
+            "type": "string"
+          },
+          "in_force_until": {
+            "title": "In Force Until",
+            "type": "string"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "checked": {
+            "title": "Checked",
+            "type": "boolean"
+          },
+          "base_publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Publication Id"
+          },
+          "replaces_publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replaces Publication Id"
+          },
+          "operational": {
+            "$ref": "#/$defs/PublishedOperationalSummary"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "workspace_id",
+          "name",
+          "status",
+          "starts_on",
+          "ends_on",
+          "in_force_until",
+          "sequence",
+          "checked",
+          "base_publication_id",
+          "replaces_publication_id",
+          "operational"
+        ],
+        "title": "PublishedScheduleSource",
+        "type": "object"
+      },
+      "PublishedScheduleStaffing": {
+        "additionalProperties": false,
+        "properties": {
+          "on_duty": {
+            "title": "On Duty",
+            "type": "integer"
+          },
+          "places_open": {
+            "title": "Places Open",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "on_duty",
+          "places_open"
+        ],
+        "title": "PublishedScheduleStaffing",
+        "type": "object"
+      },
+      "PublishedScheduleSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "sessions_with_gaps": {
+            "minimum": 0,
+            "title": "Sessions With Gaps",
+            "type": "integer"
+          },
+          "blocking": {
+            "minimum": 0,
+            "title": "Blocking",
+            "type": "integer"
+          },
+          "advisory": {
+            "minimum": 0,
+            "title": "Advisory",
+            "type": "integer"
+          },
+          "extra_cover_sessions": {
+            "minimum": 0,
+            "title": "Extra Cover Sessions",
+            "type": "integer"
+          },
+          "must": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Must",
+            "type": "integer"
+          },
+          "could": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Could",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sessions_with_gaps",
+          "blocking",
+          "advisory",
+          "extra_cover_sessions"
+        ],
+        "title": "PublishedScheduleSummary",
+        "type": "object"
+      },
+      "ScheduleContactLabel": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "short_code": {
+            "title": "Short Code",
+            "type": "string"
+          },
+          "pager": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pager"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "short_code"
+        ],
+        "title": "ScheduleContactLabel",
+        "type": "object"
+      },
+      "ScheduleEventRow": {
+        "additionalProperties": false,
+        "description": "Schedule event layer with viewer audience membership; never contributes duties, cover or workload.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type_id": {
+            "title": "Event Type Id",
+            "type": "string"
+          },
+          "heading": {
+            "title": "Heading",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "in_person",
+              "online",
+              "hybrid"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "location_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location Id"
+          },
+          "place": {
+            "title": "Place",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "attendance": {
+            "enum": [
+              "optional",
+              "expected",
+              "must_acknowledge"
+            ],
+            "title": "Attendance",
+            "type": "string"
+          },
+          "cancelled": {
+            "title": "Cancelled",
+            "type": "boolean"
+          },
+          "in_audience": {
+            "title": "In Audience",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "event_id",
+          "event_type_id",
+          "heading",
+          "description",
+          "start",
+          "end",
+          "format",
+          "location_id",
+          "place",
+          "url",
+          "attendance",
+          "cancelled",
+          "in_audience"
+        ],
+        "title": "ScheduleEventRow",
+        "type": "object"
+      },
+      "SchedulePlace": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ],
+        "title": "SchedulePlace",
+        "type": "object"
+      },
+      "ScheduleReadLeave": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "starts_on": {
+            "format": "date",
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "format": "date",
+            "title": "Ends On",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "required": [
+          "type",
+          "starts_on",
+          "ends_on"
+        ],
+        "title": "ScheduleReadLeave",
+        "type": "object"
+      },
+      "ScheduleReadOverlap": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "TIME_OVERLAP",
+              "UNAVAILABLE",
+              "EXTERNAL_ROTATION"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "date": {
+            "format": "date",
+            "title": "Date",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "person_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "shift_id": {
+            "title": "Shift Id",
+            "type": "string"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "series_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Series Id"
+          },
+          "occurrence_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrence On"
+          },
+          "session_name": {
+            "title": "Session Name",
+            "type": "string"
+          },
+          "clinic_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Clinic Ids",
+            "type": "array"
+          },
+          "clinic_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Clinic Names",
+            "type": "array"
+          },
+          "other_shift_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Shift Id"
+          },
+          "other_workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Workspace Id"
+          },
+          "other_series_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Series Id"
+          },
+          "other_occurrence_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Occurrence On"
+          },
+          "other_session_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Other Session Name"
+          },
+          "other_clinic_ids": {
+            "items": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "title": "Other Clinic Ids",
+            "type": "array"
+          },
+          "other_clinic_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Other Clinic Names",
+            "type": "array"
+          },
+          "availability_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Availability Id"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Label"
+          },
+          "leave": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ScheduleReadLeave"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cancel_actions": {
+            "items": {
+              "$ref": "#/$defs/OverlapCancelAction"
+            },
+            "title": "Cancel Actions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "code",
+          "date",
+          "start",
+          "end",
+          "person_id",
+          "person_name",
+          "shift_id",
+          "session_name",
+          "clinic_ids",
+          "clinic_names"
+        ],
+        "title": "ScheduleReadOverlap",
+        "type": "object"
+      },
+      "ScheduleReadSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ScheduleReadSegment",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "starts_on": {
+        "title": "Starts On",
+        "type": "string"
+      },
+      "ends_on": {
+        "title": "Ends On",
+        "type": "string"
+      },
+      "timezone": {
+        "title": "Timezone",
+        "type": "string"
+      },
+      "sources": {
+        "items": {
+          "$ref": "#/$defs/PublishedScheduleSource"
+        },
+        "title": "Sources",
+        "type": "array"
+      },
+      "shifts": {
+        "items": {
+          "$ref": "#/$defs/PublishedScheduleShift"
+        },
+        "title": "Shifts",
+        "type": "array"
+      },
+      "coverage": {
+        "items": {
+          "$ref": "#/$defs/CoverageInterval"
+        },
+        "title": "Coverage",
+        "type": "array"
+      },
+      "findings": {
+        "items": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "title": "Findings",
+        "type": "array"
+      },
+      "events": {
+        "items": {
+          "$ref": "#/$defs/ScheduleEventRow"
+        },
+        "title": "Events",
+        "type": "array"
+      },
+      "summary": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/PublishedScheduleSummary"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
+      "people": {
+        "additionalProperties": {
+          "$ref": "#/$defs/ScheduleContactLabel"
+        },
+        "title": "People",
+        "type": "object"
+      },
+      "locations": {
+        "additionalProperties": {
+          "$ref": "#/$defs/SchedulePlace"
+        },
+        "title": "Locations",
+        "type": "object"
+      },
+      "services": {
+        "additionalProperties": {
+          "$ref": "#/$defs/SchedulePlace"
+        },
+        "title": "Services",
+        "type": "object"
+      },
+      "date_set_markers": {
+        "additionalProperties": {
+          "items": {
+            "$ref": "#/$defs/DateSetMarker"
+          },
+          "type": "array"
+        },
+        "title": "Date Set Markers",
+        "type": "object"
+      }
+    },
+    "required": [
+      "starts_on",
+      "ends_on",
+      "timezone",
+      "sources",
+      "shifts",
+      "coverage",
+      "findings",
+      "events",
+      "people",
+      "locations",
+      "services",
+      "date_set_markers"
+    ],
+    "title": "ScheduleWindow",
+    "type": "object"
+  },
+  "DepartmentContentPage": {
+    "$defs": {
+      "DepartmentContentCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "audience": {
+            "title": "Audience",
+            "type": "integer"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "integer"
+          },
+          "read": {
+            "title": "Read",
+            "type": "integer"
+          },
+          "acknowledged": {
+            "title": "Acknowledged",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "audience",
+          "delivered",
+          "read",
+          "acknowledged"
+        ],
+        "title": "DepartmentContentCounts",
+        "type": "object"
+      },
+      "DepartmentContentItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "announcement",
+              "link"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "starts_on": {
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "audience": {
+            "additionalProperties": true,
+            "title": "Audience",
+            "type": "object"
+          },
+          "importance": {
+            "enum": [
+              "normal",
+              "important",
+              "must_acknowledge"
+            ],
+            "title": "Importance",
+            "type": "string"
+          },
+          "sent_outbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent Outbox Id"
+          },
+          "receipts_checked_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receipts Checked On"
+          },
+          "last_reminded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reminded At"
+          },
+          "reminder_empty_checked_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reminder Empty Checked On"
+          },
+          "also_email": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Also Email"
+          },
+          "email_sender": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Sender"
+          },
+          "email_sender_identity_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email Sender Identity Id"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DepartmentContentReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "acknowledgement_required": {
+            "title": "Acknowledgement Required",
+            "type": "boolean"
+          },
+          "receipts": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DepartmentContentCounts"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "name",
+          "description",
+          "kind",
+          "url",
+          "starts_on",
+          "ends_on",
+          "active",
+          "audience",
+          "importance",
+          "sent_outbox_id",
+          "receipts_checked_on",
+          "last_reminded_at",
+          "reminder_empty_checked_on",
+          "also_email",
+          "email_sender",
+          "email_sender_identity_id",
+          "receipt",
+          "acknowledgement_required"
+        ],
+        "title": "DepartmentContentItem",
+        "type": "object"
+      },
+      "DepartmentContentReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "content_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Id"
+          },
+          "event_occurrence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Occurrence Id"
+          },
+          "identity_id": {
+            "title": "Identity Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "read_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Read At"
+          },
+          "acknowledged_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledged At"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response"
+          },
+          "responded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Responded At"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "content_id",
+          "event_occurrence_id",
+          "identity_id",
+          "person_id",
+          "delivered_at",
+          "read_at",
+          "acknowledged_at",
+          "response",
+          "responded_at"
+        ],
+        "title": "DepartmentContentReceipt",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "$ref": "#/$defs/DepartmentContentItem"
+        },
+        "title": "Items",
+        "type": "array"
+      },
+      "page": {
+        "title": "Page",
+        "type": "integer"
+      },
+      "page_size": {
+        "title": "Page Size",
+        "type": "integer"
+      },
+      "total": {
+        "title": "Total",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "items",
+      "page",
+      "page_size",
+      "total"
+    ],
+    "title": "DepartmentContentPage",
+    "type": "object"
+  },
+  "RequestListPage": {
+    "$defs": {
+      "BalanceGoalPeriod": {
+        "additionalProperties": false,
+        "description": "Resolved BalanceGoal window, retaining its own period units and dates.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "rota",
+              "rolling",
+              "month",
+              "quarter",
+              "year",
+              "block",
+              "custom",
+              "since",
+              "all_history"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 366,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Days"
+          },
+          "months": {
+            "anyOf": [
+              {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Months"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ends On"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "BalanceGoalPeriod",
+        "type": "object"
+      },
+      "LineNumber": {
+        "additionalProperties": false,
+        "description": "One number of a line and how much it counts: mandatory (a constraint) or a preference's strength.\n`apply` (a rule without a number) has no value. Blank inherits: a number a line\nleaves out, or a level left null, comes from the broader line that sets it; any other number without a value is an\nexplicit None (it removes the broader line's number for this line's people).",
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "maximum": 1000000,
+                "minimum": -100000,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mandatory",
+                  "critical",
+                  "high",
+                  "medium",
+                  "low",
+                  "off"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "mandatory",
+            "title": "Level"
+          }
+        },
+        "title": "LineNumber",
+        "type": "object"
+      },
+      "PersonRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "impact": {
+            "items": {
+              "$ref": "#/$defs/RequestImpact"
+            },
+            "title": "Impact",
+            "type": "array"
+          },
+          "impact_count": {
+            "default": 0,
+            "title": "Impact Count",
+            "type": "integer"
+          },
+          "schedule_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequestScheduleImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "const": "request",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "leave",
+              "other"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "leave_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leave Type Id"
+          },
+          "leave_type_name": {
+            "title": "Leave Type Name",
+            "type": "string"
+          },
+          "counts_as_unavailable": {
+            "title": "Counts As Unavailable",
+            "type": "boolean"
+          },
+          "overtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overtime"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "private_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Private Reason"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "rotation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation Id"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "rota_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rota Status"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Id"
+          },
+          "record_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Revision"
+          },
+          "record_retracted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Retracted"
+          },
+          "can_withdraw_approved_leave": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Can Withdraw Approved Leave"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summary"
+          },
+          "absence_progress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Absence Progress"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Assignment Id"
+          },
+          "absence_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Absence Category"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "leave_type_id",
+          "leave_type_name",
+          "counts_as_unavailable",
+          "overtime",
+          "start",
+          "end",
+          "created_by",
+          "decided_by",
+          "decision_reason",
+          "rotation_id",
+          "details",
+          "rota_status",
+          "can_decide"
+        ],
+        "title": "PersonRequestItem",
+        "type": "object"
+      },
+      "RecordedAvailabilityItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "impact": {
+            "items": {
+              "$ref": "#/$defs/RequestImpact"
+            },
+            "title": "Impact",
+            "type": "array"
+          },
+          "impact_count": {
+            "default": 0,
+            "title": "Impact Count",
+            "type": "integer"
+          },
+          "schedule_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequestScheduleImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "const": "availability",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "leave",
+              "weekly"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "leave_type": {
+            "title": "Leave Type",
+            "type": "string"
+          },
+          "leave_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leave Type Id"
+          },
+          "leave_type_name": {
+            "title": "Leave Type Name",
+            "type": "string"
+          },
+          "manual_type_override": {
+            "title": "Manual Type Override",
+            "type": "boolean"
+          },
+          "counts_as_unavailable": {
+            "title": "Counts As Unavailable",
+            "type": "boolean"
+          },
+          "private_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Private Reason"
+          },
+          "recorded_by": {
+            "title": "Recorded By",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "retracted": {
+            "title": "Retracted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "start",
+          "end",
+          "leave_type",
+          "leave_type_id",
+          "leave_type_name",
+          "manual_type_override",
+          "counts_as_unavailable",
+          "recorded_by",
+          "created_by",
+          "request_id",
+          "retracted"
+        ],
+        "title": "RecordedAvailabilityItem",
+        "type": "object"
+      },
+      "RequestImpact": {
+        "additionalProperties": false,
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "type",
+          "publication_id"
+        ],
+        "title": "RequestImpact",
+        "type": "object"
+      },
+      "RequestImpactDuty": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Publication Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "rota_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rota Name"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "day",
+          "start",
+          "end",
+          "type",
+          "status"
+        ],
+        "title": "RequestImpactDuty",
+        "type": "object"
+      },
+      "RequestListCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "to_decide": {
+            "title": "To Decide",
+            "type": "integer"
+          },
+          "stages": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Stages",
+            "type": "object"
+          }
+        },
+        "required": [
+          "to_decide",
+          "stages"
+        ],
+        "title": "RequestListCounts",
+        "type": "object"
+      },
+      "RequestScheduleImpact": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "published_count": {
+            "title": "Published Count",
+            "type": "integer"
+          },
+          "draft_count": {
+            "title": "Draft Count",
+            "type": "integer"
+          },
+          "duties": {
+            "items": {
+              "$ref": "#/$defs/RequestImpactDuty"
+            },
+            "title": "Duties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "published_count",
+          "draft_count",
+          "duties"
+        ],
+        "title": "RequestScheduleImpact",
+        "type": "object"
+      },
+      "RequestWishPoints": {
+        "additionalProperties": false,
+        "properties": {
+          "budget_points": {
+            "title": "Budget Points",
+            "type": "integer"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "start": {
+            "default": "",
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "default": "",
+            "title": "End",
+            "type": "string"
+          },
+          "used": {
+            "default": 0,
+            "title": "Used",
+            "type": "integer"
+          },
+          "multiplier": {
+            "default": 1,
+            "title": "Multiplier",
+            "type": "number"
+          }
+        },
+        "required": [
+          "budget_points",
+          "period"
+        ],
+        "title": "RequestWishPoints",
+        "type": "object"
+      },
+      "ScheduleReadSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ScheduleReadSegment",
+        "type": "object"
+      },
+      "SchedulingFactRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source": {
+            "const": "scheduling_fact",
+            "default": "scheduling_fact",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "other",
+            "default": "other",
+            "title": "Type",
+            "type": "string"
+          },
+          "stage": {
+            "default": "waiting",
+            "enum": [
+              "waiting",
+              "approved",
+              "declined",
+              "withdrawn"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "default": "proposed",
+            "enum": [
+              "proposed",
+              "active",
+              "declined",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "workload",
+              "target",
+              "overtime_offer",
+              "protected_time"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "catalogue_id": {
+            "pattern": "^[a-z_]{1,40}$",
+            "title": "Catalogue Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "person_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Name"
+          },
+          "calendar_entry_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Entry Id"
+          },
+          "calendar_entry_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Entry Name"
+          },
+          "proposed_by": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "proposer_name": {
+            "title": "Proposer Name",
+            "type": "string"
+          },
+          "proposed_at": {
+            "format": "date-time",
+            "title": "Proposed At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact start date, inclusive.",
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact end date, exclusive; the summary says \"before\" this date.",
+            "title": "Ends On"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact start time; RuleLine defaults to 00:00.",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact end time; RuleLine defaults to 24:00.",
+            "title": "End Time"
+          },
+          "weekdays": {
+            "description": "Fact weekdays using Monday=0 through Sunday=6.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Weekdays",
+            "type": "array"
+          },
+          "numbers": {
+            "additionalProperties": {
+              "$ref": "#/$defs/LineNumber"
+            },
+            "description": "Fact line numbers keyed by catalogue number.",
+            "title": "Numbers",
+            "type": "object"
+          },
+          "measure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "duties",
+                  "session_units",
+                  "scheduled_hours",
+                  "reserved_hours",
+                  "workload_credit",
+                  "training_credit",
+                  "lead_turns"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved workload measure from the RuleLine.",
+            "title": "Measure"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkloadPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved workload counting period from the RuleLine."
+          },
+          "goal_measure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "duties",
+                  "hours",
+                  "session_units",
+                  "weekends",
+                  "overtime_duties",
+                  "overtime_hours",
+                  "lead_turns",
+                  "supervision",
+                  "pair_exposure",
+                  "workload"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved BalanceGoal metric for personal target facts.",
+            "title": "Goal Measure"
+          },
+          "goal_period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BalanceGoalPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved BalanceGoal period for personal target facts; dates retain the goal values."
+          },
+          "link_target": {
+            "title": "Link Target",
+            "type": "string"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "kind",
+          "title",
+          "catalogue_id",
+          "person_id",
+          "person_name",
+          "calendar_entry_id",
+          "calendar_entry_name",
+          "proposed_by",
+          "proposer_name",
+          "proposed_at",
+          "decided_at",
+          "starts_on",
+          "ends_on",
+          "start_time",
+          "end_time",
+          "weekdays",
+          "numbers",
+          "link_target",
+          "can_decide"
+        ],
+        "title": "SchedulingFactRequestItem",
+        "type": "object"
+      },
+      "SwapRequestDuty": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "person": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Person"
+          },
+          "participation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Participation"
+          },
+          "overtime": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Overtime"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/$defs/ScheduleReadSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "publication_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Publication Sequence"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "person_id",
+          "start",
+          "end",
+          "type",
+          "location",
+          "publication_id"
+        ],
+        "title": "SwapRequestDuty",
+        "type": "object"
+      },
+      "SwapRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Department Id"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "source": {
+            "const": "swap",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "swap",
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "open_offer": {
+            "title": "Open Offer",
+            "type": "boolean"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "proposer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposer Id"
+          },
+          "proposer_person_id": {
+            "title": "Proposer Person Id",
+            "type": "string"
+          },
+          "recipient_person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Person Id"
+          },
+          "recipient_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recipient Id"
+          },
+          "first_assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "First Assignment Id"
+          },
+          "second_assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Assignment Id"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "counteroffered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Counteroffered At"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confirmed At"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "result_publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Result Publication Id"
+          },
+          "reopened_from_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reopened From Id"
+          },
+          "effective_status": {
+            "title": "Effective Status",
+            "type": "string"
+          },
+          "proposer_name": {
+            "title": "Proposer Name",
+            "type": "string"
+          },
+          "recipient_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Name"
+          },
+          "offered_assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SwapRequestDuty"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counteroffered_assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SwapRequestDuty"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "audience_pending": {
+            "title": "Audience Pending",
+            "type": "boolean"
+          },
+          "audience_failed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audience Failed"
+          },
+          "audience_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audience Count"
+          },
+          "no_eligible_recipients": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "No Eligible Recipients"
+          },
+          "no_eligible_recipients_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "No Eligible Recipients Reason"
+          },
+          "delivery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delivery Status"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "open_offer",
+          "publication_id",
+          "proposer_person_id",
+          "recipient_person_id",
+          "second_assignment_id",
+          "expires_at",
+          "effective_status",
+          "proposer_name",
+          "recipient_name",
+          "offered_assignment",
+          "counteroffered_assignment",
+          "audience_pending"
+        ],
+        "title": "SwapRequestItem",
+        "type": "object"
+      },
+      "WeeklyRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "impact": {
+            "items": {
+              "$ref": "#/$defs/RequestImpact"
+            },
+            "title": "Impact",
+            "type": "array"
+          },
+          "impact_count": {
+            "default": 0,
+            "title": "Impact Count",
+            "type": "integer"
+          },
+          "schedule_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequestScheduleImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "const": "pattern",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "weekly",
+            "title": "Type",
+            "type": "string"
+          },
+          "weekdays": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Weekdays",
+            "type": "array"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "string"
+          },
+          "end_time": {
+            "title": "End Time",
+            "type": "string"
+          },
+          "starts_on": {
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "weekdays",
+          "start_time",
+          "end_time",
+          "starts_on",
+          "ends_on",
+          "note",
+          "created_by",
+          "decided_by",
+          "can_decide"
+        ],
+        "title": "WeeklyRequestItem",
+        "type": "object"
+      },
+      "WishRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "source": {
+            "const": "wish",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "wish",
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "first_day": {
+            "title": "First Day",
+            "type": "string"
+          },
+          "last_day": {
+            "title": "Last Day",
+            "type": "string"
+          },
+          "assignment_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Type Id"
+          },
+          "duty_type": {
+            "title": "Duty Type",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "weekend_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekend Start"
+          },
+          "weekend_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekend Days"
+          },
+          "points": {
+            "title": "Points",
+            "type": "integer"
+          },
+          "repeat": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repeat"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "outcome_reasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Reasons"
+          },
+          "publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Id"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Locked"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "first_day",
+          "last_day",
+          "assignment_type_id",
+          "duty_type",
+          "limit",
+          "weekend_start",
+          "weekend_days",
+          "points",
+          "repeat",
+          "note",
+          "outcome",
+          "outcome_reasons",
+          "publication_id",
+          "created_by"
+        ],
+        "title": "WishRequestItem",
+        "type": "object"
+      },
+      "WorkloadPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "day",
+              "calendar_week",
+              "calendar_month",
+              "rolling",
+              "fixed",
+              "block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 366,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Days"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ends On"
+          },
+          "anchor_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Anchor On"
+          },
+          "prorate_partial_windows": {
+            "default": false,
+            "title": "Prorate Partial Windows",
+            "type": "boolean"
+          },
+          "repeat": {
+            "default": false,
+            "title": "Repeat",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "WorkloadPeriod",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "items": {
+        "items": {
+          "discriminator": {
+            "mapping": {
+              "availability": "#/$defs/RecordedAvailabilityItem",
+              "pattern": "#/$defs/WeeklyRequestItem",
+              "request": "#/$defs/PersonRequestItem",
+              "scheduling_fact": "#/$defs/SchedulingFactRequestItem",
+              "swap": "#/$defs/SwapRequestItem",
+              "wish": "#/$defs/WishRequestItem"
+            },
+            "propertyName": "source"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/PersonRequestItem"
+            },
+            {
+              "$ref": "#/$defs/RecordedAvailabilityItem"
+            },
+            {
+              "$ref": "#/$defs/WeeklyRequestItem"
+            },
+            {
+              "$ref": "#/$defs/WishRequestItem"
+            },
+            {
+              "$ref": "#/$defs/SwapRequestItem"
+            },
+            {
+              "$ref": "#/$defs/SchedulingFactRequestItem"
+            }
+          ]
+        },
+        "title": "Items",
+        "type": "array"
+      },
+      "total": {
+        "title": "Total",
+        "type": "integer"
+      },
+      "limit": {
+        "title": "Limit",
+        "type": "integer"
+      },
+      "offset": {
+        "title": "Offset",
+        "type": "integer"
+      },
+      "has_more": {
+        "title": "Has More",
+        "type": "boolean"
+      },
+      "counts": {
+        "$ref": "#/$defs/RequestListCounts"
+      },
+      "wishes": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/RequestWishPoints"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "items",
+      "total",
+      "limit",
+      "offset",
+      "has_more",
+      "counts",
+      "wishes"
+    ],
+    "title": "RequestListPage",
+    "type": "object"
+  },
+  "RequestListDetail": {
+    "$defs": {
+      "BalanceGoalPeriod": {
+        "additionalProperties": false,
+        "description": "Resolved BalanceGoal window, retaining its own period units and dates.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "rota",
+              "rolling",
+              "month",
+              "quarter",
+              "year",
+              "block",
+              "custom",
+              "since",
+              "all_history"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 366,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Days"
+          },
+          "months": {
+            "anyOf": [
+              {
+                "maximum": 12,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Months"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ends On"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "BalanceGoalPeriod",
+        "type": "object"
+      },
+      "LineNumber": {
+        "additionalProperties": false,
+        "description": "One number of a line and how much it counts: mandatory (a constraint) or a preference's strength.\n`apply` (a rule without a number) has no value. Blank inherits: a number a line\nleaves out, or a level left null, comes from the broader line that sets it; any other number without a value is an\nexplicit None (it removes the broader line's number for this line's people).",
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "maximum": 1000000,
+                "minimum": -100000,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mandatory",
+                  "critical",
+                  "high",
+                  "medium",
+                  "low",
+                  "off"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "mandatory",
+            "title": "Level"
+          }
+        },
+        "title": "LineNumber",
+        "type": "object"
+      },
+      "PersonRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "impact": {
+            "items": {
+              "$ref": "#/$defs/RequestImpact"
+            },
+            "title": "Impact",
+            "type": "array"
+          },
+          "impact_count": {
+            "default": 0,
+            "title": "Impact Count",
+            "type": "integer"
+          },
+          "schedule_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequestScheduleImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "const": "request",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "leave",
+              "other"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "leave_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leave Type Id"
+          },
+          "leave_type_name": {
+            "title": "Leave Type Name",
+            "type": "string"
+          },
+          "counts_as_unavailable": {
+            "title": "Counts As Unavailable",
+            "type": "boolean"
+          },
+          "overtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overtime"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "private_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Private Reason"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "decision_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Reason"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "rotation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rotation Id"
+          },
+          "details": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Details"
+          },
+          "rota_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rota Status"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Id"
+          },
+          "record_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Revision"
+          },
+          "record_retracted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Retracted"
+          },
+          "can_withdraw_approved_leave": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Can Withdraw Approved Leave"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Summary"
+          },
+          "absence_progress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Absence Progress"
+          },
+          "assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Assignment Id"
+          },
+          "absence_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Absence Category"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "leave_type_id",
+          "leave_type_name",
+          "counts_as_unavailable",
+          "overtime",
+          "start",
+          "end",
+          "created_by",
+          "decided_by",
+          "decision_reason",
+          "rotation_id",
+          "details",
+          "rota_status",
+          "can_decide"
+        ],
+        "title": "PersonRequestItem",
+        "type": "object"
+      },
+      "RecordedAvailabilityItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "impact": {
+            "items": {
+              "$ref": "#/$defs/RequestImpact"
+            },
+            "title": "Impact",
+            "type": "array"
+          },
+          "impact_count": {
+            "default": 0,
+            "title": "Impact Count",
+            "type": "integer"
+          },
+          "schedule_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequestScheduleImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "const": "availability",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "leave",
+              "weekly"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "leave_type": {
+            "title": "Leave Type",
+            "type": "string"
+          },
+          "leave_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Leave Type Id"
+          },
+          "leave_type_name": {
+            "title": "Leave Type Name",
+            "type": "string"
+          },
+          "manual_type_override": {
+            "title": "Manual Type Override",
+            "type": "boolean"
+          },
+          "counts_as_unavailable": {
+            "title": "Counts As Unavailable",
+            "type": "boolean"
+          },
+          "private_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Private Reason"
+          },
+          "recorded_by": {
+            "title": "Recorded By",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "retracted": {
+            "title": "Retracted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "start",
+          "end",
+          "leave_type",
+          "leave_type_id",
+          "leave_type_name",
+          "manual_type_override",
+          "counts_as_unavailable",
+          "recorded_by",
+          "created_by",
+          "request_id",
+          "retracted"
+        ],
+        "title": "RecordedAvailabilityItem",
+        "type": "object"
+      },
+      "RequestHistoryItem": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "leave_balance_overdrawn": {
+            "default": false,
+            "title": "Leave Balance Overdrawn",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action",
+          "at",
+          "actor",
+          "reason"
+        ],
+        "title": "RequestHistoryItem",
+        "type": "object"
+      },
+      "RequestImpact": {
+        "additionalProperties": false,
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "type",
+          "publication_id"
+        ],
+        "title": "RequestImpact",
+        "type": "object"
+      },
+      "RequestImpactDuty": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Publication Id"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "rota_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rota Name"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "day",
+          "start",
+          "end",
+          "type",
+          "status"
+        ],
+        "title": "RequestImpactDuty",
+        "type": "object"
+      },
+      "RequestScheduleImpact": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "published_count": {
+            "title": "Published Count",
+            "type": "integer"
+          },
+          "draft_count": {
+            "title": "Draft Count",
+            "type": "integer"
+          },
+          "duties": {
+            "items": {
+              "$ref": "#/$defs/RequestImpactDuty"
+            },
+            "title": "Duties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count",
+          "published_count",
+          "draft_count",
+          "duties"
+        ],
+        "title": "RequestScheduleImpact",
+        "type": "object"
+      },
+      "ScheduleReadSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ScheduleReadSegment",
+        "type": "object"
+      },
+      "SchedulingFactRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source": {
+            "const": "scheduling_fact",
+            "default": "scheduling_fact",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "other",
+            "default": "other",
+            "title": "Type",
+            "type": "string"
+          },
+          "stage": {
+            "default": "waiting",
+            "enum": [
+              "waiting",
+              "approved",
+              "declined",
+              "withdrawn"
+            ],
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "default": "proposed",
+            "enum": [
+              "proposed",
+              "active",
+              "declined",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "workload",
+              "target",
+              "overtime_offer",
+              "protected_time"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "catalogue_id": {
+            "pattern": "^[a-z_]{1,40}$",
+            "title": "Catalogue Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "person_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Name"
+          },
+          "calendar_entry_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Entry Id"
+          },
+          "calendar_entry_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calendar Entry Name"
+          },
+          "proposed_by": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Proposed By",
+            "type": "string"
+          },
+          "proposer_name": {
+            "title": "Proposer Name",
+            "type": "string"
+          },
+          "proposed_at": {
+            "format": "date-time",
+            "title": "Proposed At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact start date, inclusive.",
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact end date, exclusive; the summary says \"before\" this date.",
+            "title": "Ends On"
+          },
+          "start_time": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact start time; RuleLine defaults to 00:00.",
+            "title": "Start Time"
+          },
+          "end_time": {
+            "anyOf": [
+              {
+                "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$|^24:00$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Fact end time; RuleLine defaults to 24:00.",
+            "title": "End Time"
+          },
+          "weekdays": {
+            "description": "Fact weekdays using Monday=0 through Sunday=6.",
+            "items": {
+              "type": "integer"
+            },
+            "title": "Weekdays",
+            "type": "array"
+          },
+          "numbers": {
+            "additionalProperties": {
+              "$ref": "#/$defs/LineNumber"
+            },
+            "description": "Fact line numbers keyed by catalogue number.",
+            "title": "Numbers",
+            "type": "object"
+          },
+          "measure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "duties",
+                  "session_units",
+                  "scheduled_hours",
+                  "reserved_hours",
+                  "workload_credit",
+                  "training_credit",
+                  "lead_turns"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved workload measure from the RuleLine.",
+            "title": "Measure"
+          },
+          "period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorkloadPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved workload counting period from the RuleLine."
+          },
+          "goal_measure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "duties",
+                  "hours",
+                  "session_units",
+                  "weekends",
+                  "overtime_duties",
+                  "overtime_hours",
+                  "lead_turns",
+                  "supervision",
+                  "pair_exposure",
+                  "workload"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved BalanceGoal metric for personal target facts.",
+            "title": "Goal Measure"
+          },
+          "goal_period": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BalanceGoalPeriod"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Resolved BalanceGoal period for personal target facts; dates retain the goal values."
+          },
+          "link_target": {
+            "title": "Link Target",
+            "type": "string"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "kind",
+          "title",
+          "catalogue_id",
+          "person_id",
+          "person_name",
+          "calendar_entry_id",
+          "calendar_entry_name",
+          "proposed_by",
+          "proposer_name",
+          "proposed_at",
+          "decided_at",
+          "starts_on",
+          "ends_on",
+          "start_time",
+          "end_time",
+          "weekdays",
+          "numbers",
+          "link_target",
+          "can_decide"
+        ],
+        "title": "SchedulingFactRequestItem",
+        "type": "object"
+      },
+      "SwapRequestDuty": {
+        "additionalProperties": false,
+        "properties": {
+          "assignment_id": {
+            "title": "Assignment Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "string"
+          },
+          "end": {
+            "title": "End",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "location": {
+            "title": "Location",
+            "type": "string"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "person": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Person"
+          },
+          "participation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Participation"
+          },
+          "overtime": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Overtime"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/$defs/ScheduleReadSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "publication_sequence": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Publication Sequence"
+          }
+        },
+        "required": [
+          "assignment_id",
+          "person_id",
+          "start",
+          "end",
+          "type",
+          "location",
+          "publication_id"
+        ],
+        "title": "SwapRequestDuty",
+        "type": "object"
+      },
+      "SwapRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Department Id"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "source": {
+            "const": "swap",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "swap",
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "open_offer": {
+            "title": "Open Offer",
+            "type": "boolean"
+          },
+          "publication_id": {
+            "title": "Publication Id",
+            "type": "string"
+          },
+          "proposer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposer Id"
+          },
+          "proposer_person_id": {
+            "title": "Proposer Person Id",
+            "type": "string"
+          },
+          "recipient_person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Person Id"
+          },
+          "recipient_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recipient Id"
+          },
+          "first_assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "First Assignment Id"
+          },
+          "second_assignment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Assignment Id"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reason"
+          },
+          "counteroffered_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Counteroffered At"
+          },
+          "confirmed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confirmed At"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace Id"
+          },
+          "result_publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Result Publication Id"
+          },
+          "reopened_from_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reopened From Id"
+          },
+          "effective_status": {
+            "title": "Effective Status",
+            "type": "string"
+          },
+          "proposer_name": {
+            "title": "Proposer Name",
+            "type": "string"
+          },
+          "recipient_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recipient Name"
+          },
+          "offered_assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SwapRequestDuty"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "counteroffered_assignment": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/SwapRequestDuty"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "audience_pending": {
+            "title": "Audience Pending",
+            "type": "boolean"
+          },
+          "audience_failed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audience Failed"
+          },
+          "audience_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audience Count"
+          },
+          "no_eligible_recipients": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "No Eligible Recipients"
+          },
+          "no_eligible_recipients_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "No Eligible Recipients Reason"
+          },
+          "delivery_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delivery Status"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "open_offer",
+          "publication_id",
+          "proposer_person_id",
+          "recipient_person_id",
+          "second_assignment_id",
+          "expires_at",
+          "effective_status",
+          "proposer_name",
+          "recipient_name",
+          "offered_assignment",
+          "counteroffered_assignment",
+          "audience_pending"
+        ],
+        "title": "SwapRequestItem",
+        "type": "object"
+      },
+      "WeeklyRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "impact": {
+            "items": {
+              "$ref": "#/$defs/RequestImpact"
+            },
+            "title": "Impact",
+            "type": "array"
+          },
+          "impact_count": {
+            "default": 0,
+            "title": "Impact Count",
+            "type": "integer"
+          },
+          "schedule_impact": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RequestScheduleImpact"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "source": {
+            "const": "pattern",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "weekly",
+            "title": "Type",
+            "type": "string"
+          },
+          "weekdays": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Weekdays",
+            "type": "array"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "string"
+          },
+          "end_time": {
+            "title": "End Time",
+            "type": "string"
+          },
+          "starts_on": {
+            "title": "Starts On",
+            "type": "string"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ends On"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "can_decide": {
+            "title": "Can Decide",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "weekdays",
+          "start_time",
+          "end_time",
+          "starts_on",
+          "ends_on",
+          "note",
+          "created_by",
+          "decided_by",
+          "can_decide"
+        ],
+        "title": "WeeklyRequestItem",
+        "type": "object"
+      },
+      "WishRequestItem": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "department_id": {
+            "title": "Department Id",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "person_name": {
+            "title": "Person Name",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "self_approved": {
+            "default": false,
+            "title": "Self Approved",
+            "type": "boolean"
+          },
+          "source": {
+            "const": "wish",
+            "title": "Source",
+            "type": "string"
+          },
+          "type": {
+            "const": "wish",
+            "title": "Type",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "first_day": {
+            "title": "First Day",
+            "type": "string"
+          },
+          "last_day": {
+            "title": "Last Day",
+            "type": "string"
+          },
+          "assignment_type_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignment Type Id"
+          },
+          "duty_type": {
+            "title": "Duty Type",
+            "type": "string"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "weekend_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekend Start"
+          },
+          "weekend_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Weekend Days"
+          },
+          "points": {
+            "title": "Points",
+            "type": "integer"
+          },
+          "repeat": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repeat"
+          },
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "outcome_reasons": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome Reasons"
+          },
+          "publication_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Id"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "locked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Locked"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "created_at",
+          "department_id",
+          "person_id",
+          "person_name",
+          "stage",
+          "decided_at",
+          "source",
+          "type",
+          "kind",
+          "first_day",
+          "last_day",
+          "assignment_type_id",
+          "duty_type",
+          "limit",
+          "weekend_start",
+          "weekend_days",
+          "points",
+          "repeat",
+          "note",
+          "outcome",
+          "outcome_reasons",
+          "publication_id",
+          "created_by"
+        ],
+        "title": "WishRequestItem",
+        "type": "object"
+      },
+      "WorkloadPeriod": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "day",
+              "calendar_week",
+              "calendar_month",
+              "rolling",
+              "fixed",
+              "block"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "maximum": 366,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Days"
+          },
+          "starts_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Starts On"
+          },
+          "ends_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ends On"
+          },
+          "anchor_on": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Anchor On"
+          },
+          "prorate_partial_windows": {
+            "default": false,
+            "title": "Prorate Partial Windows",
+            "type": "boolean"
+          },
+          "repeat": {
+            "default": false,
+            "title": "Repeat",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "WorkloadPeriod",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "item": {
+        "discriminator": {
+          "mapping": {
+            "availability": "#/$defs/RecordedAvailabilityItem",
+            "pattern": "#/$defs/WeeklyRequestItem",
+            "request": "#/$defs/PersonRequestItem",
+            "scheduling_fact": "#/$defs/SchedulingFactRequestItem",
+            "swap": "#/$defs/SwapRequestItem",
+            "wish": "#/$defs/WishRequestItem"
+          },
+          "propertyName": "source"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/PersonRequestItem"
+          },
+          {
+            "$ref": "#/$defs/RecordedAvailabilityItem"
+          },
+          {
+            "$ref": "#/$defs/WeeklyRequestItem"
+          },
+          {
+            "$ref": "#/$defs/WishRequestItem"
+          },
+          {
+            "$ref": "#/$defs/SwapRequestItem"
+          },
+          {
+            "$ref": "#/$defs/SchedulingFactRequestItem"
+          }
+        ],
+        "title": "Item"
+      },
+      "history": {
+        "items": {
+          "$ref": "#/$defs/RequestHistoryItem"
+        },
+        "title": "History",
+        "type": "array"
+      },
+      "fact": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Fact"
+      }
+    },
+    "required": [
+      "item",
+      "history"
+    ],
+    "title": "RequestListDetail",
+    "type": "object"
+  },
+  "DirectoryResponse": {
+    "$defs": {
+      "DirectoryContact": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Id"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Revision"
+          },
+          "contact_type_id": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "title": "Contact Type Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "icon": {
+            "title": "Icon",
+            "type": "string"
+          },
+          "sort_order": {
+            "title": "Sort Order",
+            "type": "integer"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          },
+          "dial_target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Dial Target"
+          },
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "legacy_field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Legacy Field"
+          }
+        },
+        "required": [
+          "contact_type_id",
+          "name",
+          "kind",
+          "icon",
+          "sort_order",
+          "value",
+          "can_edit"
+        ],
+        "title": "DirectoryContact",
+        "type": "object"
+      },
+      "DirectoryPerson": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "given_name": {
+            "title": "Given Name",
+            "type": "string"
+          },
+          "family_name": {
+            "title": "Family Name",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "directory_section": {
+            "title": "Directory Section",
+            "type": "string"
+          },
+          "directory_order": {
+            "title": "Directory Order",
+            "type": "integer"
+          },
+          "contacts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/DirectoryContact"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contacts"
+          },
+          "work_phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Work Phone"
+          },
+          "work_extension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Work Extension"
+          },
+          "work_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Work Email"
+          },
+          "pager": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Pager"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "given_name",
+          "family_name",
+          "title",
+          "directory_section",
+          "directory_order"
+        ],
+        "title": "DirectoryPerson",
+        "type": "object"
+      }
+    },
+    "additionalProperties": false,
+    "properties": {
+      "people": {
+        "items": {
+          "$ref": "#/$defs/DirectoryPerson"
+        },
+        "title": "People",
+        "type": "array"
+      }
+    },
+    "required": [
+      "people"
+    ],
+    "title": "DirectoryResponse",
+    "type": "object"
+  },
   "NamedInput": {
     "additionalProperties": false,
     "properties": {

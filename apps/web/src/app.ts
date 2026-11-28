@@ -21,7 +21,7 @@ import {openPalette,compactSearch,type PaletteItem} from './palette.js';
 import {exportDialog,type ExportSource} from './schedule_export.js';
 import {scheduleGrid} from './schedule_grid.js';
 import {DIMENSIONS,TIME_AXES,isDim,personDim,dimOf,type Dim,type Column as GridColumn} from './schedule_dimensions.js';
-import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,linkMoved,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleWindow,type Overlaps,type OverlapValue} from './schedule.js';
+import {SCHED_VIEWS,VIEW_RANGE,RANGE_NAMES,LIVE,actsOn,defaultRotaStates,footerIsPublished,periodFor,weekOf,linkMoved,stepAnchor,periodLabel,scheduleNav,layered,calendarDays,dayTimeline,overlapChoice,type SchedView,type SchedRange,type LayerMode,type Period,type ScheduleLayer,type Overlaps,type OverlapValue} from './schedule.js';
 import {calendarPeriod,addDays,filterShifts,isClosed,closureText,absentFrom,grantOverlap,membershipCovers,LAYER_DEFAULTS,savedLayers,type PlanRange} from './planner_logic.js';
 import {normalSearch,recordMatcher,fieldMatcher,searchParam,serverCapability,type SearchOptions} from './search.js';
 /** The Schedule's session search options (search.ts), saved with the planner view (search_options). */
@@ -98,7 +98,7 @@ import {wishesPanel,wishTypeSettingsFields} from './wishes.js';
 import {conditionBuilder,conditionsText,conditionsSummary,lineMatches,treeMatches,scopeAsConditions,isTyped,typedFields,literalValues,negativeOp,forgetResolved,RULE_FIELDS} from './conditions.js';
 import {dateSetColumns,dateSetDates,entrySummary,importDateSet,copyDateSet,loadUpcoming} from './date_sets.js';
 import {candidateReview,diagnosticContext} from './candidate_review.js';
-import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact} from './generated.js';
+import type {ViewProperty,LiveChange,LiveScope,WorkspacePartPage,SolverExclusionCount,AuthConfigStatus,FindingObservationSummary,JobRunContext,PublishedOperationalSummary,PublishedOperationalWarning,JobRecovery,FindingCauseGroup,FindingFixHint,RotaSummary,SessionSummary,GenerationOptions,PlannerViewDefinition,PlannerViewSettings,PersonLabel,Condition,Conditions,PersonAmount,RotaCauseSummary,NotificationList,VisibleContact,ScheduleWindow,DirectoryResponse,DirectoryPerson,RequestListPage,CalendarResponse} from './generated.js';
 import {personLabel,personLink,labelPart,useLabel,useNames,onPersonOpen,personName,nameText,shortCode,labelFacts,displayName,forgetNames,fullNameOf} from './person_label.js';
 import {personCard} from './person_card.js';
 import {CONTACT_KINDS,contactAudience} from './contacts.js';
@@ -928,7 +928,7 @@ function openCommandMenu(){
   openPalette(commandItems(),async query=>{
     // Staff can search contacts before visiting People. Only the directory projection is read for that role.
     // A person's record (its side panel) is desktop work: on a phone People opens only as Where is everyone (M29).
-    const people=!allowed('people')||!desktopNow()?Promise.resolve([] as Row[]):holdsLists(catalogues)?Promise.resolve(rows('people')):(directory||=background<{people:Row[]}>('/api/directory').then(r=>r.people).catch(e=>{directory=null;throw e;}));
+    const people=!allowed('people')||!desktopNow()?Promise.resolve([] as Row[]):holdsLists(catalogues)?Promise.resolve(rows('people')):(directory||=background<DirectoryResponse>('/api/directory').then(r=>r.people as (DirectoryPerson & Row)[]).catch(e=>{directory=null;throw e;}));
     const name=query.replace(/^(?:auto[ -]?schedule|rotas?)\s+/i,'').replace(/^fill \d+ open places in /i,'');
     // Keep the recent page only for this open menu: broad action keywords still find its draft actions.
     const latest=!planner?Promise.resolve([] as Row[]):(recent||=background<{workspaces:Row[]}>('/api/workspaces?limit=50&offset=0').then(r=>r.workspaces).catch(e=>{recent=null;throw e;}));
@@ -1300,7 +1300,7 @@ async function loadNavBadges(force=false,saved?:string[],scopes?:Set<LiveScope>|
       const b=scheduleBadge(r.workspaces);if(b)next.schedule=b;
     }).catch(()=>{}));
     // The dot on Requests counts what waits on you (requests to decide, weekly availability to approve, swaps to answer or prepare).
-    if(reads('requests')&&permits(CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))jobs.push(background<{counts:{to_decide:number}}>('/api/requests/all?status=waiting&limit=1').then(r=>{const n=r.counts.to_decide;if(n)next.requests={text:n>99?'99+':String(n),label:`${n} waiting for you`};}).catch(()=>{}));
+    if(reads('requests')&&permits(CAPABILITY.STAFF,CAPABILITY.COORDINATOR,CAPABILITY.APPROVER))jobs.push(background<RequestListPage>('/api/requests/all?status=waiting&limit=1').then(r=>{const n=r.counts.to_decide;if(n)next.requests={text:n>99?'99+':String(n),label:`${n} waiting for you`};}).catch(()=>{}));
     // The live pulse already carries the unread count; before the first pulse (or after marking read) the server's total.
     const unreadNow=seenUnread!==null?Promise.resolve(seenUnread):background<NotificationList>('/api/notifications?limit=1').then(r=>r.unread_total??0);
     jobs.push(unreadNow.then(n=>{if(n)next.inbox=unreadCount(n);}).catch(()=>{}));
@@ -1525,7 +1525,7 @@ async function loadLists(full=false){
   if(reply.people?.some(p=>!('work_phone' in p))){
     // Unread contacts fail the whole reply (never an empty directory): its versions are not kept, so the next refresh
     // reads the people and their contacts again.
-    const contacts=new Map((await background<{people:Row[]}>('/api/directory')).people.map(d=>[d.id,d]));
+    const contacts=new Map((await background<DirectoryResponse>('/api/directory')).people.map(d=>[d.id,d]));
     reply.people=reply.people.map(p=>{const d=contacts.get(p.id);return d?{...p,work_phone:d.work_phone,work_extension:d.work_extension,pager:d.pager,directory_section:d.directory_section,contacts:d.contacts}:p;});
   }
   // Replies apply in the order the reads started: one that started earlier and lands later (a refresh overtaken by a
@@ -2513,8 +2513,8 @@ async function schedulePage(target:HTMLElement){const mySerial=renderSerial,view
   if(mySerial!==renderSerial)return;
   // The issued check as stored (team readers; staff get only whether it was valid): never a fresh check of the source.
   const issued=source?.original_validation as {coverage?:Row[];findings?:Row[]}|undefined;
-  const sourceWindow:ScheduleWindow|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
-  const layer=sourceWindow||win,team=may('schedule.read_team');
+  const sourceWindow:ScheduleLayer|null=source?{starts_on:source.publication.starts_on,ends_on:source.publication.ends_on,summary:source.summary,sources:[{...source.publication,operational:source.operational}],shifts:source.snapshot.shifts as PlannerSession[],coverage:issued?.coverage||[],findings:issued?.findings||[],people:source.snapshot.people,locations:source.snapshot.locations,services:source.snapshot.services}:null;
+  const layer=sourceWindow||(win as unknown as ScheduleLayer|null),team=may('schedule.read_team');
   // Staff have no catalogues: names come with the window (only what it shows).
   const sctx=():Context=>({...ctx(),catalogues:{...catalogues,people:merged(rows('people'),layer?.people) as PersonRow[],locations:merged(rows('locations'),layer?.locations),services:merged(rows('services'),layer?.services)}});
   // SX-04 (D38): the published grid counts the change list as staged (an absence's open place shows at once).
@@ -3259,7 +3259,7 @@ let academicRevision='';
 async function academicBand(days:string[]):Promise<HTMLElement[]>{
   const revision=String(me?.organisation.input_revision??'');if(revision!==academicRevision){academicCache.clear();academicRevision=revision;}
   const start=days[0],end=addDays(days.at(-1)!,1),key=`${me?.identity_id}|${start}|${end}`;
-  if(!academicCache.has(key))academicCache.set(key,get<{programme_calendar?:Row[]}>(`/api/calendar?start=${start}&end=${end}`).then(r=>r.programme_calendar||[],()=>{academicCache.delete(key);return [];}));
+  if(!academicCache.has(key))academicCache.set(key,get<CalendarResponse>(`/api/calendar?start=${start}&end=${end}`).then(r=>r.programme_calendar||[],()=>{academicCache.delete(key);return [];}));
   const list=await academicCache.get(key)!;
   if(!list.length)return [];
   return [el('section',{class:'cal-academic','aria-label':'Academic calendar'},el('h3',{},`Academic calendar · ${plural(list.length,'entry','entries')}`),
@@ -3268,7 +3268,7 @@ async function academicBand(days:string[]):Promise<HTMLElement[]>{
 }
 // Published days in view (planners): the stored check first, then the live coverage against today's availability.
 let publishedLive:{key:string;evaluation:Evaluation}|null=null;
-const liveKey=(layer:ScheduleWindow|null)=>layer?[...layer.sources.map(s=>s.id),layer.starts_on,layer.ends_on,me?.organisation.availability_revision,me?.organisation.input_revision].join('|'):'';
+const liveKey=(layer:ScheduleLayer|null)=>layer?[...layer.sources.map(s=>s.id),layer.starts_on,layer.ends_on,me?.organisation.availability_revision,me?.organisation.input_revision].join('|'):'';
 // One live check per publication (and account, rules and availability), whichever days are in view: moving between
 // Week and Month filters it again instead of asking again. Only the current check of the publications in view is held:
 // each is a whole publication's evaluation (megabytes for a published year) and every change elsewhere outdates it.
@@ -3280,7 +3280,7 @@ function liveOf(p:Row){
     read.catch(()=>{if(liveChecks.get(p.id)===mine)liveChecks.delete(p.id);});}
   return held.read;
 }
-function loadLiveCoverage(layer:ScheduleWindow){
+function loadLiveCoverage(layer:ScheduleLayer){
   const key=liveKey(layer);if(publishedLive?.key===key||!layer.sources.length)return;
   for(const id of [...liveChecks.keys()])if(!layer.sources.some(s=>s.id===id))liveChecks.delete(id);
   const ids=new Set(layer.shifts.map(s=>s.id));
@@ -4380,7 +4380,7 @@ function markShift(id:string,person=''){
   for(const n of spots){n.classList.remove('issue-spot');void n.offsetWidth;n.classList.add('issue-spot');}
 }
 /** The current absence warnings on the published sessions in view, one per duty (publication, session and person). */
-const absentOnDuty=(layer:ScheduleWindow,shown:Pick<WorkspaceData,'shifts'>):PublishedOperationalWarning[]=>{const ids=new Set(shown.shifts.map(s=>s.id));
+const absentOnDuty=(layer:ScheduleLayer,shown:Pick<WorkspaceData,'shifts'>):PublishedOperationalWarning[]=>{const ids=new Set(shown.shifts.map(s=>s.id));
   return [...new Map(layer.sources.flatMap(s=>((s.operational as PublishedOperationalSummary|undefined)?.warnings||[])).filter(x=>ids.has(x.shift_id)).map(x=>[x.key,x])).values()];};
 /** One duty during approved absence: who and when, the session, and (coordinators) the reviewed amendment that changes it. */
 function absenceIssue(a:PublishedOperationalWarning,s:Row|undefined,close:()=>void,person?:string,replace=true):Issue{
@@ -5250,7 +5250,7 @@ async function peoplePage(target:HTMLElement){
   // that day, as the server's resolver reads them for Select by condition and Show their… (what you see is what gets selected).
   const peopleDay=tableAsOf('people');
   const full=!peopleDirectory(),manager=permits(CAPABILITY.ADMIN,CAPABILITY.COORDINATOR),cred=permits(CAPABILITY.CREDENTIALER);
-  const people:Row[]=full?rows('people'):(directoryRows=(await get<{people:Row[]}>('/api/directory')).people);
+  const people:Row[]=full?rows('people'):(directoryRows=(await get<DirectoryResponse>('/api/directory')).people as (DirectoryPerson & Row)[]);
   // One primary action: New person for whoever manages people, Authorise eligibility for a credentialer.
   // Ranks and skills for one person are row actions (several people: bulk); the programme roster acts on a whole programme, so it stays here.
   // On a phone People is the read-only Where is everyone: no desktop forms in its head.

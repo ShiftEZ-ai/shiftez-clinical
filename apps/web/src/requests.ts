@@ -20,7 +20,7 @@ import {swapActions,swapNext,swapOptions,offerFields} from './governance.js';
 import {addDays} from './planner_logic.js';
 import {personLink,personName,fullNameOf} from './person_label.js';
 import {REQUEST_STAGES,REQUEST_TYPES,TERMS,UNLINKED_STAFF,unlinkedStaff,type RequestStage,type RequestType} from './terms.js';
-import {REQUEST_SORT_FIELDS,MAX_REQUEST_DECISIONS,ABSENCE_REPORT_LABEL,type REQUEST_KINDS,type RuleLine} from './generated.js';
+import {REQUEST_SORT_FIELDS,MAX_REQUEST_DECISIONS,ABSENCE_REPORT_LABEL,type REQUEST_KINDS,type RuleLine,type RequestListPage as Page,type RequestListDetail,type RequestWishPoints as WishPoints} from './generated.js';
 import {ruleReview} from './rule_review.js';
 import {levelWords} from './rule_view.js';
 import {leaveTypeName} from './findings.js';
@@ -32,8 +32,6 @@ import {moreWords,markFields,weekdayNames,dayRange,selfApprovedBadge} from './do
 
 /** What the page needs from the shell: the address query, a way to change it, and the published rota at a day. */
 export interface RequestHooks{query:URLSearchParams;setQuery:(q:URLSearchParams)=>void;showDay:(day:string,personId:string)=>void}
-type WishPoints={budget_points:number;period:string;start?:string;end?:string;used?:number;multiplier?:number};
-type Page={items:Row[];total:number;offset:number;limit:number;has_more:boolean;counts:{to_decide:number;stages?:Record<string,number>};wishes:WishPoints|null};
 type Kind='leave'|'record'|'weekly'|'wish'|'swap'|'other'|'overtime';
 
 const TABLE='requests',SIZE=100;
@@ -828,11 +826,12 @@ function fillPanel(ctx:Context,id:string,hooks:RequestHooks,setQuery:(change:(q:
   const self={id,close:d.close};panel=self;
   setQuery(q=>q.set('open',id));
   const fill=async()=>{
-    let data:{item:Row;history:Row[]};
+    let data:RequestListDetail;
     try{data=await get(`/api/requests/all?id=${encodeURIComponent(id)}`);}
     catch(e){if(panel===self)d.body.replaceChildren(readFailed('the request',e,fill));return;}
     if(panel!==self)return;
-    const r=data.item,{buttons,menu}=actions(ctx,r,hooks),own=ownRequest(ctx,r);
+    const r:Row=data.item;
+    const {buttons,menu}=actions(ctx,r,hooks),own=ownRequest(ctx,r);
     d.setHead(title(r),panelSub(r,own));
     // Your own request does not name you again; a reviewer sees whose it is.
     const facts:[string,Node|string][]=[...(own?[]:[[r.source==='swap'?'People':'Person',requestPeople(ctx,r)] as [string,Node]]),['Dates',requestWhenNode(r,zone)],...(nonBlocking(r)?[['Duties',NOT_BLOCKING] as [string,string]]:[]),...(detail(r,zone,ctx)?[['Details',detail(r,zone,ctx)] as [string,string]]:[]),

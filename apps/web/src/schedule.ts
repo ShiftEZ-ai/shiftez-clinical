@@ -7,7 +7,7 @@ import {get} from './api.js';
 import {addDays,touchesDay,isWeekend,rangeWords} from './planner_logic.js';
 import {dateMarks,dateMarkWords} from './date_sets.js';
 import type {DateSetMarker} from './types.js';
-import type {PublishedScheduleSummary} from './generated.js';
+import type {ScheduleWindow} from './generated.js';
 import {periodNav,dutyColour,weekView,showPairs,teamLayout,groupWay,drawnPeople,colourRule,markWeekend,type WeekHooks} from './planner_week.js';
 import {dutyCode,propertiesOf,itemParts,itemNodes,itemWords,ITEM_DRAWS,type PropKey} from './schedule_item.js';
 import {personPill} from './person_pill.js';
@@ -133,12 +133,12 @@ export function scheduleNav(view:SchedRange,p:Period,today:string,move:(anchor:s
   return nav;
 }
 
-/** Published sessions of a window (GET /api/schedule/sessions). */
-export type ScheduleWindow={summary?:PublishedScheduleSummary;starts_on:string;ends_on:string;sources:Row[];shifts:PlannerSession[];coverage:Row[];findings:Row[];people:Record<string,Row>;locations:Record<string,Row>;services:Record<string,Row>;
-  /** Named department dates by day (holidays and dates off). */date_set_markers?:Record<string,DateSetMarker[]>};
+/** The render layer also accepts a stored publication, whose rows use the snapshot format. */
+export type ScheduleLayer=Pick<ScheduleWindow,'summary'|'starts_on'|'ends_on'> & Pick<WorkspaceData,'date_set_markers'|'shifts'> &
+  {sources:Row[];coverage:Row[];findings:Row[];people:Record<string,Row>;locations:Record<string,Row>;services:Record<string,Row>};
 /** One data set for every renderer. With a draft: its sessions, plus published ones as read-only context (`context`) on
  *  the days around it (and under it in Overlay). Without one: the published sessions with their stored checks. */
-export function layered(draft:WorkspaceData|null,win:ScheduleWindow|null,mode:LayerMode,period:Period,zone:string,live?:Evaluation|null):WorkspaceData{
+export function layered(draft:WorkspaceData|null,win:ScheduleLayer|null,mode:LayerMode,period:Period,zone:string,live?:Evaluation|null):WorkspaceData{
   const published=(win?.shifts||[]).map(s=>({...s,context:!!draft}));
   if(!draft){
     const validation=live||(win?.coverage.length&&{valid:!win.findings.some(f=>f.severity==='error'),error_count:win.findings.filter(f=>f.severity==='error').length,
