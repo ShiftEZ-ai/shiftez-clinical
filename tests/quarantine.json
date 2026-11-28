@@ -590,6 +590,20 @@
     "blocker": false
   },
   {
+    "nodeid": "tests/test_browser_autoschedule_fix_outcome.py::test_a_finished_runs_message_is_skipped_while_its_rotas_panel_is_open",
+    "reason": "unstable: failed its first attempt in run 46152154854 and passed in runs 46148339485 and 46146136369, all on queue base 84d6fbb8.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 2020,
+    "blocker": false,
+    "recovered_runs": [
+      "46152154854",
+      "46148339485",
+      "46146136369"
+    ]
+  },
+  {
     "nodeid": "tests/test_browser_autoschedule_progress.py::test_a_rota_check_runs_in_the_footer_not_the_panel",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -678,6 +692,19 @@
     "issue": 782,
     "milestone": "v0.2.0",
     "blocker": false
+  },
+  {
+    "nodeid": "tests/test_browser_autoschedule_state.py::test_a_queued_run_not_compared_yet_never_says_the_rota_changed",
+    "reason": "unstable: failed its first attempt in run 46148339485 and passed in run 46146136369, both on queue base 84d6fbb8.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 1999,
+    "blocker": false,
+    "recovered_runs": [
+      "46148339485",
+      "46146136369"
+    ]
   },
   {
     "nodeid": "tests/test_browser_autoschedule_state.py::test_failed_auto_check_is_said_once",
@@ -1420,6 +1447,20 @@
     "blocker": false
   },
   {
+    "nodeid": "tests/test_browser_pwa.py::test_worker_registers_under_csp_and_shows_a_visible_alert_for_every_push",
+    "reason": "unstable: failed its first attempt in run 46138131269 on queue base 228c3869 and passed in run 46138086728, which tested 228c3869 itself.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 1631,
+    "milestone": "v0.1.2",
+    "blocker": false,
+    "recovered_runs": [
+      "46138131269",
+      "46138086728"
+    ]
+  },
+  {
     "nodeid": "tests/test_browser_qa_planner.py::test_view_changes_keep_the_shell_and_close_a_stale_popover",
     "reason": "baseline: Measured assertion failure in both replicas of run 44114266718, attempt 1.",
     "owner": "maintainers",
@@ -1438,6 +1479,20 @@
     "issue": 835,
     "milestone": "v0.2.0",
     "blocker": false
+  },
+  {
+    "nodeid": "tests/test_browser_qa_rules_config_b2.py::test_a_rule_save_reloads_only_the_lists_it_changed",
+    "reason": "unstable: failed its first attempt and passed on retry in runs 46099151580 and 46123510415; the product fix is in review.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 1939,
+    "milestone": "v0.1.2",
+    "blocker": false,
+    "recovered_runs": [
+      "46099151580",
+      "46123510415"
+    ]
   },
   {
     "nodeid": "tests/test_browser_qa_schedule_rc13.py::test_the_open_more_button_in_the_selection_bar_stays_visible",
@@ -1590,6 +1645,21 @@
     "blocker": false
   },
   {
+    "nodeid": "tests/test_browser_schedule_flows.py::test_a_draft_overtaken_by_a_publication_is_flagged_and_publish_offers_the_fit",
+    "reason": "unstable: failed its first attempt in run 46146136369 and passed in run 46148339485, both on queue base 84d6fbb8; recovered on retry in runs 46133145477 and 46131967759.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 2000,
+    "blocker": false,
+    "recovered_runs": [
+      "46146136369",
+      "46148339485",
+      "46133145477",
+      "46131967759"
+    ]
+  },
+  {
     "nodeid": "tests/test_browser_schedule_flows.py::test_change_the_published_rota_opens_an_amendment_that_supersedes_it",
     "reason": "unstable: Red in only some observations of runs 44114266718 and 44131154009; see ci/bootstrap-union-evidence.json.",
     "owner": "maintainers",
@@ -1708,6 +1778,20 @@
     "issue": 987,
     "milestone": "v0.2.0",
     "blocker": false
+  },
+  {
+    "nodeid": "tests/test_browser_sticky.py::test_the_grid_keeps_its_scroll_across_a_redraw[case-ililjhhnhdnppfecohohdfkkgmdpchojjjacgnnbgpbcholomiaahikicmdgellk]",
+    "reason": "unstable: Month case failed its first attempt and passed on retry in runs 46089115550 and 46099180565, after the scroll anchoring fix.",
+    "owner": "maintainers",
+    "added": "2026-11-28",
+    "expires": "2026-12-05",
+    "issue": 1662,
+    "milestone": "v0.1.2",
+    "blocker": false,
+    "recovered_runs": [
+      "46089115550",
+      "46099180565"
+    ]
   },
   {
     "nodeid": "tests/test_browser_supervision_balance.py::test_a_supervision_goals_distribution_shows_its_goal_card_numbers[case-ciepcdmlhfmbohaigngdfndddigllkgoliaeblelplecnjfhedceoghjadbkpngn]",
