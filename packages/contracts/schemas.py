@@ -3042,7 +3042,7 @@ class TravelBuffer(Schema):
 
 def quota_target_amount(metric, amount):
     """Count targets use two decimal places, rounding a halfway value up; other quota units retain their precision."""
-    if amount is not None and metric in ('duties', 'lead_turns'):
+    if amount is not None and metric in ('duties', 'lead_turns', 'weekends'):
         return float(Decimal(str(amount)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
     return amount
 
@@ -3053,7 +3053,7 @@ class BlockQuota(Schema):
     starts_on: date
     ends_on: date | None = None
     repeat: bool = False
-    metric: Literal["duties", "session_units", "scheduled_hours", "reserved_hours", "workload_credit", "training_credit", "lead_turns"]
+    metric: Literal["duties", "session_units", "scheduled_hours", "reserved_hours", "workload_credit", "training_credit", "lead_turns", "weekends"]
     # range: at least `amount` and at most `maximum_amount` (one rule; checked as a minimum and a maximum).
     comparison: Literal["maximum", "minimum", "target", "range"]
     amount: float = Field(ge=0, le=100000)
@@ -3073,6 +3073,8 @@ class BlockQuota(Schema):
     prorate_department_days: bool = False
     reference_days: int = Field(default=28, ge=1, le=366, strict=True)
     rounding: Literal['down', 'nearest', 'up'] = 'nearest'
+    weekend_start: int = Field(default=WEEKEND_START_DEFAULT, ge=0, le=6, json_schema_extra={'x-applies-to': {'metric': ['weekends']}})
+    weekend_days: int = Field(default=WEEKEND_DAYS_DEFAULT, ge=1, le=3, json_schema_extra={'x-applies-to': {'metric': ['weekends']}})
 
     @model_validator(mode="after")
     def bounded_meaning(self):
@@ -3107,9 +3109,10 @@ class BlockQuota(Schema):
                 raise ValueError('The target must lie within the minimum and maximum')
         elif self.target_strength is not None:
             raise ValueError('A target strength needs a target')
-        if self.metric in ("duties", "lead_turns"):
+        if self.metric in ("duties", "lead_turns", "weekends"):
             if self.comparison != 'target' and not all(float(x or 0).is_integer() for x in (self.amount, self.maximum_amount)):
-                raise ValueError("Duty quota bounds require a whole-number amount")
+                raise ValueError("Duty quota bounds require a whole-number amount" if self.metric != "weekends"
+                                 else "Weekend quota bounds require a whole-number amount")
             if self.comparison == 'target':
                 self.amount = quota_target_amount(self.metric, self.amount)
             self.target_amount = quota_target_amount(self.metric, self.target_amount)

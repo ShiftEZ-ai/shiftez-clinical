@@ -201,7 +201,7 @@ export function whereWhen(scope:Row|undefined,name:Name):string{
   const days=scope?.weekdays as number[]|undefined;
   return [scopeWords(scope,name).where,days?.length&&days.length<7?daysWords(days,true):''].filter(Boolean).join(' · ');
 }
-const QUOTA_UNITS:Record<string,string>={duties:'duties',session_units:'session units',scheduled_hours:'planned hours',reserved_hours:'reserved hours',workload_credit:'workload credits',training_credit:'training credits',lead_turns:'team lead turns'};
+const QUOTA_UNITS:Record<string,string>={duties:'duties',session_units:'session units',scheduled_hours:'planned hours',reserved_hours:'reserved hours',workload_credit:'workload credits',training_credit:'training credits',lead_turns:'team lead turns',weekends:'weekends worked'};
 /** A quota's number with its unit and period: "4 duties each month", "1 duty each day". */
 export function quotaAmount(rule:Row,amount:unknown=rule.amount):string{
   const unit=QUOTA_UNITS[rule.metric]||rule.metric;

@@ -12,7 +12,7 @@ export interface QuotaRow {
   difference:number; status:string; severity:string; overtime:string;
 }
 export interface QuotaReport {metric_version:string; timezone:string; basis:string; complete:boolean; rows:QuotaRow[]; empty_policy_ids?:string[]}
-export const quotaUnits:Record<string,string>={duties:'Duties',session_units:'Session units',scheduled_hours:'Planned presence hours',reserved_hours:'Reserved hours',workload_credit:'Workload credits',training_credit:'Planned educational credits',lead_turns:'Team lead turns'};
+export const quotaUnits:Record<string,string>={duties:'Duties',session_units:'Session units',scheduled_hours:'Planned presence hours',reserved_hours:'Reserved hours',workload_credit:'Workload credits',training_credit:'Planned educational credits',lead_turns:'Team lead turns',weekends:'Weekends worked'};
 
 /** Same server-issued rows in planning, review and immutable publication reports. `id` keeps each place's list view
  *  (filters, sort, saved views) its own. */

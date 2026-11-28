@@ -1,0 +1,383 @@
+{
+  "id": "A-WEEKEND-BLOCK-01",
+  "revision": 1,
+  "title": "Worked weekends in anchored blocks",
+  "intent": "A person may work two sessions on the same weekend with a limit of one worked weekend per block.",
+  "pressure": "Two fixed sessions share one weekend. Giving the same person a session on a later weekend breaks the cap.",
+  "covers": {
+    "kind.block_quota": [
+      "validator",
+      "counterfactual"
+    ],
+    "kind.block_quota.metric": [
+      "validator"
+    ],
+    "kind.block_quota.weekend_start": [
+      "validator"
+    ],
+    "kind.block_quota.weekend_days": [
+      "validator"
+    ],
+    "kind.block_quota.window_anchor_on": [
+      "validator"
+    ]
+  },
+  "commands": [
+    {
+      "key": "rank",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "categories",
+        "value": {
+          "name": "A-WEEKEND-BLOCK-01 Clinician",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "service",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "services",
+        "value": {
+          "name": "A-WEEKEND-BLOCK-01 Continuity clinic",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location_kind",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "location_types",
+        "value": {
+          "name": "A-WEEKEND-BLOCK-01 Clinic room",
+          "starts_on": "2020-01-01"
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "location",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "locations",
+        "value": {
+          "name": "A-WEEKEND-BLOCK-01 Duty room",
+          "starts_on": "2020-01-01",
+          "location_type_id": "$location_kind",
+          "capacity": 3
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "p0",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-WEEKEND-BLOCK-01 Clinician 1",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member0",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p0",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible0",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p0",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "p1",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "people",
+        "value": {
+          "display_name": "A-WEEKEND-BLOCK-01 Clinician 2",
+          "tags": [
+            "golden"
+          ]
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "member1",
+      "role": "admin",
+      "kind": "membership.create",
+      "payload": {
+        "person_id": "$p1",
+        "category_id": "$rank",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "eligible1",
+      "role": "admin",
+      "kind": "eligibility.create",
+      "payload": {
+        "person_id": "$p1",
+        "service_id": "$service",
+        "starts_on": "2020-01-01"
+      }
+    },
+    {
+      "key": "type",
+      "role": "admin",
+      "kind": "catalogue.create",
+      "payload": {
+        "catalogue": "assignment_types",
+        "value": {
+          "name": "A-WEEKEND-BLOCK-01 Half-day clinic",
+          "starts_on": "2020-01-01",
+          "definition": {
+            "requirements": [
+              {
+                "minimum": 1,
+                "maximum": 1
+              }
+            ]
+          }
+        },
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "workspace",
+      "role": "coordinator",
+      "kind": "workspace.create",
+      "payload": {
+        "name": "A-WEEKEND-BLOCK-01 Anchored workloads",
+        "starts_on": "2027-03-04",
+        "ends_on": "2027-04-10"
+      }
+    },
+    {
+      "key": "workload",
+      "role": "coordinator",
+      "kind": "rule.propose",
+      "payload": {
+        "catalogue_id": "workload_limit",
+        "catalogue_version": 2,
+        "lines": [
+          {
+            "id": "00000000-0000-4000-8000-000000009140",
+            "who": {
+              "conditions": [
+                {
+                  "field": "category_ids",
+                  "values": [
+                    "$rank"
+                  ]
+                }
+              ]
+            },
+            "starts_on": "2027-03-04",
+            "ends_on": "2027-04-10",
+            "measure": "weekends",
+            "period": {
+              "kind": "fixed",
+              "days": 28,
+              "starts_on": "2027-03-04",
+              "ends_on": "2027-04-10",
+              "anchor_on": "2027-03-03"
+            },
+            "settings": {
+              "block_quota": {
+                "weekend_start": 5,
+                "weekend_days": 2
+              }
+            },
+            "numbers": {
+              "max": {
+                "value": 1,
+                "level": "mandatory"
+              }
+            }
+          }
+        ],
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    },
+    {
+      "key": "s0",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-03-06T08:00:00+03:00",
+        "end": "2027-03-06T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p0",
+            "start": "2027-03-06T08:00:00+03:00",
+            "end": "2027-03-06T12:00:00+03:00",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "key": "s1",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-03-07T08:00:00+03:00",
+        "end": "2027-03-07T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p0",
+            "start": "2027-03-07T08:00:00+03:00",
+            "end": "2027-03-07T12:00:00+03:00",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "key": "s2",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-03-13T08:00:00+03:00",
+        "end": "2027-03-13T12:00:00+03:00",
+        "participants": []
+      }
+    },
+    {
+      "key": "s3",
+      "role": "coordinator",
+      "kind": "shift.create",
+      "revision": "$workspace.revision",
+      "payload": {
+        "workspace_id": "$workspace",
+        "assignment_type_id": "$type",
+        "location_id": "$location",
+        "service_ids": [
+          "$service"
+        ],
+        "start": "2027-04-03T08:00:00+03:00",
+        "end": "2027-04-03T12:00:00+03:00",
+        "participants": [
+          {
+            "person_id": "$p0",
+            "start": "2027-04-03T08:00:00+03:00",
+            "end": "2027-04-03T12:00:00+03:00",
+            "fixed": true
+          }
+        ]
+      }
+    },
+    {
+      "key": "workload_activate",
+      "role": "approver",
+      "kind": "policy.activate",
+      "target": "$workload",
+      "revision": "$workload.revision",
+      "payload": {
+        "acknowledge_unresolved": true,
+        "reason": "Reviewed synthetic golden scenario"
+      }
+    }
+  ],
+  "expect": {
+    "binding_rules": [
+      "workload"
+    ],
+    "validator": {
+      "code": "QUOTA_ABOVE_MAXIMUM",
+      "scope_person": "p0",
+      "allowed": [
+        [
+          "2027-03-04",
+          "2027-03-31",
+          1
+        ],
+        [
+          "2027-03-31",
+          "2027-04-10",
+          1
+        ]
+      ],
+      "broken": [
+        [
+          "2027-03-04",
+          "2027-03-31",
+          2
+        ],
+        [
+          "2027-03-31",
+          "2027-04-10",
+          1
+        ]
+      ]
+    },
+    "counterfactual": {
+      "candidate": "candidate_feasible",
+      "rule_on": "requirements_conflict",
+      "open": "s2",
+      "assigned_to": "p1"
+    },
+    "seed_robustness": {
+      "seeds": [
+        11,
+        29,
+        47
+      ],
+      "workers": 1,
+      "orders": "shuffle inputs for each seed"
+    }
+  },
+  "inputs": {
+    "generation_options": {
+      "mode": "rebalance",
+      "shortlist_width": 0
+    }
+  }
+}

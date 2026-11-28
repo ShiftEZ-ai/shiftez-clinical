@@ -1773,7 +1773,9 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
         readRule=()=>({kind:value,[value==='max_hours'?'hours':'maximum']:Number(amount.input.value),window:window.input.value,include_overtime:overtime.input.checked,window_days:window.input.value==='rolling'?Number(days.input.value):7,...(value==='max_duties'?{group_by:grouping.input.value}:{})});
       }else if(value==='block_quota'){
         const given=scope.rule?.kind==='block_quota'?scope.rule:{};
-        const metric=select('Counts',[{value:'duties',label:'Duties — counted once at participant start'},{value:'session_units',label:'Session units per duty'},{value:'scheduled_hours',label:'Planned presence hours — gaps excluded'},{value:'reserved_hours',label:'Reserved hours — full envelope'},{value:'workload_credit',label:'Configured workload credits'},{value:'training_credit',label:'Configured planned educational credits'},{value:'lead_turns',label:'Team lead turns — duties where the person leads'}],given.metric||'duties');
+        const metric=select('Counts',[{value:'duties',label:'Duties — counted once at participant start'},{value:'session_units',label:'Session units per duty'},{value:'scheduled_hours',label:'Planned presence hours — gaps excluded'},{value:'reserved_hours',label:'Reserved hours — full envelope'},{value:'workload_credit',label:'Configured workload credits'},{value:'training_credit',label:'Configured planned educational credits'},{value:'lead_turns',label:'Team lead turns — duties where the person leads'},{value:'weekends',label:'Weekends worked'}],given.metric||'duties');
+        const weekendStart=select('Weekend starts',weekdayOptions(),String(given.weekend_start??4));
+        const weekendDays=field('Weekend length in days','number',given.weekend_days??2,{min:1,max:3,required:true});
         const overtime=select('Overtime',[{value:'include',label:'Counted with ordinary duties'},{value:'exclude',label:'Not counted'},{value:'only',label:'Only overtime is counted'}],given.overtime||'include');
         const types=multi('Duty types counted',options(all(ctx,'assignment_types')),given.assignment_type_ids||[],'Every duty type');
         const participation=multi('Roles counted',[{value:'staff',label:'Staff'},{value:'trainee',label:'Trainee'},{value:'supervisor',label:'Supervisor'}],given.participation||[],'Every role');
@@ -1795,19 +1797,21 @@ export async function policyForm(ctx:Context,rotationTypeId='',scope:RuleScope={
           if(prorate.input.checked)repeat.input.value='once';repeat.input.disabled=prorate.input.checked;
           referenceDays.wrap.hidden=rounding.wrap.hidden=!prorate.input.checked;referenceDays.input.disabled=!prorate.input.checked;
           windowDays.wrap.hidden=!inBlocks();windowDays.input.disabled=!inBlocks();
+          for(const field of [weekendStart,weekendDays])field.wrap.hidden=field.input.disabled=metric.input.value!=='weekends';
           // A target alone is advisory; once a limit is set again the classification goes back to what it was.
           if(onlyTarget&&!severity.input.disabled){wasSeverity=severity.input.value;severity.input.value='advisory';}else if(!onlyTarget&&severity.input.disabled)severity.input.value=wasSeverity;severity.input.disabled=onlyTarget;
           allowed.input.disabled=onlyTarget||repeat.input.value!=='once';if(allowed.input.disabled)allowed.input.checked=false;
-          limits.step(['duties','lead_turns'].includes(metric.input.value)?'1':'any');};
+          limits.step(['duties','lead_turns','weekends'].includes(metric.input.value)?'1':'any');};
         for(const c of [limits.wrap,repeat.input,prorate.input,metric.input]){c.addEventListener('input',syncQuota);c.addEventListener('change',syncQuota);}
         syncQuota();
         for(const w of [types.wrap,participation.wrap])w.classList.add('span-2');
-        config.append(limits.wrap,metric.wrap,overtime.wrap,types.wrap,participation.wrap,
+        config.append(limits.wrap,metric.wrap,weekendStart.wrap,weekendDays.wrap,overtime.wrap,types.wrap,participation.wrap,
           el('fieldset',{class:'span-2 form-grid quota-period'},el('legend',{},'Period'),dateRange('Dates',blockStart,blockEnd),repeat.wrap,windowDays.wrap,prorate.wrap,referenceDays.wrap,rounding.wrap,
             el('p',{class:'hint span-2'},'Weeks start on the department’s first day of the week. Duties count on the day they start.')));
         readRule=()=>({kind:value,...limits.read(),prorate_department_days:prorate.input.checked,reference_days:Number(referenceDays.input.value),rounding:rounding.input.value,
           window_days:inBlocks()?Number(windowDays.input.value):null,window_alignment:repeat.input.value==='once'?'rolling':repeat.input.value,
-          starts_on:blockStart.input.value,ends_on:blockEnd.input.value,metric:metric.input.value,overtime:overtime.input.value,assignment_type_ids:types.values(),participation:participation.values()});
+          starts_on:blockStart.input.value,ends_on:blockEnd.input.value,metric:metric.input.value,overtime:overtime.input.value,assignment_type_ids:types.values(),participation:participation.values(),
+          ...(metric.input.value==='weekends'?{weekend_start:Number(weekendStart.input.value),weekend_days:Number(weekendDays.input.value)}:{})});
       }else if(value==='max_consecutive_weekends'){
         const maximum=field('Maximum consecutive weekends','number',1,{required:true,min:1,max:4});
         const first=select('Weekend starts',weekdayOptions(),'4');

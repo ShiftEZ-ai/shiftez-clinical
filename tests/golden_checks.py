@@ -294,6 +294,44 @@ def check_weekly_limit(data, ids, spec):
     return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(bound)}}
 
 
+def check_weekend_block(data, ids, spec):
+    expected = spec['expect']
+    person = ids[expected['validator']['scope_person']]
+    open_session = ids[expected['counterfactual']['open']]
+    rule = ids['workload']
+
+    def observe(work, name):
+        checked = evaluate(work)
+        counts = sorted([r['starts_on'], r['ends_on'], r['actual']] for r in checked['quota_report']['rows']
+                        if r['policy_id'] == rule and r['person_id'] == person)
+        assert counts == expected['validator'][name], checked
+        codes = {r['code'] for r in finding_observations(checked)
+                 if r.get('rule_id') == rule and r['person_id'] == person}
+        assert codes == ({expected['validator']['code']} if name == 'broken' else set()), checked
+
+    broken = copy.deepcopy(data)
+    place(broken, open_session, [person])
+    observe(broken, 'broken')
+    # With only the fixed clinician eligible, the later weekend cannot be filled while the cap binds.
+    only_one = copy.deepcopy(data)
+    other = ids[expected['counterfactual']['assigned_to']]
+    only_one['eligibilities'] = [entry for entry in only_one['eligibilities'] if entry['person_id'] != other]
+    off = disabled(only_one, rule)
+    seeds = expected['seed_robustness']['seeds']
+    for seed in seeds:
+        result = solve(data, seed, feasibility_only=True)
+        assert result['status'] == expected['counterfactual']['candidate'], result
+        candidate = feasible(data, result)
+        assert {p['person_id'] for p in shift(candidate, open_session)['participants']} == {other}
+        observe(candidate, 'allowed')
+        blocked = solve(only_one, seed, feasibility_only=True)
+        assert blocked['status'] == expected['counterfactual']['rule_on'], blocked
+        candidate = feasible(off, solve(off, seed, feasibility_only=True))
+        candidate['policies'] = copy.deepcopy(data['policies'])
+        observe(candidate, 'broken')
+    return {'assertions': {'validator', 'counterfactual', 'seed_robustness'}, 'bindings': {'workload': len(seeds)}}
+
+
 def check_scenario(data, ids, spec):
     if 'solver_choice' in spec['expect']:
         from tests.golden_atlas import check_fair_share
@@ -311,5 +349,5 @@ def check_scenario(data, ids, spec):
         from tests.golden_preference import check_preference
         return check_preference(data, ids, spec)
     return {'A-REST-01': check_rest, 'A-COVER-01': check_cover, 'A-ALLOCATION-COVER-01': check_allocation_cover,
-            'A-WEEKLY-LIMIT-01': check_weekly_limit,
+            'A-WEEKLY-LIMIT-01': check_weekly_limit, 'A-WEEKEND-BLOCK-01': check_weekend_block,
             'I-LOCK-REST-COVER-01': check_interaction}[spec['id']](data, ids, spec)

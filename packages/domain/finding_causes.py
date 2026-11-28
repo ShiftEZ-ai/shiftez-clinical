@@ -231,9 +231,12 @@ class FindingCauses:
             if inactive(shift) or data['types'][shift['assignment_type_id']]['department_id'] != policy['department_id']:
                 return False
             result = contribution(shift, None)
-            return result is not None and (result['duty'] if rule['metric'] in {'duties', 'lead_turns', 'session_units'} else bool(result['intervals']))
+            metric = rule['metric']
+            return result is not None and (result['duty'] if metric in {'duties', 'lead_turns', 'session_units'}
+                else bool(result['weekends'] if metric == 'weekends' else result['intervals']))
 
-        key = json.dumps([policy['department_id'], selector['definition']['scope'],
+        weekend_shape = [rule.get('weekend_start'), rule.get('weekend_days')] if rule['metric'] == 'weekends' else None
+        key = json.dumps([policy['department_id'], selector['definition']['scope'], weekend_shape,
                           {k: rule[k] for k in ('comparison', 'metric', 'assignment_type_ids', 'participation', 'overtime', 'starts_on', 'ends_on')},
                           a.isoformat(), b.isoformat(), policy.get('starts_on'), policy.get('ends_on')], sort_keys=True)
         if key not in self.sessions:
@@ -244,16 +247,17 @@ class FindingCauses:
         if rule['comparison'] != 'maximum':
             prefill['starts_on'] = max(prefill['starts_on'], data['workspace']['starts_on'], policy.get('starts_on') or prefill['starts_on'])
             prefill['ends_on'] = min(prefill['ends_on'], data['workspace']['ends_on'], policy.get('ends_on') or prefill['ends_on'])
-        key = json.dumps([pid, policy['definition']['scope'], a.isoformat(), b.isoformat(),
+        key = json.dumps([pid, policy['definition']['scope'], weekend_shape, a.isoformat(), b.isoformat(),
             {k: rule[k] for k in ('metric', 'assignment_type_ids', 'participation', 'overtime')},
             rule['comparison'] == 'maximum', policy.get('starts_on'), policy.get('ends_on')], sort_keys=True)
         if key not in self.quota_facts:
             eligible, unavailable, intervals, possible, absence_only = set(), set(), [], 0, False
             places, blocked_capacity = 0, False
+            weekends = set()
             for shift in sessions:
                 data.get('_check_budget', lambda: None)()
                 credit = contribution(shift, pid)
-                if credit is None:
+                if credit is None or rule['metric'] == 'weekends' and not credit['weekends']:
                     continue
                 exclusions = self.exclusions(pid, shift)
                 if rule['metric'] == 'lead_turns':
@@ -275,8 +279,11 @@ class FindingCauses:
                 possible += (int(credit['duty']) if metric in {'duties', 'lead_turns'} else credit['session_units']
                              if metric == 'session_units' else credit['credits'] if metric.endswith('credit') else 0)
                 intervals.extend(credit['intervals'])
+                weekends.update(credit['weekends'])
             if rule['metric'] in {'scheduled_hours', 'reserved_hours'}:
                 possible = union_hours(intervals)
+            elif rule['metric'] == 'weekends':
+                possible = len(weekends)
             zone = data['organisation']['timezone']
             workspace = data['workspace']
             days = 0

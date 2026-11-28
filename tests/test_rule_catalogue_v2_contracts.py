@@ -54,6 +54,8 @@ def test_registry_retains_all_historical_ids_and_exposes_counts_from_the_registr
     ('scheduled_hours', {'kind': 'rolling', 'days': 7}, 'max_hours'),
     ('session_units', {'kind': 'calendar_month'}, 'block_quota'),
     ('training_credit', {'kind': 'fixed', 'days': 14, 'starts_on': '2026-10-01', 'ends_on': '2026-11-01'}, 'block_quota'),
+    ('weekends', {'kind': 'fixed', 'days': 28, 'starts_on': '2026-10-01', 'ends_on': '2026-11-01',
+                  'anchor_on': '2026-10-01'}, 'block_quota'),
     ('reserved_hours', {'kind': 'block', 'starts_on': '2026-10-01', 'ends_on': '2026-11-01'}, 'block_quota'),
 ])
 def test_typed_workload_write_and_read_share_one_canonical_storage(measure, period, kind):

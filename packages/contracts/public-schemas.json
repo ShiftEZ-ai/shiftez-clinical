@@ -4535,7 +4535,8 @@
               "reserved_hours",
               "workload_credit",
               "training_credit",
-              "lead_turns"
+              "lead_turns",
+              "weekends"
             ],
             "title": "Metric",
             "type": "string"
@@ -4698,6 +4699,30 @@
             ],
             "title": "Rounding",
             "type": "string"
+          },
+          "weekend_start": {
+            "default": 4,
+            "maximum": 6,
+            "minimum": 0,
+            "title": "Weekend Start",
+            "type": "integer",
+            "x-applies-to": {
+              "metric": [
+                "weekends"
+              ]
+            }
+          },
+          "weekend_days": {
+            "default": 2,
+            "maximum": 3,
+            "minimum": 1,
+            "title": "Weekend Days",
+            "type": "integer",
+            "x-applies-to": {
+              "metric": [
+                "weekends"
+              ]
+            }
           }
         },
         "required": [
@@ -6690,7 +6715,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -17749,7 +17775,8 @@
               "reserved_hours",
               "workload_credit",
               "training_credit",
-              "lead_turns"
+              "lead_turns",
+              "weekends"
             ],
             "title": "Metric",
             "type": "string"
@@ -17912,6 +17939,30 @@
             ],
             "title": "Rounding",
             "type": "string"
+          },
+          "weekend_start": {
+            "default": 4,
+            "maximum": 6,
+            "minimum": 0,
+            "title": "Weekend Start",
+            "type": "integer",
+            "x-applies-to": {
+              "metric": [
+                "weekends"
+              ]
+            }
+          },
+          "weekend_days": {
+            "default": 2,
+            "maximum": 3,
+            "minimum": 1,
+            "title": "Weekend Days",
+            "type": "integer",
+            "x-applies-to": {
+              "metric": [
+                "weekends"
+              ]
+            }
           }
         },
         "required": [
@@ -19571,7 +19622,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -31005,7 +31057,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -33273,7 +33326,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -34200,7 +34254,8 @@
               "reserved_hours",
               "workload_credit",
               "training_credit",
-              "lead_turns"
+              "lead_turns",
+              "weekends"
             ],
             "type": "string"
           },
@@ -56865,7 +56920,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -57301,7 +57357,8 @@
               "reserved_hours",
               "workload_credit",
               "training_credit",
-              "lead_turns"
+              "lead_turns",
+              "weekends"
             ],
             "type": "string"
           },
@@ -57565,7 +57622,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -58123,7 +58181,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -83606,7 +83665,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -84649,7 +84709,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },
@@ -91520,7 +91581,8 @@
                   "reserved_hours",
                   "workload_credit",
                   "training_credit",
-                  "lead_turns"
+                  "lead_turns",
+                  "weekends"
                 ],
                 "type": "string"
               },

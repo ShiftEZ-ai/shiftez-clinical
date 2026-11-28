@@ -218,7 +218,7 @@ def _shared_words(stems):
 
 
 QUOTA_UNITS = {'duties': 'duty', 'session_units': 'session-unit', 'scheduled_hours': 'hours', 'reserved_hours': 'reserved-hours',
-               'workload_credit': 'workload', 'training_credit': 'training', 'lead_turns': 'lead-turn'}
+               'workload_credit': 'workload', 'training_credit': 'training', 'lead_turns': 'lead-turn', 'weekends': 'weekend'}
 
 
 def _shape_name(definition):

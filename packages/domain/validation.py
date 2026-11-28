@@ -21,7 +21,7 @@ from packages.contracts.schemas import (
 from .conditions import (PERSON_SCOPE_KEYS, SESSION_FIELDS, active_rules, change_points, conditions_match,
                          has_dated_person_lines, has_session_lines, necessary_person_values, scope_tree, selector_sources,
                          counting_key, counting_views, scope_applies, scope_matches_throughout)
-from .patterns import SHAPE_KINDS
+from .patterns import SHAPE_KINDS, presence_weekends
 from .recurrence import inactive, series_definition, usual_assignee_ids, with_series_state
 from .overlap import evaluate_overlaps
 from .supervision_levelling import levelled_finding, session_spread_policies, spread_gap, spread_policy_key
@@ -1444,15 +1444,8 @@ def workload_weekend_groups(data, policy, pid, selected):
     weekends = defaultdict(list)
     for row in selected:
         _, _, a, b, *_ = row
-        for lo, hi in scope_intervals(data, scope, pid, a, b):
-            day = lo.astimezone(ZoneInfo(zone)).date()
-            last = (hi - timedelta(microseconds=1)).astimezone(ZoneInfo(zone)).date()
-            while day <= last:
-                offset = (day.weekday() - rule['weekend_start']) % 7
-                if offset < rule['weekend_days']:
-                    first = day - timedelta(days=offset)
-                    weekends[first].append(row)
-                day += timedelta(days=1)
+        for first in presence_weekends(scope_intervals(data, scope, pid, a, b), zone, rule):
+            weekends[first].append(row)
     return weekends
 
 
